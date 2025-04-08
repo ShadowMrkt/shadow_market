@@ -1,0 +1,42 @@
+# /etc/systemd/system/shadowmarket-backend.service
+
+[Unit]
+Description=Shadow Market Backend Service (Gunicorn)
+# Start after network is up and DB/Redis are ready
+After=network.target postgresql.service redis-server.service
+Requires=postgresql.service redis-server.service # Optional: Make DB/Redis hard requirements
+
+[Service]
+# --- User and Permissions ---
+User=shadowmarket
+Group=shadowmarket
+# Ensure this user exists and has permissions for WorkingDirectory, logs, venv, gpg_home
+
+WorkingDirectory=/opt/shadow_market_app/backend
+
+# --- Environment ---
+# Load secure environment variables (DB URL, SECRET_KEY, Node RPC creds, Vault creds, etc.)
+# Ensure this file exists, is owned by root:shadowmarket, and has 640 permissions
+EnvironmentFile=/etc/shadowmarket/backend.env
+
+# --- Execution ---
+# Full path to gunicorn within the virtual environment
+ExecStart=/opt/shadow_market_app/backend/venv/bin/gunicorn \
+    --workers 3 \
+    --bind 127.0.0.1:8000 \
+    --log-level=info \
+    --access-logfile /opt/shadow_market_app/backend/logs/gunicorn-access.log \
+    --error-logfile /opt/shadow_market_app/backend/logs/gunicorn-error.log \
+    --capture-output \
+    --timeout 120 \
+    mymarketplace.wsgi:application
+
+# --- Process Management ---
+Restart=on-failure # Restart only if it exits with non-zero status
+RestartSec=5s      # Wait 5 seconds before restarting
+TimeoutStopSec=10s # Time allowed for graceful shutdown
+KillMode=mixed     # Send SIGTERM first, then SIGKILL if needed
+PrivateTmp=true    # Use a private /tmp directory for security
+
+[Install]
+WantedBy=multi-user.target

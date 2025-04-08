@@ -1,0 +1,29 @@
+# /etc/tor/torrc - Hidden Service Configuration for Shadow Market
+
+# --- Basic Setup ---
+# Ensure Tor runs as the correct user (usually debian-tor on Debian/Ubuntu)
+User debian-tor
+# LogLevel notice # Default is notice, can increase verbosity if needed (info, debug)
+# Log notice file /var/log/tor/notices.log # Default log location
+
+# --- Hidden Service Definition (V3 Onion Service) ---
+# Choose a directory where Tor can store the service's keys and hostname.
+# Ensure this path exists and the 'debian-tor' user owns it and has exclusive access (700 permissions).
+HiddenServiceDir /var/lib/tor/shadowmarket_v3/
+
+# Forward Tor traffic arriving on the virtual port 80 (standard HTTP for .onion)
+# to the Nginx reverse proxy listening on localhost port 8080.
+HiddenServicePort 80 127.0.0.1:8080
+
+# --- Optional Hardening (Consider these) ---
+# Client Authorization: Restrict access to specific Tor clients with keys
+# (Not typical for a public market, but useful for private services/staging)
+# HiddenServiceAuthorizeClient stealth clientname1,clientname2,...
+
+# Guard Node Protection (Vanguards): Requires installing the vanguards addon.
+# Helps protect against certain types of guard discovery attacks.
+# (Consult Vanguards documentation for specific torrc directives if installed)
+# Example (conceptual): Vanguards Enabled 1
+
+# Isolate Process: Run Tor in a more isolated environment if possible
+# (e.g., using network namespaces, separate VM - advanced setup)

@@ -1,0 +1,34 @@
+# /etc/systemd/system/shadowmarket-frontend.service
+
+[Unit]
+Description=Shadow Market Frontend Service (Next.js)
+After=network.target
+# Optionally, start after backend is up if frontend makes initial server-side API calls on start
+# After=network.target shadowmarket-backend.service
+# Requires=shadowmarket-backend.service
+
+[Service]
+User=shadowmarket
+Group=shadowmarket
+WorkingDirectory=/opt/shadow_market_app/frontend
+
+# --- Environment ---
+Environment="NODE_ENV=production"
+# NEXT_PUBLIC_API_URL is typically needed only at BUILD time (via .env.production)
+# If your runtime code *also* needs it, uncomment and set it here or in the EnvironmentFile
+# EnvironmentFile=/etc/shadowmarket/frontend.env # Optional separate env file if needed
+
+# --- Execution ---
+# Ensure yarn is in the system path or provide the full path (e.g., /usr/local/bin/yarn)
+# 'yarn start' executes 'next start -p 3000' based on package.json script
+ExecStart=/usr/bin/yarn start -p 3000
+
+# --- Process Management ---
+Restart=on-failure
+RestartSec=5s
+TimeoutStopSec=10s
+KillMode=mixed
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
