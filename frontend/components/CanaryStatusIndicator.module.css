@@ -1,0 +1,107 @@
+/* frontend/components/CanaryStatusIndicator.module.css */
+/* --- REVISION HISTORY --- */
+/* 2025-04-07: Rev 1 - Initial CSS Module for CanaryStatusIndicator component (Rev 1). */
+/* - Styles for indicator container, icon, text, and status modifiers. */
+/* - Dark theme compatible styling using CSS variables. */
+
+/* TODO: Adjust specific status colors (valid, warning, expired) if needed. */
+/* TODO: Consider replacing emoji icons with SVG/icon font for consistency. */
+
+.indicator {
+  display: inline-flex; /* Align icon and text */
+  align-items: center;
+  gap: 0.4em; /* Space between icon and text */
+  padding: 0.3rem 0.7rem; /* Padding around the indicator */
+  border-radius: 4px;
+  font-size: 0.8rem; /* Small base font size */
+  font-weight: 600; /* Make text bold */
+  text-decoration: none; /* Remove link underline */
+  border: 1px solid transparent; /* Base border */
+  transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+  cursor: pointer;
+  white-space: nowrap; /* Prevent text wrapping */
+}
+
+.indicator:hover {
+  opacity: 0.9; /* Slight dim on hover */
+  text-decoration: none; /* Ensure no underline on hover */
+}
+
+/* Default/Loading state */
+.statusLoading {
+  background-color: var(--bg-input); /* Use input background for loading */
+  color: var(--text-tertiary);
+  border-color: var(--border-secondary);
+}
+.statusLoading .icon {
+    animation: spin 1.5s linear infinite; /* Add spin to loading icon */
+}
+
+/* Valid state */
+.statusValid {
+  background-color: rgba(102, 217, 160, 0.15); /* Subtle green background */
+  color: var(--accent-green); /* Green text */
+  border-color: rgba(102, 217, 160, 0.3); /* Subtle green border */
+}
+.statusValid:hover {
+    background-color: rgba(102, 217, 160, 0.25);
+}
+
+/* Update Due / Warning state */
+.statusWarning {
+  background-color: rgba(255, 204, 102, 0.15); /* Subtle yellow/orange background */
+  color: var(--accent-yellow); /* Yellow/orange text */
+  border-color: rgba(255, 204, 102, 0.3);
+}
+.statusWarning:hover {
+    background-color: rgba(255, 204, 102, 0.25);
+}
+
+/* Expired state */
+.statusExpired {
+  background-color: rgba(255, 119, 119, 0.15); /* Subtle red background */
+  color: var(--accent-red); /* Red text */
+  border-color: rgba(255, 119, 119, 0.3);
+}
+.statusExpired:hover {
+    background-color: rgba(255, 119, 119, 0.25);
+}
+
+/* Error state (inc. Missing/Invalid Date) */
+.statusError {
+  background-color: var(--bg-input);
+  color: var(--accent-red); /* Red text for error */
+  border-color: var(--border-secondary);
+}
+.statusError:hover {
+    background-color: var(--bg-hover);
+}
+
+
+.icon {
+  /* Basic icon styling - adjust if using SVG/font */
+  display: inline-block;
+  font-size: 1em; /* Relative to indicator font size */
+  line-height: 1; /* Prevent extra space */
+}
+
+.statusText {
+  /* Styling for the text part (e.g., "Canary Valid") */
+  line-height: 1;
+}
+
+/* Optional style for displaying date inside indicator */
+/* .lastUpdatedDate {
+    font-size: 0.8em;
+    margin-left: 0.5em;
+    color: var(--text-tertiary);
+    font-weight: normal;
+} */
+
+
+/* Re-define spin animation if not globally available (e.g., if LoadingSpinner module isn't always loaded) */
+/* Ideally, define animations globally or share via CSS */
+@keyframes spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}

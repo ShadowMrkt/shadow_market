@@ -1,0 +1,44 @@
+/* frontend/components/PgpChallengeSigner.module.css */
+/* --- REVISION HISTORY --- */
+/* 2025-04-07: Rev 1 - Initial CSS Module for PgpChallengeSigner component (Rev 2). */
+/* - Styles for instruction list and copy button size/margin. */
+/* - Dark theme compatible styling using CSS variables. */
+
+/* Styling for the ordered list within the instruction box */
+.instructionList {
+  font-size: 0.9em; /* Slightly smaller text for instructions */
+  padding-left: 1.5rem; /* Indentation for list numbers */
+  margin-top: 0.5rem; /* Space above list */
+  margin-bottom: 0; /* Reset bottom margin if parent has padding */
+  color: var(--text-secondary); /* Use secondary text color */
+  list-style-position: outside;
+}
+
+.instructionList li {
+  margin-bottom: 0.4rem; /* Spacing between list items */
+}
+.instructionList li strong {
+    color: var(--text-primary); /* Make emphasized text clearer */
+}
+.instructionList li code { /* Style inline code within list */
+    font-family: monospace, sans-serif;
+    background-color: var(--bg-input);
+    color: var(--text-secondary);
+    padding: 0.1em 0.3em;
+    border-radius: 3px;
+    font-size: 0.95em;
+    border: 1px solid var(--border-secondary);
+}
+
+
+/* Custom styling for the "Copy Challenge" button */
+.copyButton {
+  /* Relies on global .button .button-secondary for base styles */
+  /* Make it slightly smaller */
+  padding: 0.3rem 0.8rem;
+  font-size: 0.8rem;
+  font-weight: 500; /* Less bold than primary actions */
+  margin-top: 0.5rem; /* Space between code block and button */
+  margin-left: 0; /* Ensure no inherited margin */
+  vertical-align: middle; /* Align if needed */
+}

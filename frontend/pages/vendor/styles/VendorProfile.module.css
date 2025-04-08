@@ -1,0 +1,250 @@
+/* frontend/styles/VendorProfile.module.css */
+/* --- REVISION HISTORY --- */
+/* 2025-04-07: Rev 1 - Initial CSS Module for VendorProfilePage component (Rev 1). */
+/* - Styles for header, stats grid, PGP key, products, feedback sections. */
+/* - Dark theme compatible styling using CSS variables. */
+/* - Uses CSS Grid for responsive layouts. */
+
+/* TODO: Ensure path in [username].js import is correct (../../styles/ or ../styles/ or ./). */
+/* TODO: Refine grid layouts (stats, products) for different screen sizes. */
+/* TODO: Finalize feedback list item styling. */
+
+/* Container styling likely handled by global .container class */
+/* .container { ... } */
+
+/* Specific loader styles for this page */
+.fullPageLoader {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    min-height: 400px; /* Ensure loader is visible during initial load */
+    width: 100%;
+}
+.loadingOverlay {
+    padding: 2rem;
+    text-align: center;
+    min-height: 200px; /* Min height for section loaders */
+    display: flex;
+    justify-content: center;
+    align-items: center;
+}
+
+/* Error message styling likely handled by global .error-message or FormError component */
+/* .errorMessage { ... } */
+
+.noItemsMessage {
+    margin-top: 1rem;
+    color: var(--text-tertiary);
+    text-align: center;
+    padding: 2rem;
+    background-color: var(--bg-secondary);
+    border: 1px dashed var(--border-primary);
+    border-radius: 4px;
+}
+
+
+/* --- Profile Header --- */
+.profileHeader {
+    background-color: var(--bg-secondary); /* Slightly distinct background */
+    padding: 1.5rem 2rem;
+    border-radius: 6px;
+    margin-bottom: 2rem;
+    border: 1px solid var(--border-primary);
+}
+
+.username {
+    /* Uses global h1 styles mostly */
+    margin-bottom: 0.5rem;
+    border-bottom: none; /* Remove default h1 border */
+    padding-bottom: 0;
+    font-size: 2.5rem; /* Larger username */
+}
+
+.metaInfo {
+    font-size: 0.9em;
+    color: var(--text-secondary);
+    margin-bottom: 1.5rem;
+}
+.metaInfo span:not(:last-child)::after {
+    content: ' | '; /* Separator */
+    margin: 0 0.5em;
+}
+
+/* --- Stats Grid --- */
+.statsGrid {
+    display: grid;
+    /* Responsive grid: 2 columns min, up to 4-6 on larger screens */
+    grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+    gap: 1rem 1.5rem; /* Row and column gap */
+    margin-bottom: 1rem;
+    padding-top: 1rem;
+    border-top: 1px solid var(--border-primary);
+}
+
+.statItem {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start; /* Align text to start */
+    padding: 0.5rem;
+    background-color: var(--bg-primary); /* Match body background */
+    border-radius: 4px;
+    border: 1px solid var(--border-secondary);
+}
+
+.statValue {
+    font-size: 1.3em;
+    font-weight: 600;
+    color: var(--text-primary);
+    margin-bottom: 0.25rem;
+    line-height: 1.2;
+}
+/* Style star rating value specifically if needed */
+.statValue span[title] { /* Target the span from renderStars */
+    font-size: 1em; /* Adjust size relative to container */
+    color: var(--accent-yellow);
+}
+
+.statLabel {
+    font-size: 0.8em;
+    color: var(--text-secondary);
+}
+
+.reputationUpdated {
+    font-size: 0.75em;
+    color: var(--text-tertiary);
+    text-align: right;
+    margin-top: 0.5rem;
+}
+
+/* --- PGP Key Section --- */
+.pgpKeySection {
+    margin-top: 1.5rem;
+    padding-top: 1rem;
+    border-top: 1px solid var(--border-primary);
+}
+
+.pgpKeySummary {
+    cursor: pointer;
+    font-weight: 600;
+    color: var(--accent-blue);
+    margin-bottom: 0.5rem;
+    display: inline-block; /* Allow margin-bottom */
+}
+.pgpKeySummary:hover {
+    color: var(--accent-blue-hover);
+}
+/* Style the arrow */
+.pgpKeySection details > summary {
+  list-style: none; /* Remove default arrow */
+}
+.pgpKeySection details > summary::-webkit-details-marker {
+  display: none; /* Remove default arrow */
+}
+.pgpKeySection details > summary::before {
+    content: '▶ '; /* Add custom arrow */
+    font-size: 0.8em;
+    margin-right: 0.3em;
+    display: inline-block;
+    transition: transform 0.2s ease-in-out;
+}
+.pgpKeySection details[open] > summary::before {
+    transform: rotate(90deg);
+}
+
+/* PGP Key block - enhance global .code-block */
+.pgpKeyBlock {
+    /* Inherits from global .code-block */
+    max-height: 300px; /* Allow more height */
+    font-size: 0.8em; /* Smaller font for density */
+    margin-top: 0.5rem;
+}
+
+/* --- Vendor Description --- */
+.vendorDescription {
+    margin-top: 1.5rem;
+    padding-top: 1.5rem;
+    border-top: 1px solid var(--border-primary);
+    color: var(--text-secondary);
+    line-height: 1.7;
+}
+.vendorDescription h2 { /* Style heading within description */
+    margin-top: 0;
+    margin-bottom: 1rem;
+    font-size: 1.4em;
+    color: var(--text-primary);
+    border-bottom: none;
+    padding-bottom: 0;
+}
+/* SECURITY: If using dangerouslySetInnerHTML, ensure content is sanitized */
+.vendorDescription div[dangerouslySetInnerHTML] * {
+    /* Add basic styling for potentially injected HTML */
+    margin-bottom: 0.5rem;
+    line-height: 1.6;
+}
+
+
+/* --- Section Title for Products/Feedback --- */
+.sectionTitle {
+  /* Uses global h2 styling mostly */
+  margin-top: 2.5rem; /* Space above section */
+  margin-bottom: 1.5rem;
+  font-size: 1.6em;
+}
+
+
+/* --- Product List --- */
+.productList {
+  display: grid;
+  /* Use similar grid as home page, adjust minmax as needed */
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); /* Slightly smaller min? */
+  gap: 1.5rem;
+  margin-bottom: 2rem; /* Space before pagination */
+}
+
+
+/* --- Feedback List --- */
+.feedbackList {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 2rem 0; /* Space below list */
+}
+
+.feedbackItem {
+  background-color: var(--bg-secondary);
+  border: 1px solid var(--border-primary);
+  border-radius: 4px;
+  padding: 1rem 1.5rem;
+  margin-bottom: 1rem;
+}
+
+.feedbackRating {
+  font-weight: bold;
+  margin-bottom: 0.5rem;
+  color: var(--text-primary);
+}
+.feedbackRating span[title] { /* Target the span from renderStars */
+    color: var(--accent-yellow); /* Yellow stars */
+    margin-left: 0.5em;
+}
+
+.feedbackComment {
+  color: var(--text-secondary);
+  margin-bottom: 0.75rem;
+  line-height: 1.6;
+  /* Style blockquotes if used in feedback */
+  & blockquote {
+    border-left: 3px solid var(--border-secondary);
+    padding-left: 1em;
+    margin-left: 0.5em;
+    color: var(--text-tertiary);
+    font-style: italic;
+  }
+}
+
+.feedbackMeta {
+  font-size: 0.8em;
+  color: var(--text-tertiary);
+  margin-top: 1rem;
+  padding-top: 0.5rem;
+  border-top: 1px solid var(--border-primary);
+}

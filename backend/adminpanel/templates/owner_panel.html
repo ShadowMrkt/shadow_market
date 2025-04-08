@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Owner Control Panel</title>
+</head>
+<body>
+    <h1>Owner Control Panel</h1>
+    <p>Total Users: {{ total_users }}</p>
+    <p>Pending Orders: {{ pending_orders }}</p>
+    <h2>Global Settings</h2>
+    <form method="post">
+        {% csrf_token %}
+        {{ settings_form.as_p }}
+        <button type="submit">Update Settings</button>
+    </form>
+    <h2>Actions</h2>
+    <form method="post" action="{% url 'adminpanel:owner_panel' %}">
+        {% csrf_token %}
+        <button name="transfer_funds" type="submit" value="1">Transfer All Funds to Owner Wallet</button>
+    </form>
+    <!-- In a full implementation, the transfer funds action would trigger a view that calls transfer_all_funds -->
+    <a href="{% url 'adminpanel:admin_panel' %}">Switch to Admin Panel</a>
+</body>
+</html>

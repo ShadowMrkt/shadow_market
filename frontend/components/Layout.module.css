@@ -1,0 +1,190 @@
+/* frontend/components/Layout.module.css */
+/* --- REVISION HISTORY --- */
+/* 2025-04-07: Rev 1 - Initial CSS Module for Layout.js Rev 2. */
+/* - Implemented basic dark theme. */
+/* - Used Flexbox for navbar and layout structure. */
+/* - Added basic styles for links, buttons, logo, placeholders. */
+/* - Included comments for accessibility and further refinement. */
+
+/* TODO: Refine colors, fonts, spacing to match final brand identity. */
+/* TODO: Perform accessibility audit (color contrast, focus states). */
+/* TODO: Add responsive design adjustments (media queries). */
+
+/* Overall Layout Container - enables sticky footer pattern */
+.layoutContainer {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+  background-color: #121212; /* Dark background for the page */
+  color: #e0e0e0; /* Default light text color */
+}
+
+/* Header and Navbar */
+.header {
+  background-color: #1f1f1f; /* Slightly lighter dark for header */
+  border-bottom: 1px solid #333; /* Subtle separator */
+  padding: 0 1rem; /* Horizontal padding */
+  position: sticky; /* Keep header visible on scroll */
+  top: 0;
+  z-index: 1000; /* Ensure header stays on top */
+}
+
+.navbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  min-height: 60px; /* Standard navbar height */
+  width: 100%;
+  max-width: 1400px; /* Max width for content within navbar */
+  margin: 0 auto; /* Center content */
+}
+
+.navSection {
+  display: flex;
+  align-items: center;
+  gap: 1rem; /* Spacing between items in a section */
+  flex-shrink: 0; /* Prevent sections from shrinking too much */
+}
+
+.navSection:nth-child(2) { /* Target the center section (e.g., for search) */
+  flex-grow: 1; /* Allow center section to take available space */
+  justify-content: center; /* Center items within the middle section */
+}
+
+.authSection {
+  justify-content: flex-end; /* Align auth items to the right */
+}
+
+/* Logo */
+.logoLink {
+  display: flex; /* Helps align image vertically if needed */
+  align-items: center;
+  text-decoration: none;
+  margin-right: 1rem; /* Space after logo */
+}
+
+/* Target the Next.js Image component wrapper if needed */
+.logoLink img {
+  display: block; /* Remove extra space below image */
+}
+
+/* Navigation Links */
+.navLink {
+  color: #cccccc; /* Slightly muted light color for links */
+  text-decoration: none;
+  padding: 0.5rem 0.25rem; /* Vertical padding for larger click target */
+  transition: color 0.2s ease-in-out, border-bottom-color 0.2s ease-in-out;
+  border-bottom: 2px solid transparent; /* For hover effect */
+  font-size: 0.95rem;
+}
+
+.navLink:hover,
+.navLink:focus {
+  color: #ffffff; /* Brighter on hover/focus */
+  border-bottom-color: #ffffff; /* Highlight effect */
+  outline: none; /* Remove default focus outline if providing custom */
+}
+
+/* Buttons */
+.button {
+  padding: 0.5rem 1rem;
+  cursor: pointer;
+  border: 1px solid #555;
+  border-radius: 4px;
+  background-color: #333;
+  color: #e0e0e0;
+  font-size: 0.9rem;
+  transition: background-color 0.2s ease-in-out, border-color 0.2s ease-in-out;
+}
+
+.button:hover,
+.button:focus {
+  background-color: #444;
+  border-color: #777;
+  outline: none;
+}
+
+.buttonSecondary {
+  background-color: transparent;
+  border-color: #007bff; /* Example secondary color */
+  color: #007bff;
+}
+
+.buttonSecondary:hover,
+.buttonSecondary:focus {
+  background-color: rgba(0, 123, 255, 0.1); /* Subtle background on hover */
+  color: #3399ff;
+  border-color: #3399ff;
+}
+
+
+/* Main Content Area */
+.mainContent {
+  flex-grow: 1; /* Allows main content to fill available space */
+  padding: 1.5rem;
+  width: 100%;
+  max-width: 1400px; /* Max width for content */
+  margin: 0 auto; /* Center content */
+  /* background-color: #181818; */ /* Optional: slightly different dark shade */
+}
+
+.loadingPlaceholder {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  min-height: calc(100vh - 120px - 3rem); /* Adjust based on header/footer height + padding */
+  text-align: center;
+  color: #888; /* Muted color for loading text */
+}
+
+/* Footer */
+.footer {
+  background-color: #1f1f1f; /* Match header background */
+  border-top: 1px solid #333; /* Match header separator */
+  padding: 1rem;
+  text-align: center;
+  font-size: 0.85rem;
+  color: #aaaaaa; /* Muted footer text */
+  margin-top: auto; /* Pushes footer to bottom in flex container */
+}
+
+.footerLinks {
+  margin-bottom: 0.5rem;
+}
+
+.footerLink {
+  color: #aaaaaa;
+  text-decoration: none;
+  margin: 0 0.75rem;
+  transition: color 0.2s ease-in-out;
+}
+
+.footerLink:hover,
+.footerLink:focus {
+  color: #ffffff;
+  text-decoration: underline;
+  outline: none;
+}
+
+.footerCopyright {
+  /* Styles for the copyright text if needed */
+}
+
+/* Canary Placeholder */
+.canaryPlaceholder {
+  margin-left: 1rem;
+  font-weight: bold;
+  color: #ffcc00; /* Example yellow color for visibility */
+  cursor: help; /* Indicate it might be informative */
+}
+
+/* Ensure direct child links inherit color properly if nested */
+.navSection a,
+.footerLinks a {
+    /* Inherit color from parent section by default unless overridden by specific class */
+}
+
+/* Example refinement: Ensure logo doesn't shrink */
+.logoLink {
+    flex-shrink: 0;
+}

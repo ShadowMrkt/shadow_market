@@ -1,0 +1,53 @@
+/* frontend/components/CaptchaInput.module.css */
+/* --- REVISION HISTORY --- */
+/* 2025-04-07: Rev 1 - Initial CSS Module for CaptchaInput component (Rev 2). */
+/* - Styles for layout box, image, loading, and error states. */
+/* - Dark theme compatible styling using CSS variables. */
+
+/* TODO: Adjust image border/background if needed. */
+/* TODO: Test wrapping behavior on small screens. */
+
+.loadingState,
+.errorState {
+  /* Container for loading spinner or error message + retry button */
+  padding: 1rem 0; /* Add some padding */
+  min-height: 50px; /* Ensure it takes up similar space to the loaded CAPTCHA */
+  display: flex;
+  flex-direction: column; /* Stack message and button in error state */
+  align-items: flex-start; /* Align items to start */
+}
+.loadingState {
+    align-items: center; /* Center the loading spinner */
+}
+
+.captchaBox {
+  display: flex;
+  align-items: center; /* Vertically align items */
+  gap: 1rem; /* Space between image, input, button */
+  flex-wrap: wrap; /* Allow wrapping on smaller screens */
+}
+
+.captchaImage {
+  border: 1px solid var(--border-primary); /* Use theme border color */
+  border-radius: 4px;
+  display: block; /* Prevents extra space below image */
+  background-color: var(--bg-input); /* Add a background in case image is transparent */
+  height: 50px; /* Match explicit height in component */
+  width: 150px; /* Match explicit width in component */
+  object-fit: contain; /* Ensure image fits without distortion */
+  flex-shrink: 0; /* Prevent image from shrinking */
+}
+
+/* Input field uses global .form-input */
+/* Refresh button uses global .button .button-secondary */
+
+/* Ensure input field grows to take available space */
+.captchaBox .form-input {
+    flex-grow: 1; /* Allow input to fill space */
+    min-width: 150px; /* Minimum width before wrapping */
+}
+
+/* Ensure button doesn't grow */
+.captchaBox .button {
+    flex-shrink: 0;
+}

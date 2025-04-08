@@ -1,0 +1,86 @@
+{% comment %}
+# backend/forum/templetes/forum/base.html
+# <<< Rewritten for Enhanced Structure, Semantics, and Extensibility >>>
+# ---
+# This base template defines the core layout for the forum section.
+# It MUST extend a project-level base template (e.g., 'base.html')
+# which should provide overall HTML structure, head, body, main navigation, footer,
+# and load necessary CSS/JS assets (like Tailwind, Bootstrap, or custom styles).
+# ---
+{% endcomment %}
+
+{% extends "../../templates/base.html" %} {# <<< BEST PRACTICE: Extend the main project base template (ADJUST PATH AS NEEDED) >>> #}
+{% load i18n static %} {# <<< BEST PRACTICE: Load static and i18n (if used) >>> #}
+
+{% comment %}
+  Block for adding extra elements to the HTML <head> specific to the forum
+  (e.g., forum-specific CSS, meta tags)
+{% endcomment %}
+{% block head_extra %}
+  {# <link rel="stylesheet" href="{% static 'css/forum_styles.css' %}"> #}
+  {{ block.super }}
+{% endblock head_extra %}
+
+{% comment %}
+  Define the main page title seen in the browser tab/window.
+{% endcomment %}
+{% block title %}{% block page_title %}{% trans "Forum" %}{% endblock page_title %} | {{ settings.SITE_NAME|default:"Shadow Market" }}{% endblock title %}
+
+{% comment %}
+  This replaces the main content block from the project's base.html
+{% endcomment %}
+{% block content %}
+<div class="forum-wrapper max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6"> {# <<< CHANGE: Added wrapper with max-width example >>> #}
+
+  {% comment %} Placeholder for Forum-specific Header/Sub-Navigation if needed {% endcomment %}
+  <header class="forum-header mb-6">
+    {% block forum_header %}
+      {# Optionally include forum-specific navigation or branding here #}
+      {# Example: <h1 class="text-3xl font-bold">{% trans "Market Forum" %}</h1> #}
+    {% endblock forum_header %}
+  </header>
+
+  {% comment %} Standard message display block (can also be in project base) {% endcomment %}
+  {% if messages %}
+    <div class="messages mb-4 space-y-2">
+      {% for message in messages %}
+      <div class="p-3 rounded text-sm {% if message.level == DEFAULT_MESSAGE_LEVELS.ERROR %}bg-red-100 border border-red-400 text-red-700{% elif message.level == DEFAULT_MESSAGE_LEVELS.SUCCESS %}bg-green-100 border border-green-400 text-green-700{% elif message.level == DEFAULT_MESSAGE_LEVELS.WARNING %}bg-yellow-100 border border-yellow-400 text-yellow-700{% else %}bg-blue-100 border border-blue-400 text-blue-700{% endif %}" role="alert">
+        {{ message }}
+      </div>
+      {% endfor %}
+    </div>
+  {% endif %}
+
+  {% comment %} Breadcrumbs for forum navigation {% endcomment %}
+  <nav aria-label="breadcrumb" class="breadcrumb-nav mb-4 text-sm text-gray-600">
+    <ol class="list-none p-0 inline-flex">
+      <li class="flex items-center">
+        <a href="{% url 'forum:forum_index' %}" class="hover:text-blue-700">{% trans "Forum Index" %}</a>
+        {% comment %} Add separator only if there are more breadcrumbs {% endcomment %}
+        {% block breadcrumbs_separator %}<span class="mx-2">/</span>{% endblock breadcrumbs_separator %}
+      </li>
+      {% block breadcrumbs %}
+        {# Child templates fill this block with specific category/thread links #}
+        {# Example: <li class="flex items-center"><a href="...">Category</a><span class="mx-2">/</span></li> #}
+        {# Example: <li class="flex items-center text-gray-500" aria-current="page">Thread Title</li> #}
+      {% endblock breadcrumbs %}
+    </ol>
+  </nav>
+
+  {% comment %} Main content area for forum pages {% endcomment %}
+  <main role="main" class="forum-main-content"> {# <<< BEST PRACTICE: Use <main> tag and role >>> #}
+    {% block main_content %}
+      {# Child templates (index, category_detail, thread_detail, create_thread) override this #}
+      <p class="text-red-500">Error: Main content block not defined in child template.</p>
+    {% endblock main_content %}
+  </main>
+
+  {% comment %} Optional Sidebar placeholder {% endcomment %}
+  {% block sidebar %}
+    {# <aside class="forum-sidebar"> #}
+    {#   Sidebar content (e.g., stats, recent posts) could go here #}
+    {# </aside> #}
+  {% endblock sidebar %}
+
+</div> {# End forum-wrapper #}
+{% endblock content %}

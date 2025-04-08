@@ -1,0 +1,143 @@
+/* frontend/components/ProductCard.module.css */
+/* --- REVISION HISTORY --- */
+/* 2025-04-07: Rev 1 - Initial CSS Module for ProductCard component (Rev 1). */
+/* - Styles for card layout, image, content, meta-info, prices. */
+/* - Dark theme compatible styling. */
+/* - Basic hover effect included. */
+/* - Styles for price acceptance status with contrast considerations. */
+
+/* TODO: Finalize color choices for accepted/notAccepted ensuring WCAG AA/AAA contrast. */
+/* TODO: Refine hover effects as desired. */
+/* TODO: Test responsiveness within the parent grid layout. */
+
+.card {
+  background-color: #2a2a2a; /* Dark background for the card */
+  border: 1px solid #444; /* Subtle border */
+  border-radius: 6px; /* Slightly rounded corners */
+  overflow: hidden; /* Ensures content respects border radius */
+  transition: border-color 0.2s ease-in-out, box-shadow 0.2s ease-in-out;
+  display: flex;
+  flex-direction: column; /* Stack image and content vertically */
+  height: 100%; /* Make card fill grid cell height if needed */
+}
+
+.card:hover {
+  border-color: #666; /* Lighter border on hover */
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3); /* Subtle shadow on hover */
+}
+
+/* Image Styles */
+.imageWrapper {
+  position: relative;
+  width: 100%;
+  /* Define aspect ratio - adjust based on your image dimensions */
+  /* E.g., 16:9 aspect ratio */
+  /* aspect-ratio: 16 / 9; */
+  /* Or use padding-bottom trick if aspect-ratio isn't supported enough */
+   padding-bottom: 66.66%; /* Example for a 3:2 aspect ratio (200/300) */
+   background-color: #333; /* Placeholder background color */
+}
+
+/* The actual next/image component might be targeted directly if needed, */
+/* but usually styling the wrapper is sufficient for layout="responsive" */
+.imageWrapper img { /* Targeting the img element inside */
+   display: block;
+   position: absolute;
+   top: 0;
+   left: 0;
+   width: 100%;
+   height: 100%;
+   /* object-fit is set in the component props, e.g., 'cover' */
+}
+
+/* Content below image */
+.cardContent {
+  padding: 1rem;
+  flex-grow: 1; /* Allow content to fill remaining card space */
+  display: flex;
+  flex-direction: column; /* Stack content vertically */
+}
+
+/* Meta Info (Category, Vendor, Rating/Sales) */
+.category,
+.vendor {
+  font-size: 0.8rem;
+  color: #aaaaaa; /* Muted text */
+  margin-bottom: 0.3rem;
+}
+
+.link { /* Styling for links within category/vendor */
+  color: #bbbbbb; /* Slightly brighter than muted text */
+  text-decoration: none;
+}
+
+.link:hover {
+  color: #ffffff;
+  text-decoration: underline;
+}
+
+.nameLink {
+  font-size: 1.1rem;
+  font-weight: 600;
+  color: #e0e0e0; /* Primary light text color */
+  text-decoration: none;
+  margin-bottom: 0.75rem; /* Space below name */
+  line-height: 1.3;
+  /* Limit lines / add ellipsis if names can be very long */
+   overflow: hidden;
+   display: -webkit-box;
+   -webkit-line-clamp: 2; /* Limit to 2 lines */
+   -webkit-box-orient: vertical;
+}
+
+.nameLink:hover {
+  color: #ffffff;
+}
+
+/* Placeholder for Rating/Sales */
+.metaInfo {
+  font-size: 0.85rem;
+  color: #bbbbbb;
+  margin-bottom: 0.75rem;
+}
+
+/* Price Section */
+.prices {
+  margin-top: auto; /* Push prices to the bottom of the card content */
+  padding-top: 0.75rem; /* Space above prices */
+  border-top: 1px solid #444; /* Separator line */
+}
+
+.price {
+  margin: 0.2rem 0;
+  font-size: 0.95rem;
+  font-weight: bold;
+  display: flex; /* Align symbol and number */
+  align-items: baseline;
+  gap: 0.3em; /* Space between symbol and number */
+}
+
+/* Price Acceptance Status Styles */
+/* Make sure these colors have sufficient contrast (check with tools) */
+.accepted {
+  color: #77cc77; /* Light Green */
+}
+
+.notAccepted {
+  color: #888888; /* Greyed out */
+  text-decoration: line-through; /* Strike-through */
+  font-weight: normal; /* Less prominent */
+}
+
+/* Visually Hidden Class (if needed for screen reader text) */
+.visuallyHidden {
+  border: 0;
+  clip: rect(0 0 0 0);
+  height: 1px;
+  margin: -1px;
+  overflow: hidden;
+  padding: 0;
+  position: absolute;
+  width: 1px;
+  white-space: nowrap;
+}

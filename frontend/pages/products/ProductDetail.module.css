@@ -1,0 +1,189 @@
+/* frontend/pages/products/ProductDetail.module.css */
+/* --- REVISION HISTORY --- */
+/* 2025-04-07: Rev 1 - Initial CSS Module for ProductDetailPage component (Rev 1). */
+/* - Styles for breadcrumbs, grid, image, details, stock, actions, price, etc. */
+/* - Dark theme compatible styling using CSS variables. */
+/* - Styles for different stock statuses. */
+
+/* TODO: Add responsive adjustments for the grid layout on smaller screens. */
+/* TODO: Replace image placeholder style with actual image styling when implemented. */
+
+/* --- Breadcrumbs --- */
+.breadcrumb {
+  margin-bottom: 1.5rem;
+  color: var(--text-tertiary); /* Very muted */
+  font-size: 0.9em;
+}
+.breadcrumb a {
+  color: var(--text-secondary); /* Slightly less muted for links */
+  text-decoration: none;
+  transition: color 0.15s ease;
+}
+.breadcrumb a:hover {
+  color: var(--text-primary);
+  text-decoration: underline;
+}
+
+/* --- Main Layout Grid --- */
+.mainGrid {
+  display: grid;
+  /* Responsive: 1 column default, 2 columns on wider screens */
+  grid-template-columns: 1fr;
+  gap: 2rem;
+  align-items: start; /* Align columns to the top */
+}
+
+@media (min-width: 768px) {
+  .mainGrid {
+    /* Adjust ratio as needed, e.g., image/desc vs actions */
+    grid-template-columns: 3fr 2fr;
+  }
+}
+
+/* --- Image Placeholder --- */
+.imagePlaceholder {
+  width: 100%;
+  aspect-ratio: 4 / 3; /* Maintain aspect ratio */
+  background-color: var(--bg-input); /* Dark background */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-tertiary); /* Muted text */
+  border-radius: 6px; /* Match card radius */
+  border: 1px solid var(--border-primary);
+  margin-bottom: 1.5rem; /* Space below image */
+  font-size: 1.1em;
+}
+/* TODO: Style the actual next/image component when added */
+
+/* --- Details Section (Left Column) --- */
+/* .detailsSection uses global .card */
+
+.title {
+  /* Uses global h1 mostly */
+  margin-top: 0;
+  margin-bottom: 0.5rem;
+  border-bottom: none;
+  padding-bottom: 0;
+  color: var(--text-primary);
+  line-height: 1.3;
+}
+
+.metaInfo {
+  font-size: 0.9em;
+  color: var(--text-secondary);
+  margin-bottom: 1.5rem; /* Space below vendor/category */
+}
+
+.vendorLink {
+  color: var(--accent-blue);
+  text-decoration: none;
+  font-weight: 500;
+}
+.vendorLink:hover {
+  color: var(--accent-blue-hover);
+  text-decoration: underline;
+}
+
+.categoryLink {
+  color: var(--text-secondary); /* Match surrounding text */
+  text-decoration: underline;
+}
+.categoryLink:hover {
+    color: var(--text-primary);
+}
+
+
+/* Stock Info Styles */
+.stockInfo {
+  font-weight: 600; /* Bold */
+  margin-bottom: 1.5rem; /* Space below stock */
+  padding: 0.5rem 0.75rem;
+  border-radius: 4px;
+  display: inline-block; /* Fit content */
+}
+.stockInfoIn { /* Default in stock */
+  color: var(--accent-green);
+  background-color: rgba(102, 217, 160, 0.1); /* Subtle green */
+  /* border: 1px solid var(--accent-green); */
+}
+.stockInfoLow {
+  color: var(--accent-orange);
+   background-color: rgba(255, 204, 102, 0.1); /* Subtle orange */
+   /* border: 1px solid var(--accent-orange); */
+}
+.stockInfoOut {
+  color: var(--accent-red);
+   background-color: rgba(255, 119, 119, 0.1); /* Subtle red */
+   /* border: 1px solid var(--accent-red); */
+  text-decoration: line-through;
+}
+.stockInfoUnlimited {
+    color: var(--text-secondary); /* Muted for unlimited */
+    background-color: transparent;
+    padding: 0; /* No padding if just text */
+    border: none;
+}
+
+/* Description Section */
+.description {
+  margin-top: 1.5rem;
+  padding-top: 1.5rem;
+  border-top: 1px solid var(--border-primary);
+  line-height: 1.7; /* Better readability for long text */
+  color: var(--text-secondary);
+}
+.description p:last-child {
+  margin-bottom: 0;
+}
+
+/* Shared Section Header for Description/Purchase Options */
+.sectionHeader {
+  margin-top: 0;
+  margin-bottom: 1rem;
+  font-size: 1.3em;
+  font-weight: 600;
+  color: var(--text-primary);
+  border-bottom: 1px solid var(--border-primary);
+  padding-bottom: 0.5rem;
+}
+
+
+/* --- Actions Section (Right Column) --- */
+/* .actionsSection uses global .card */
+
+.priceDisplay {
+  font-size: 1.6em; /* Larger price */
+  font-weight: bold;
+  margin-bottom: 1.5rem; /* Space below price */
+  color: var(--text-primary);
+}
+.priceUnit {
+  font-size: 0.6em; /* Smaller 'per item' text */
+  font-weight: normal;
+  margin-left: 0.5em;
+  color: var(--text-secondary);
+}
+
+.selectionGroup {
+  margin-bottom: 1.5rem; /* Space between selection groups */
+}
+/* Input specific styles */
+.quantityInput {
+  width: 90px; /* Fixed width for quantity */
+  text-align: center;
+  /* Use input number arrows styling from browser/globals */
+}
+
+
+/* PGP Warning Styles (Uses global .warning-message, just adds link style) */
+/* .pgpWarning uses global .warning-message */
+.pgpWarningLink {
+  font-weight: bold;
+  /* Inherit color from warning message or set explicitly */
+  /* color: inherit; */
+  text-decoration: underline;
+}
+.pgpWarningLink:hover {
+    /* Darken underline or slightly change color */
+}

@@ -1,0 +1,24 @@
+# shadow_market/kubernetes/backend-service.yaml
+# Revision History:
+# 2025-04-07: Initial creation. Defines the ClusterIP Service for the Backend Deployment.
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: shadow-market-backend-svc # Stable name for accessing the backend service
+  namespace: shadow-market       # Deployed into the application's namespace
+  labels:
+    app: shadow-market         # Labels to associate with the Backend Deployment
+    tier: backend
+spec:
+  ports:
+    - port: 80                 # Port the Service will expose internally (common choice for HTTP)
+      targetPort: http         # Name of the port defined in the Backend Deployment Pod template ('http' -> 8000)
+      protocol: TCP
+      name: http               # Optional name for the port mapping
+  selector:
+    # Selects the Pods managed by the Backend Deployment based on their labels
+    app: shadow-market
+    tier: backend
+  # type: ClusterIP is the default and makes the service reachable only within the cluster.
+  type: ClusterIP

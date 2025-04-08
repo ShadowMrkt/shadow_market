@@ -1,0 +1,118 @@
+/* frontend/pages/Canary.module.css */
+/* --- REVISION HISTORY --- */
+/* 2025-04-07: Rev 1 - Initial CSS Module for CanaryPage component (Rev 1). */
+/* - Styles for section titles, date, fingerprint, instructions, etc. */
+/* - Dark theme compatible styling using CSS variables. */
+
+/* TODO: Adjust spacing and colors as needed for visual consistency. */
+
+/* --- Shared Custom Styles --- */
+
+.sectionTitle {
+  /* Uses global h2 styling mostly */
+  margin-top: 2rem; /* Space above section title */
+  margin-bottom: 1rem;
+  font-size: 1.4em;
+  font-weight: 600;
+  color: var(--text-primary);
+  border-bottom: 1px solid var(--border-primary);
+  padding-bottom: 0.5rem;
+}
+
+/* Style for inline code snippets */
+.codeInline {
+  font-family: monospace, sans-serif;
+  background-color: var(--bg-input); /* Use input background */
+  color: var(--text-secondary);
+  padding: 0.15em 0.4em; /* Smaller padding */
+  border-radius: 3px;
+  font-size: 0.9em; /* Match code-block font size */
+  border: 1px solid var(--border-secondary);
+}
+
+/* Style for list items in instructions */
+.listItem {
+  margin-bottom: 0.75rem; /* Consistent spacing */
+  line-height: 1.6; /* Improve readability */
+}
+.listItem ul {
+    margin-top: 0.5rem; /* Space above nested list */
+    padding-left: 1.5rem;
+}
+.listItem ul li {
+    margin-bottom: 0.3rem; /* Spacing for nested items */
+    list-style: disc;
+}
+
+/* --- Specific Section Styles --- */
+
+.dateHighlight {
+  font-weight: bold;
+  color: var(--accent-green); /* Use success color for emphasis */
+  background-color: rgba(102, 217, 160, 0.1); /* Subtle green background */
+  padding: 0.2em 0.4em;
+  border-radius: 3px;
+}
+
+.fingerprintContainer {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem; /* Space between fingerprint and button */
+    flex-wrap: wrap; /* Allow wrapping */
+    margin-top: 0.5rem;
+    margin-bottom: 0.5rem;
+}
+
+.fingerprintBlock {
+  font-family: monospace, sans-serif;
+  font-size: 1em; /* Slightly larger than normal code */
+  font-weight: 600; /* Bold */
+  background-color: var(--bg-input);
+  padding: 0.5rem 1rem;
+  border-radius: 4px;
+  display: inline-block;
+  word-break: break-all; /* Break long fingerprints if needed */
+  border: 1px solid var(--border-secondary);
+  color: var(--text-primary); /* Clearer text for fingerprint */
+  line-height: 1.4;
+}
+
+/* Copy button positioning/styling */
+.copyButton {
+    /* Relies on global .button .button-secondary .button-sm */
+    /* Add specific margin if needed */
+    margin-left: 0.25rem;
+    vertical-align: middle; /* Align with text/code blocks */
+}
+/* Specific copy button placement after code blocks */
+.code-block + .copyButton {
+    margin-top: 0.5rem;
+    display: inline-block; /* Make it align nicely below */
+}
+/* Specific copy button placement within fingerprint container */
+.fingerprintContainer .copyButton {
+    margin-left: 0; /* Remove left margin when inside flex */
+}
+
+.keyUrlLink {
+  margin-left: 0.5rem;
+  font-size: 0.9em;
+  color: var(--accent-blue);
+  text-decoration: none;
+  white-space: nowrap; /* Prevent wrapping */
+}
+.keyUrlLink:hover {
+    color: var(--accent-blue-hover);
+    text-decoration: underline;
+}
+
+.verificationSection {
+  margin-top: 2.5rem; /* More space before verification */
+  padding-top: 1.5rem;
+  border-top: 1px solid var(--border-primary); /* Separator line */
+}
+.verificationSection h3 { /* Style sub-heading */
+    margin-bottom: 1rem;
+    font-size: 1.2em;
+    color: var(--text-primary);
+}

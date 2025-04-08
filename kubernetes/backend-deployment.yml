@@ -1,0 +1,131 @@
+# shadow_market/kubernetes/backend-deployment.yaml
+# Revision History:
+# 2025-04-07: Initial creation. Defines the Deployment for the Django backend.
+#             - Configures replicas, image source (from CI/CD).
+#             - Mounts ConfigMap/Secret for environment configuration.
+#             - Sets command to run Gunicorn using config from ConfigMap.
+#             - Defines resource requests/limits.
+#             - Implements strict securityContext (non-root, read-only filesystem).
+#             - Includes placeholder volumeMounts/volumes for /tmp and media files.
+#             - Configures HTTP readiness and liveness probes.
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: shadow-market-backend # Name of the Deployment
+  namespace: shadow-market     # Deployed into the application's namespace
+  labels:
+    app: shadow-market       # Labels for selecting/grouping
+    tier: backend
+spec:
+  replicas: 2 # Run at least 2 replicas for basic availability (adjust based on load)
+  selector:
+    matchLabels: # Selector to find Pods managed by this Deployment
+      app: shadow-market
+      tier: backend
+  strategy: # Define deployment strategy (RollingUpdate is default and usually good)
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1 # Allow 1 pod to be unavailable during updates
+      maxSurge: 1       # Allow 1 extra pod to be created during updates
+  template: # Pod template used to create new Pods
+    metadata:
+      labels: # Labels applied to each Pod
+        app: shadow-market
+        tier: backend
+        # Optional: Add annotation for automatic rollout on ConfigMap change
+        # checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+    spec:
+      terminationGracePeriodSeconds: 30 # Allow time for Gunicorn workers to finish requests
+      # Service Account Name if using specific K8s service account for permissions
+      # serviceAccountName: shadow-market-sa
+      containers:
+        - name: backend # Container name
+          # Image built and pushed by the CI/CD pipeline
+          # IMPORTANT: Replace '<your-github-owner>' or use a variable substitution mechanism
+          image: ghcr.io/<your-github-owner>/shadow_market_backend:latest
+          # Use 'Always' to ensure K8s pulls the latest image if using ':latest' tag,
+          # or use specific SHA tags pushed by CI/CD for better immutability.
+          imagePullPolicy: Always
+          ports:
+            - name: http # Port name for reference
+              # Port Gunicorn listens on inside the container (from Dockerfile/Gunicorn config)
+              containerPort: 8000
+              protocol: TCP
+          envFrom: # Load all key-value pairs from ConfigMap as environment variables
+            - configMapRef:
+                name: shadow-market-config # Reference the ConfigMap created earlier
+          env: # Load specific sensitive values from Secret as environment variables
+            - name: DJANGO_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: shadow-market-secrets
+                  key: DJANGO_SECRET_KEY
+            - name: POSTGRES_PASSWORD # Needed by Django settings to connect to DB
+              valueFrom:
+                secretKeyRef:
+                  name: shadow-market-secrets
+                  key: POSTGRES_PASSWORD
+            - name: REDIS_PASSWORD # Needed by Django settings if Redis requires auth
+              valueFrom:
+                secretKeyRef:
+                  name: shadow-market-secrets
+                  key: REDIS_PASSWORD
+                  optional: true # Allow Secret key to be missing if Redis has no password
+            # Construct Gunicorn command arguments using values from ConfigMap
+            - name: GUNICORN_CMD_ARGS
+              value: "-w $(GUNICORN_WORKERS) -b $(GUNICORN_BIND_ADDR) --log-level info --access-logfile -"
+          # Override the Dockerfile CMD to ensure GUNICORN_CMD_ARGS is expanded
+          command: ["/bin/sh", "-c"]
+          args: ["exec gunicorn mymarketplace.wsgi:application $GUNICORN_CMD_ARGS"]
+          resources: # Define resource requests and limits for the container
+            requests: # Minimum resources required
+              memory: "512Mi" # Adjust based on application memory footprint
+              cpu: "500m"    # 0.5 CPU core
+            limits: # Maximum resources allowed
+              memory: "1Gi" # Adjust based on needs and node capacity
+              cpu: "1"       # 1 CPU core
+          securityContext: # Apply security best practices
+            allowPrivilegeEscalation: false # Prevent privilege escalation
+            runAsNonRoot: true              # Ensure container runs as non-root user
+            runAsUser: 1000                 # MUST match the 'appuser' UID from the backend Dockerfile
+            # readOnlyRootFilesystem: true    # RECOMMENDED: Makes filesystem immutable
+                                            # Requires writable /tmp volumeMount and ensuring app/deps
+                                            # don't write elsewhere unexpectedly. Test thoroughly.
+            capabilities:
+              drop:
+                - ALL # Drop all Linux capabilities for enhanced security
+          volumeMounts:
+            # Mount a writable /tmp if readOnlyRootFilesystem is true
+            # - name: tmp-volume
+            #   mountPath: /tmp
+            # Mount a persistent volume for media files if your app handles uploads
+            # - name: media-volume
+            #   mountPath: /app/media # Path where Django expects media files
+          readinessProbe: # Check if the application is ready to serve traffic
+            httpGet:
+              path: /healthz # Replace with your actual readiness endpoint
+              port: http    # Reference the container port by name ('http' -> 8000)
+            initialDelaySeconds: 15 # Wait before first probe
+            periodSeconds: 10       # How often to probe
+            timeoutSeconds: 5       # When to time out
+            failureThreshold: 3     # How many failures before marking Unready
+            successThreshold: 1
+          livenessProbe: # Check if the application is still running and responsive
+            httpGet:
+              path: /healthz # Replace with your actual liveness endpoint (can be same as readiness)
+              port: http
+            initialDelaySeconds: 30 # Wait longer before first probe
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 3
+      # --- Volume Definitions ---
+      volumes:
+        # Define an emptyDir volume for /tmp if using readOnlyRootFilesystem
+        # - name: tmp-volume
+        #   emptyDir: {}
+        # Define the volume for persistent media storage
+        # This requires a PersistentVolumeClaim named 'shadow-market-media-pvc' to be created separately.
+        # - name: media-volume
+        #   persistentVolumeClaim:
+        #     claimName: shadow-market-media-pvc # Needs a corresponding PVC manifest

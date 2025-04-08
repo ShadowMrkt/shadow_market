@@ -1,0 +1,29 @@
+# shadow_market/kubernetes/postgres-service.yaml
+# Revision History:
+# 2025-04-07: Initial creation. Defines the Headless Service for the PostgreSQL StatefulSet.
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: shadow-market-postgres-svc # MUST match 'serviceName' in postgres-statefulset.yaml
+  namespace: shadow-market        # Deployed into the application's namespace
+  labels:
+    app: postgres               # Labels to associate with the StatefulSet
+    tier: database
+spec:
+  ports:
+    - port: 5432                # Port the Service will expose
+      targetPort: postgresql    # Name of the port defined in the StatefulSet Pod template
+      protocol: TCP
+      name: tcp-postgresql      # Optional name for the port mapping
+  selector:
+    # Selects the Pods managed by the StatefulSet based on their labels
+    app: postgres
+    tier: database
+  # Setting clusterIP to None makes this a "headless" service.
+  # This is required for StatefulSets to provide stable DNS entries for each Pod.
+  # (e.g., shadow-market-postgres-0.shadow-market-postgres-svc.shadow-market.svc.cluster.local)
+  clusterIP: None
+  # Optional: Set publishNotReadyAddresses to true if clients need to discover pods
+  # even before they become fully Ready (usually not needed for standard DB connections).
+  # publishNotReadyAddresses: true

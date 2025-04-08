@@ -1,0 +1,173 @@
+{% comment %}
+# backend/forum/templetes/forum/thread_detail.html
+# <<< Rewritten for Base Extension, Post Display, Reply Form, Pagination >>>
+{% endcomment %}
+
+{% extends "base.html" %} {# <<< CHANGE: Extends the forum base template >>> #}
+{% load i18n tz %}
+
+{% block page_title %}{{ thread.title|truncatechars:60 }} - {{ thread.category.name }} - {% trans "Forum" %}{% endblock page_title %}
+
+{% comment %} Breadcrumbs block - Index > Category > Thread Title {% endcomment %}
+{% block breadcrumbs %}
+  <li class="flex items-center">
+    <a href="{% url 'forum:category_detail' thread.category.id %}" class="hover:text-blue-700">{{ thread.category.name }}</a>
+    <span class="mx-2">/</span> {# Separator #}
+  </li>
+  <li class="flex items-center text-gray-500" aria-current="page">
+    {# <<< BEST PRACTICE: Truncate long thread titles in breadcrumbs >>> #}
+    {{ thread.title|truncatechars:50 }}
+  </li>
+{% endblock breadcrumbs %}
+{% block breadcrumbs_separator %}{% endblock breadcrumbs_separator %}
+
+
+{% block main_content %}
+  <div class="forum-thread-detail">
+
+    <header class="thread-header mb-4">
+      <h1 class="text-xl font-semibold mb-1">{{ thread.title }}</h1>
+      {% if thread.is_locked %}
+        <div class="p-2 bg-gray-100 text-gray-700 border border-gray-300 rounded text-sm inline-flex items-center" role="status">
+          <svg class="h-4 w-4 mr-1" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M10 1a4.5 4.5 0 00-4.5 4.5V9H5a2 2 0 00-2 2v6a2 2 0 002 2h10a2 2 0 002-2v-6a2 2 0 00-2-2h-.5V5.5A4.5 4.5 0 0010 1zm3 8V5.5a3 3 0 10-6 0V9h6z" clip-rule="evenodd"></path></svg>
+          {% trans "This thread is locked. No further replies can be posted." %}
+        </div>
+      {% endif %}
+    </header>
+
+    {# Post Listing Section #}
+    <div class="post-list space-y-4">
+      {% for post in posts %}
+        {# <<< CHANGE: Use article or div for posts instead of card >>> #}
+        <article class="post-item border rounded" id="post-{{ post.id }}"> {# Anchor for linking #}
+          <header class="post-header bg-gray-50 px-4 py-2 border-b flex justify-between items-center text-xs text-gray-600">
+            <div class="post-author">
+              {% trans "Posted by:" %}
+              {% with author=post.author %}
+                {% if author %}
+                  {# <<< BEST PRACTICE: Use default filter for safety >>> #}
+                  <strong class="font-medium {% if author.is_vendor %}text-green-600{% endif %}">
+                    {{ author.username|default:_("[deleted]") }}
+                    {% if author.is_vendor %}
+                       <span class="vendor-badge">{% trans "(Vendor)" %}</span> {# Use CSS class instead of inline style #}
+                    {% endif %}
+                  </strong>
+                {% else %}
+                  <span class="text-gray-500 italic">{% trans "[deleted user]" %}</span>
+                {% endif %}
+              {% endwith %}
+            </div>
+            <div class="post-meta">
+               {# <<< BEST PRACTICE: Use timezone conversion and format >>> #}
+               {{ post.created_at|utc|date:"Y-m-d H:i" }} {% trans "UTC" %}
+               <span class="mx-1">({{ post.created_at|timesince }} {% trans "ago" %})</span>
+               {# <<< CHANGE: Calculate post number using paginator context >>> #}
+               <a href="#post-{{ post.id }}" title="Link to this post" class="hover:underline">#{{ forloop.counter0|add:posts.start_index }}</a>
+            </div>
+          </header>
+          <div class="post-content p-4">
+            {# <<< SECURITY: Use linebreaksbr for safety unless content is guaranteed sanitized AND |safe is explicitly needed >>> #}
+            {{ post.content|linebreaksbr }}
+            {# {% if post.content_is_safe %}{{ post.content|safe }}{% else %}{{ post.content|linebreaksbr }}{% endif %} #}
+          </div>
+          {# Optional Footer for Quote/Edit buttons #}
+          {# <footer class="post-footer bg-gray-50 px-4 py-2 border-t text-right text-xs">
+              <a href="#reply-form" class="button button-xs button-secondary">Reply</a>
+          </footer> #}
+        </article>
+      {% empty %}
+        <p class="text-center text-gray-500 py-4">{% trans "No posts found in this thread." %}</p> {# Should ideally not happen #}
+      {% endfor %}
+    </div>
+
+    {# Pagination Controls for Posts (Using same style as category_detail) #}
+    {% if posts.has_other_pages %}
+        <nav aria-label="Post navigation" class="pagination-nav mt-6 flex items-center justify-between border-t border-gray-200 px-4 sm:px-0">
+            {# Previous Button #}
+            <div class="-mt-px w-0 flex-1 flex">
+                {% if posts.has_previous %}
+                    <a href="?page={{ posts.previous_page_number }}" class="pagination-previous">
+                        <svg class="mr-3 h-5 w-5 text-gray-400" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><path fill-rule="evenodd" d="M7.707 14.707a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414l4-4a1 1 0 011.414 1.414L5.414 9H17a1 1 0 110 2H5.414l2.293 2.293a1 1 0 010 1.414z" clip-rule="evenodd" /></svg>
+                        {% trans "Previous" %}
+                    </a>
+                {% else %}
+                     <span class="pagination-disabled pagination-previous">
+                        <svg class="mr-3 h-5 w-5 text-gray-400" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><path fill-rule="evenodd" d="M7.707 14.707a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414l4-4a1 1 0 011.414 1.414L5.414 9H17a1 1 0 110 2H5.414l2.293 2.293a1 1 0 010 1.414z" clip-rule="evenodd" /></svg>
+                        {% trans "Previous" %}
+                    </span>
+                {% endif %}
+            </div>
+            {# Page Numbers #}
+            <div class="hidden md:-mt-px md:flex">
+                <span class="pagination-info">
+                    {% blocktrans with current=posts.number total=posts.paginator.num_pages %}Page {{ current }} of {{ total }}{% endblocktrans %}
+                </span>
+                {# Add full page number links here if needed #}
+            </div>
+            {# Next Button #}
+            <div class="-mt-px w-0 flex-1 flex justify-end">
+                {% if posts.has_next %}
+                    <a href="?page={{ posts.next_page_number }}" class="pagination-next">
+                        {% trans "Next" %}
+                        <svg class="ml-3 h-5 w-5 text-gray-400" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><path fill-rule="evenodd" d="M12.293 5.293a1 1 0 011.414 0l4 4a1 1 0 010 1.414l-4 4a1 1 0 01-1.414-1.414L14.586 11H3a1 1 0 110-2h11.586l-2.293-2.293a1 1 0 010-1.414z" clip-rule="evenodd" /></svg>
+                    </a>
+                {% else %}
+                    <span class="pagination-disabled pagination-next">
+                        {% trans "Next" %}
+                        <svg class="ml-3 h-5 w-5 text-gray-400" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><path fill-rule="evenodd" d="M12.293 5.293a1 1 0 011.414 0l4 4a1 1 0 010 1.414l-4 4a1 1 0 01-1.414-1.414L14.586 11H3a1 1 0 110-2h11.586l-2.293-2.293a1 1 0 010-1.414z" clip-rule="evenodd" /></svg>
+                    </span>
+                {% endif %}
+            </div>
+        </nav>
+    {% endif %} {# End pagination #}
+
+    {# Reply Form Section #}
+    <hr class="my-6 border-t"> {# <<< CHANGE: Increased margin >>> #}
+    <section id="reply-form" aria-labelledby="reply-form-heading"> {# <<< CHANGE: Use section >>> #}
+      <h2 id="reply-form-heading" class="text-lg font-medium mb-3">{% trans "Post a Reply" %}</h2>
+      {% if user.is_authenticated %}
+        {% if thread.is_locked %}
+          <p class="text-gray-600 italic">{% trans "This thread is locked. Replying is disabled." %}</p>
+        {% else %}
+          {# Assume reply_form is passed in context from the view #}
+          <form method="post" action="" novalidate class="space-y-3"> {# Post to the same URL #}
+              {% csrf_token %} {# <<< SECURITY: Always include CSRF token >>> #}
+
+              {# Display Non-Field Errors #}
+              {% if reply_form.non_field_errors %}
+                  <div class="form-errors-nonfield p-3 bg-red-100 text-red-700 border border-red-300 rounded text-sm">
+                      {% for error in reply_form.non_field_errors %}
+                          <p>{{ error }}</p>
+                      {% endfor %}
+                  </div>
+              {% endif %}
+
+              {# Content Field #}
+              <div class="form-field-group">
+                  {{ reply_form.content.label_tag }}
+                  {{ reply_form.content }} {# Render the textarea widget #}
+                  {% if reply_form.content.help_text %}
+                      {# <<< SECURITY CHANGE: Removed |safe filter from help_text >>> #}
+                      <p class="form-help-text text-xs text-gray-500 mt-1">{{ reply_form.content.help_text }}</p>
+                  {% endif %}
+                  {% if reply_form.content.errors %}
+                      <div class="form-field-errors text-sm text-red-600 mt-1">
+                          {% for error in reply_form.content.errors %}
+                              <p>{{ error }}</p>
+                          {% endfor %}
+                      </div>
+                  {% endif %}
+              </div>
+
+              <button type="submit" class="button button-primary">
+                <i class="fas fa-reply mr-1"></i> {% trans "Submit Reply" %}
+              </button>
+          </form>
+        {% endif %} {# End is_locked check #}
+      {% else %}
+        <p class="text-gray-600">{% blocktrans %}Please <a href="{{ settings.LOGIN_URL }}?next={{ request.path }}" class="font-medium underline hover:text-blue-700">login</a> to post a reply.{% endblocktrans %}</p>
+      {% endif %} {# End is_authenticated check #}
+    </section>
+
+  </div>
+{% endblock main_content %}

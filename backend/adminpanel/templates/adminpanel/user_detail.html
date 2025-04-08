@@ -1,0 +1,139 @@
+{% extends "adminpanel/base_admin.html" %}
+{% load i18n %} {# Needed for yesno filter if used #}
+
+{% block title %}Order Detail: {{ order.id|stringformat:"s"|slice:":8" }}{% endblock %}
+
+{% block content %}
+<h1>Order Detail <code>{{ order.id|stringformat:"s"|slice:":8" }}...</code></h1>
+<p><a href="{% url 'adminpanel:order_list' %}">&laquo; Back to Order List</a></p>
+
+{# Display prominent dispute warning #}
+{% if order.status == 'disputed' %}
+    <div class="warning-message" role="alert"> {# Use global class #}
+        <strong>DISPUTED:</strong> This order requires moderator review and resolution.
+    </div>
+{% endif %}
+
+<div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(350px, 1fr)); gap: 2rem;"> {# Responsive grid #}
+
+    {# --- Left Column: Core Details --- #}
+    <div class="card p-3"> {# Wrap sections in cards #}
+        <h2>Order Summary</h2>
+        <p><strong>Status:</strong>
+            {% if order.status == 'disputed' %}
+                <span style="font-weight: bold; color: orange;">{{ order.get_status_display }}</span>
+            {% elif order.status == 'finalized' %}
+                <span style="font-weight: bold; color: green;">{{ order.get_status_display }}</span>
+            {% elif 'cancel' in order.status or 'refunded' in order.status %}
+                <span style="font-weight: bold; color: red;">{{ order.get_status_display }}</span>
+            {% else %}
+                <span style="font-weight: bold;">{{ order.get_status_display }}</span>
+            {% endif %}
+        </p>
+        <p><strong>Product:</strong> {{ order.product.name }} (Qty: {{ order.quantity }})</p>
+        <p><strong>Currency:</strong> {{ order.selected_currency }}</p>
+        <p><strong>Total Price:</strong> {{ order.total_price_native_selected|floatformat:"-8" }} {# Adjust format #} {{ order.selected_currency }}</p>
+        <p><strong>Date Placed:</strong> {{ order.created_at|date:"Y-m-d H:i:s" }}</p>
+        <p><strong>Last Updated:</strong> {{ order.updated_at|date:"Y-m-d H:i:s" }}</p>
+
+        <h3 class="mt-3">Participants</h3>
+        <p><strong>Buyer:</strong> <a href="{% url 'adminpanel:user_detail' order.buyer.id %}">{{ order.buyer.username }}</a></p>
+        <p><strong>Vendor:</strong> <a href="{% url 'adminpanel:user_detail' order.vendor.id %}">{{ order.vendor.username }}</a></p>
+
+        <h3 class="mt-3">Deadlines</h3>
+        <p><strong>Payment Deadline:</strong> {{ order.payment_deadline|date:"Y-m-d H:i:s"|default:"N/A" }}</p>
+        <p><strong>Auto-Finalize By:</strong> {{ order.auto_finalize_deadline|date:"Y-m-d H:i:s"|default:"N/A" }}</p>
+        <p><strong>Dispute By:</strong> {{ order.dispute_deadline|date:"Y-m-d H:i:s"|default:"N/A" }}</p>
+    </div>
+
+    {# --- Right Column: Payment, Escrow, Shipping --- #}
+    <div class="card p-3">
+        <h2>Payment Details</h2>
+        {% if order.payment %}
+            <p><strong>Address:</strong> <code class="font-monospace">{{ order.payment.payment_address }}</code></p>
+            {% if order.payment.payment_id_monero %}
+            <p><strong>XMR Payment ID:</strong> <code class="font-monospace">{{ order.payment.payment_id_monero }}</code></p>
+            {% endif %}
+            <p><strong>Expected:</strong> {{ order.payment.expected_amount_native|floatformat:"-12" }} {{ order.selected_currency }}</p>
+            <p><strong>Received:</strong> {{ order.payment.received_amount_native|floatformat:"-12" }} {{ order.selected_currency }}</p>
+            <p><strong>Confirmed:</strong> {{ order.payment.is_confirmed|yesno:"Yes,No" }} ({{ order.payment.confirmations_received }}/{{ order.payment.confirmations_needed }})</p>
+            <p><strong>TX Hash:</strong> <code class="font-monospace">{{ order.payment.transaction_hash|default:"N/A" }}</code></p>
+        {% else %}
+            <p class="text-muted">Payment details not yet generated.</p>
+        {% endif %}
+
+        <h3 class="mt-3">Escrow Details</h3>
+        {# Display relevant escrow info based on currency #}
+        {% if order.selected_currency == 'XMR' %} <p><strong>XMR Escrow Addr:</strong> <code class="font-monospace">{{ order.xmr_multisig_escrow_address|default:"(Placeholder)" }}</code></p>
+        {% elif order.selected_currency == 'BTC' %} <p><strong>BTC Escrow Addr:</strong> <code class="font-monospace">{{ order.btc_escrow_address|default:"(Placeholder)" }}</code></p> <p><small><strong>Redeem Script:</strong> <code class="font-monospace">{{ order.btc_redeem_script|slice:":50" }}{% if order.btc_redeem_script|length > 50 %}...{% endif %}</code></small></p>
+        {% elif order.selected_currency == 'ETH' %} <p><strong>ETH Escrow Contract:</strong> <code class="font-monospace">{{ order.eth_escrow_contract_address|default:"(Placeholder)" }}</code></p>
+        {% endif %}
+        <p><strong>Release Initiated:</strong> {{ order.release_initiated|yesno:"Yes,No" }}</p>
+        <p><strong>Buyer Signed:</strong> {{ order.release_signature_buyer|yesno:"Yes,No" }}</p>
+        <p><strong>Vendor Signed:</strong> {{ order.release_signature_vendor|yesno:"Yes,No" }}</p>
+        <p><strong>Broadcast TX Hash:</strong> <code class="font-monospace">{{ order.release_tx_broadcast_hash|default:"N/A" }}</code></p>
+
+        <h3 class="mt-3">Shipping</h3>
+        {% if order.product.is_digital %}
+             <p>Digital product.</p>
+        {% elif order.encrypted_shipping_info %}
+             <p>Shipping info is PGP encrypted for the vendor.</p>
+             <details>
+                 <summary>Show Encrypted Blob (Admin Only)</summary>
+                 <textarea readonly class="form-textarea code-block" rows="5">{{ order.encrypted_shipping_info }}</textarea> {# Use classes #}
+             </details>
+        {% else %}
+             <p class="text-warning">Shipping info missing for physical order.</p> {# Use class #}
+        {% endif %}
+    </div>
+</div>
+
+{# --- Dispute Resolution Section (Show only if disputed) --- #}
+{% if order.status == 'disputed' %}
+<div class="card p-3 mt-4" style="border-color: orange;"> {# Highlight dispute section #}
+    <h2>Dispute Resolution</h2>
+    <p><strong>Action Required:</strong> Review communications and evidence, then make a final decision.</p>
+    {# Placeholder: Add info about where to find evidence/communication #}
+    <p class="text-muted"><small>Evidence/Communication should be reviewed via linked Support Ticket (Feature TODO).</small></p>
+
+    {# Display the resolution form passed from the view context #}
+    {% if resolve_form %}
+        <form method="post" action="{% url 'adminpanel:order_detail' order.id %}"> {# POST to the same view #}
+            {% csrf_token %}
+            <input type="hidden" name="resolve_dispute_submit" value="1"> {# Identifier for POST handling #}
+
+            {# Display potential errors from previous POST attempt #}
+            {% if resolve_form_error %}
+            <div class="error-message">{{ resolve_form_error }}</div>
+            {% endif %}
+
+            {# Render form fields #}
+            <div class="form-group">
+                 <label for="{{ resolve_form.resolution_notes.id_for_label }}" class="form-label">{{ resolve_form.resolution_notes.label }}</label>
+                 {{ resolve_form.resolution_notes }}
+                 {% if resolve_form.resolution_notes.errors %} <div class="error-message">{{ resolve_form.resolution_notes.errors }}</div> {% endif %}
+            </div>
+            <div class="form-group">
+                <label for="{{ resolve_form.release_to_buyer_percent.id_for_label }}" class="form-label">{{ resolve_form.release_to_buyer_percent.label }}</label>
+                <div style="display: flex; align-items: center; gap: 0.5rem;">
+                     {{ resolve_form.release_to_buyer_percent }} <span>%</span>
+                </div>
+                {% if resolve_form.release_to_buyer_percent.help_text %} <p class="form-help-text">{{ resolve_form.release_to_buyer_percent.help_text }}</p> {% endif %}
+                 {% if resolve_form.release_to_buyer_percent.errors %} <div class="error-message">{{ resolve_form.release_to_buyer_percent.errors }}</div> {% endif %}
+            </div>
+
+            {# Display non-field errors #}
+             {% if resolve_form.non_field_errors %} <div class="error-message">{{ resolve_form.non_field_errors }}</div> {% endif %}
+
+            <div class="mt-3">
+                 <p class="text-danger"><strong>Warning:</strong> This action is final and will attempt to release funds according to the percentage specified. Ensure your PGP authenticated session is active.</p>
+                 <button type="submit" class="button button-danger">Resolve Dispute & Initiate Release</button> {# Use global classes #}
+            </div>
+        </form>
+    {% else %}
+        <p class="text-muted">Dispute resolution form not available.</p>
+    {% endif %}
+</div>
+{% endif %}
+
+{% endblock %}

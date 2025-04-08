@@ -1,0 +1,116 @@
+/* frontend/pages/Checkout.module.css */
+/* --- REVISION HISTORY --- */
+/* 2025-04-07: Rev 1 - Initial CSS Module for CheckoutPage component (Rev 1). */
+/* - Styles for grid layout, summary/shipping boxes, input type selector, total price. */
+/* - Dark theme compatible styling using CSS variables. */
+
+/* TODO: Add responsive adjustments for the grid layout on smaller screens. */
+
+/* Main grid layout for summary and shipping/message sections */
+.grid {
+  display: grid;
+  /* Start with 1 column, switch to 2 on wider screens */
+  grid-template-columns: 1fr;
+  gap: 2rem;
+  align-items: start; /* Align items to the top */
+  margin-top: 1.5rem; /* Space below header/warning */
+  margin-bottom: 2rem; /* Space above final button */
+}
+
+/* Media query for two columns on wider screens */
+@media (min-width: 768px) {
+  .grid {
+    /* Example: Equal columns, or adjust ratio like '2fr 3fr' */
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+/* Specific overrides for card sections if needed, otherwise global .card is used */
+.summaryBox {
+  /* Example: Add specific padding or minimum height? */
+  /* min-height: 300px; */
+}
+.shippingBox {
+  /* Example: Add specific padding or minimum height? */
+  /* min-height: 300px; */
+}
+
+/* Section Title within cards */
+.sectionTitle {
+  /* Relies mostly on global h2, but ensure no top margin */
+  margin-top: 0;
+  margin-bottom: 1.5rem;
+  font-size: 1.4em;
+  font-weight: 600;
+  color: var(--text-primary);
+  border-bottom: 1px solid var(--border-primary);
+  padding-bottom: 0.5rem;
+}
+
+/* Horizontal Rule in Summary Box */
+.hr {
+  margin: 1rem 0;
+  border: none;
+  border-top: 1px solid var(--border-primary); /* Use theme border color */
+}
+
+/* Total Price Styling */
+.totalPrice {
+  font-size: 1.3em;
+  font-weight: bold;
+  margin-top: 1rem;
+  padding-top: 1rem; /* Space above total */
+  border-top: 1px solid var(--border-secondary); /* Slightly lighter border? */
+  text-align: right; /* Align total to the right */
+  color: var(--text-primary); /* Ensure primary text color */
+}
+
+/* Layout for Input Type Radio Buttons (Structured vs PGP) */
+.inputTypeSelector {
+  display: flex;
+  flex-wrap: wrap; /* Allow wrapping on small screens */
+  gap: 1.5rem; /* Space between radio options */
+  margin-bottom: 1.5rem;
+  padding-bottom: 1rem;
+  border-bottom: 1px solid var(--border-primary);
+}
+
+.radioLabel {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem; /* Space between radio button and text */
+  cursor: pointer;
+  color: var(--text-secondary);
+  font-size: 0.95em;
+}
+/* Style radio button itself slightly (optional, browser dependent) */
+.radioLabel input[type="radio"] {
+    accent-color: var(--accent-blue); /* Use accent color for checked state */
+    cursor: pointer;
+    margin-right: 0.2em;
+}
+.radioLabel:hover {
+    color: var(--text-primary); /* Lighten text on hover */
+}
+
+/* Container for the final submit button */
+.submitButtonContainer {
+  margin-top: 2rem; /* Space above the button */
+  text-align: center; /* Center button */
+}
+/* Optional: Make button full width */
+.submitButtonContainer .button {
+     width: 100%;
+     font-size: 1.1em; /* Make final button slightly larger */
+     padding-top: 0.9rem;
+     padding-bottom: 0.9rem;
+}
+
+/* Link styling within checkout page (if needed beyond global 'a' styles) */
+.link {
+  color: var(--accent-blue);
+  text-decoration: underline;
+}
+.link:hover {
+  color: var(--accent-blue-hover);
+}

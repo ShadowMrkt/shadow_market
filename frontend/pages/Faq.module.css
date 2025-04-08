@@ -1,0 +1,47 @@
+/* frontend/pages/Faq.module.css */
+/* --- REVISION HISTORY --- */
+/* 2025-04-07: Rev 1 - Initial CSS Module for FaqPage component (Rev 1). */
+/* - Styles for question (h3) and answer (p) elements. */
+/* - Dark theme compatible styling using CSS variables. */
+
+/* TODO: Adjust border color/width or indentation as desired. */
+
+/* Styling for the Question (h3 element) */
+.question {
+  font-weight: 600; /* Explicitly bold */
+  margin-top: 2rem; /* Space above each question (adjust as needed) */
+  margin-bottom: 0.75rem; /* Space between question and answer */
+  color: var(--text-primary); /* Use primary text color for questions */
+  font-size: 1.2em; /* Slightly larger than default p, smaller than h2 */
+  line-height: 1.4;
+}
+
+/* First question in a section doesn't need extra top margin */
+section > .question:first-of-type {
+    margin-top: 0;
+}
+
+/* Styling for the Answer (p element) */
+.answer {
+  margin-left: 1rem; /* Indentation */
+  padding-left: 1rem; /* Padding left of the border */
+  border-left: 3px solid var(--border-primary); /* Subtle left border using theme color */
+  color: var(--text-secondary); /* Use secondary text color for answers */
+  line-height: 1.7; /* Improve readability */
+  margin-bottom: 1rem; /* Standard paragraph bottom margin */
+}
+
+/* Ensure links within answers use the standard link color */
+.answer a {
+    color: var(--accent-blue);
+}
+.answer a:hover {
+    color: var(--accent-blue-hover);
+}
+
+/* Ensure strong/bold text within answers stands out */
+.answer strong,
+.answer b {
+    color: var(--text-primary); /* Use primary text color for emphasis */
+    font-weight: 600;
+}

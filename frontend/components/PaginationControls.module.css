@@ -1,0 +1,66 @@
+/* frontend/components/PaginationControls.module.css */
+/* --- REVISION HISTORY --- */
+/* 2025-04-07: Rev 1 - Initial CSS Module for PaginationControls component (Rev 1). */
+/* - Styles for layout, buttons, and page info text. */
+/* - Dark theme compatible styling using CSS variables. */
+
+/* TODO: Adjust button styling to perfectly match global .button if desired, or keep distinct. */
+/* TODO: Add focus-visible styles for buttons if not covered globally. */
+
+.paginationControls {
+  display: flex;
+  justify-content: center; /* Center the controls */
+  align-items: center; /* Align items vertically */
+  margin-top: 2.5rem; /* Space above the controls */
+  margin-bottom: 1rem; /* Space below the controls */
+  gap: 1rem; /* Space between buttons and text */
+  padding: 1rem 0; /* Add some padding */
+  border-top: 1px solid var(--border-primary); /* Optional separator */
+}
+
+.pageButton {
+  /* Inherit from global button or define similar styles using variables */
+  display: inline-block;
+  font-weight: 600;
+  line-height: 1.5;
+  color: var(--text-primary); /* Light text for dark buttons */
+  text-align: center;
+  text-decoration: none;
+  vertical-align: middle;
+  cursor: pointer;
+  user-select: none;
+  background-color: var(--bg-tertiary); /* Use tertiary background */
+  border: 1px solid var(--border-secondary); /* Use secondary border */
+  padding: 0.5rem 1rem; /* Slightly smaller padding than default button? */
+  font-size: 0.9rem;
+  border-radius: 4px;
+  transition: background-color 0.15s ease-in-out, border-color 0.15s ease-in-out, opacity 0.15s ease-in-out;
+}
+
+.pageButton:hover:not(:disabled) {
+  background-color: var(--bg-hover); /* Use hover background */
+  border-color: var(--border-focus);
+}
+
+.pageButton:disabled {
+  background-color: var(--bg-input); /* Use input background for disabled */
+  border-color: var(--border-primary);
+  color: var(--text-tertiary); /* Very muted text */
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* Optional: Add specific focus styles if global :focus-visible isn't sufficient */
+/*
+.pageButton:focus-visible {
+  outline: 2px solid var(--border-focus);
+  outline-offset: 1px;
+}
+*/
+
+.pageInfo {
+  margin: 0 0.5rem; /* Reduce horizontal margin slightly */
+  color: var(--text-secondary); /* Use secondary text color */
+  font-size: 0.9em;
+  white-space: nowrap; /* Prevent wrapping */
+}

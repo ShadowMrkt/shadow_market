@@ -1,0 +1,69 @@
+{% extends "adminpanel/base_admin.html" %}
+
+{% block title %}User Management{% endblock %}
+
+{% block content %}
+<h1>User Management</h1>
+
+{# Filter Form #}
+<form method="get" style="margin-bottom: 1.5rem; display: flex; gap: 1rem; align-items: flex-end;">
+    <div>
+        <label for="q">Search Username:</label>
+        <input type="text" name="q" id="q" value="{{ query|default:'' }}" placeholder="Enter username...">
+    </div>
+    <div>
+        <label for="status">Filter Status:</label>
+        <select name="status" id="status" onchange="this.form.submit()">
+            <option value="" {% if not status_filter %}selected{% endif %}>All Users</option>
+            <option value="active" {% if status_filter == 'active' %}selected{% endif %}>Active Only</option>
+            <option value="inactive" {% if status_filter == 'inactive' %}selected{% endif %}>Inactive/Banned</option>
+            <option value="vendor" {% if status_filter == 'vendor' %}selected{% endif %}>Vendors Only</option>
+        </select>
+    </div>
+    <button type="submit" class="button secondary" style="padding: 0.7rem 1rem;">Filter</button>
+    <a href="{% url 'adminpanel:user_list' %}" class="button secondary" style="padding: 0.7rem 1rem;">Reset</a>
+</form>
+
+{# User Table #}
+{% if users %}
+<table>
+    <thead>
+        <tr>
+            <th>Username</th>
+            <th>Status</th>
+            <th>Vendor</th>
+            <th>Joined</th>
+            <th>Last Login</th>
+            <th>Actions</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for u in users %}
+        <tr>
+            <td>{{ u.username }} {% if u.is_staff %}(Staff){% endif %} {% if user.is_superuser or user.is_owner %}{% if u.is_superuser %}(SU){% endif %}{% endif %}</td>
+            <td>{% if u.is_active %}<span style="color: green;">Active</span>{% else %}<span style="color: red;">Inactive</span>{% endif %}</td>
+            <td>{% if u.is_vendor %}Yes (Lvl {{ u.vendor_level }}){% else %}No{% endif %}</td>
+            <td>{{ u.date_joined|date:"Y-m-d" }}</td>
+            <td>{{ u.last_login|date:"Y-m-d H:i"|default:"Never" }}</td>
+            <td>
+                <a href="{% url 'adminpanel:user_detail' u.id %}" class="button secondary" style="font-size: 0.8em; padding: 0.3rem 0.6rem;">Details</a>
+                {# Avoid banning staff/self via simple button #}
+                {% if u.is_active and not u.is_staff and u.id != request.user.id %}
+                <a href="{% url 'adminpanel:user_ban' u.id %}" class="button danger" style="font-size: 0.8em; padding: 0.3rem 0.6rem;">Ban</a>
+                {% elif not u.is_active %}
+                 {# Add Unban link/form here #}
+                 <span style="color: #777;">(Banned)</span> {# Placeholder #}
+                {% endif %}
+                {# Add Vendor Approve/Reject links if is_vendor=False and not approved yet #}
+            </td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% else %}
+<p>No users found matching criteria.</p>
+{% endif %}
+
+{# Add Pagination if implemented #}
+
+{% endblock %}

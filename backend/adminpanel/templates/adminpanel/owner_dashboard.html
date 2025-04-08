@@ -1,0 +1,71 @@
+{% extends "adminpanel/base_admin.html" %}
+
+{% block title %}Owner Dashboard{% endblock %}
+
+{% block content %}
+<h1>Owner Dashboard</h1>
+<p class="text-danger"><strong>Owner Level Access.</strong> Actions taken here have significant impact.</p>
+
+{# Display stats grid #}
+<div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1.5rem; margin-bottom: 2rem;">
+    <div style="background: #f9f9f9; padding: 1.5rem; border-radius: 8px; border: 1px solid #eee; text-align: center;">
+        <span style="font-size: 2em; font-weight: bold; display: block; margin-bottom: 0.5rem;">{{ total_users }}</span>
+        <span style="font-size: 1em; color: #555;">Total Users</span>
+    </div>
+     <div style="background: #f9f9f9; padding: 1.5rem; border-radius: 8px; border: 1px solid #eee; text-align: center;">
+        <span style="font-size: 2em; font-weight: bold; display: block; margin-bottom: 0.5rem;">{{ total_vendors }}</span>
+        <span style="font-size: 1em; color: #555;">Approved Vendors</span>
+    </div>
+     <div style="background: #f9f9f9; padding: 1.5rem; border-radius: 8px; border: 1px solid #eee; text-align: center;">
+        <span style="font-size: 2em; font-weight: bold; display: block; margin-bottom: 0.5rem;">{{ total_orders }}</span>
+        <span style="font-size: 1em; color: #555;">Total Orders</span>
+    </div>
+     {# Add more stats cards as needed #}
+</div>
+
+
+<h2>Global Settings</h2>
+{# Note: The form action points to a separate URL for processing #}
+<form method="post" action="{% url 'adminpanel:update_settings' %}">
+    {% csrf_token %}
+
+    {# Display non-field errors first #}
+    {% if settings_form.non_field_errors %}
+        <div class="error-message">
+            {% for error in settings_form.non_field_errors %}
+                {{ error }}<br>
+            {% endfor %}
+        </div>
+    {% endif %}
+
+    {# Render form fields using Django's rendering - includes labels, inputs, help text, field errors #}
+    {% for field in settings_form %}
+        <div class="form-group">
+            <label for="{{ field.id_for_label }}">{{ field.label }}:</label>
+            {{ field }} {# Renders the widget #}
+            {% if field.help_text %}
+                <p class="form-help-text">{{ field.help_text|safe }}</p>
+            {% endif %}
+            {% if field.errors %}
+                <div class="error-message">
+                    {% for error in field.errors %}{{ error }}{% endfor %}
+                </div>
+            {% endif %}
+        </div>
+    {% endfor %}
+
+    <button type="submit" class="button primary">Update Settings</button>
+</form>
+
+<hr style="margin: 2rem 0;">
+
+<h2>Critical Actions</h2>
+<p>Access sensitive emergency functions.</p>
+<a href="{% url 'adminpanel:emergency_actions' %}" class="button danger">Go to Emergency Actions</a>
+
+<hr style="margin: 2rem 0;">
+
+<h2>Staff Management</h2>
+<p>Manage staff roles and permissions via <a href="/control/auth/user/">Django Admin Interface</a> (requires superuser).</p>
+
+{% endblock %}

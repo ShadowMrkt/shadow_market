@@ -1,0 +1,106 @@
+/* frontend/components/ErrorBoundary.module.css */
+/* --- REVISION HISTORY --- */
+/* 2025-04-07: Rev 1 - Initial CSS Module for ErrorBoundary component (Rev 2). */
+/* - Styles for fallback container, title, message, error details. */
+/* - Dark theme compatible styling using CSS variables. */
+
+/* TODO: Adjust styling as needed for visual consistency with overall app design. */
+
+.fallbackContainer {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 80vh; /* Minimum height */
+  padding: 2rem;
+  text-align: center;
+  background-color: var(--bg-primary); /* Use primary background */
+  color: var(--text-secondary); /* Default text is secondary */
+}
+
+/* Optional Icon Style */
+/* .icon { font-size: 3rem; margin-bottom: 1rem; color: var(--accent-red); } */
+
+.fallbackTitle {
+  color: var(--accent-red); /* Use danger accent color */
+  margin-bottom: 1rem;
+  font-size: 1.8em;
+  font-weight: 600;
+}
+
+.fallbackMessage {
+  margin-bottom: 1.5rem;
+  line-height: 1.6;
+  max-width: 600px; /* Limit width for readability */
+  color: var(--text-primary); /* Use primary text for main message */
+}
+
+/* --- Development Only Error Details --- */
+.errorDetailsContainer {
+    width: 100%;
+    max-width: 800px; /* Limit width of details */
+    margin-bottom: 1.5rem;
+    border: 1px solid var(--border-primary);
+    border-radius: 4px;
+    background-color: var(--bg-secondary); /* Slightly different background */
+}
+
+.errorDetailsSummary {
+    cursor: pointer;
+    padding: 0.75rem 1rem;
+    font-weight: 600;
+    color: var(--text-secondary);
+    border-bottom: 1px solid var(--border-primary); /* Separator when closed */
+    outline: none; /* Remove default focus outline if needed */
+}
+.errorDetailsContainer[open] > .errorDetailsSummary {
+    border-bottom: 1px solid var(--border-primary); /* Keep separator when open */
+}
+.errorDetailsSummary:hover {
+    color: var(--text-primary);
+}
+/* Style details marker */
+.errorDetailsSummary {
+  list-style: none;
+}
+.errorDetailsSummary::-webkit-details-marker {
+  display: none;
+}
+.errorDetailsSummary::before {
+  content: '▶ ';
+  font-size: 0.8em;
+  margin-right: 0.4em;
+  display: inline-block;
+  transition: transform 0.15s ease-in-out;
+}
+.errorDetailsContainer[open] > .errorDetailsSummary::before {
+  transform: rotate(90deg);
+}
+
+
+.errorDetails {
+  /* Style for the <pre> tag */
+  background-color: var(--bg-input); /* Use input background */
+  padding: 1rem;
+  text-align: left;
+  font-size: 0.8em;
+  font-family: monospace, sans-serif;
+  color: var(--text-secondary); /* Muted color for stack trace */
+  overflow-x: auto; /* Allow horizontal scrolling */
+  white-space: pre-wrap; /* Wrap lines */
+  word-break: break-all; /* Break long strings */
+  max-height: 300px; /* Limit height */
+  line-height: 1.5;
+}
+.errorDetails strong {
+    color: var(--text-primary); /* Make labels stand out */
+}
+
+.hr { /* Custom hr style within error details */
+    border: none;
+    border-top: 1px dashed var(--border-secondary); /* Dashed separator */
+    margin: 0.75rem 0;
+}
+
+
+/* Retry button uses global .button .button-primary */

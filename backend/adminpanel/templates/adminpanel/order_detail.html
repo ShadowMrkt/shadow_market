@@ -1,0 +1,115 @@
+{% extends "adminpanel/base_admin.html" %}
+{% load i18n %} {# Needed for yesno filter if used #}
+
+{% block title %}Order Detail: {{ order.id|stringformat:"s"|slice:":8" }}{% endblock %}
+
+{% block content %}
+<h1>Order Detail <code>{{ order.id|stringformat:"s"|slice:":8" }}...</code></h1>
+<p><a href="{% url 'adminpanel:order_list' %}">&laquo; Back to Order List</a></p>
+
+{% if order.status == 'disputed' %}
+    <p style="background-color: #fff3cd; color: #856404; border: 1px solid #ffeeba; padding: 1rem; border-radius: 4px;">
+        <strong>This order is currently disputed.</strong> Moderator action may be required.
+    </p>
+{% endif %}
+
+<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 2rem;">
+    <div>
+        <h2>Order Summary</h2>
+        <p><strong>Status:</strong> {{ order.get_status_display }}</p>
+        <p><strong>Product:</strong> {{ order.product.name }} (Qty: {{ order.quantity }})</p>
+        <p><strong>Currency:</strong> {{ order.selected_currency }}</p>
+        <p><strong>Total Price:</strong> {{ order.total_price_native_selected|floatformat:"-8" }} {# Adjust format #}</p>
+        <p><strong>Date Placed:</strong> {{ order.created_at|date:"Y-m-d H:i:s" }}</p>
+        <p><strong>Last Updated:</strong> {{ order.updated_at|date:"Y-m-d H:i:s" }}</p>
+
+        <h2>Participants</h2>
+        <p><strong>Buyer:</strong> <a href="{% url 'adminpanel:user_detail' order.buyer.id %}">{{ order.buyer.username }}</a></p>
+        <p><strong>Vendor:</strong> <a href="{% url 'adminpanel:user_detail' order.vendor.id %}">{{ order.vendor.username }}</a></p>
+
+        <h2>Deadlines</h2>
+        <p><strong>Payment Deadline:</strong> {{ order.payment_deadline|date:"Y-m-d H:i:s"|default:"N/A" }}</p>
+        <p><strong>Auto-Finalize By:</strong> {{ order.auto_finalize_deadline|date:"Y-m-d H:i:s"|default:"N/A" }}</p>
+        <p><strong>Dispute By:</strong> {{ order.dispute_deadline|date:"Y-m-d H:i:s"|default:"N/A" }}</p>
+    </div>
+
+    <div>
+        <h2>Payment Details</h2>
+        {% if order.payment %}
+            <p><strong>Address:</strong> <code>{{ order.payment.payment_address }}</code></p>
+            {% if order.payment.payment_id_monero %}
+            <p><strong>XMR Payment ID:</strong> <code>{{ order.payment.payment_id_monero }}</code></p>
+            {% endif %}
+            <p><strong>Expected:</strong> {{ order.payment.expected_amount_native|floatformat:"-12" }} {{ order.selected_currency }}</p>
+            <p><strong>Received:</strong> {{ order.payment.received_amount_native|floatformat:"-12" }} {{ order.selected_currency }}</p>
+            <p><strong>Confirmed:</strong> {{ order.payment.is_confirmed|yesno:"Yes,No" }} ({{ order.payment.confirmations_received }}/{{ order.payment.confirmations_needed }})</p>
+            <p><strong>TX Hash:</strong> <code>{{ order.payment.transaction_hash|default:"N/A" }}</code></p>
+        {% else %}
+            <p>Payment details not yet generated.</p>
+        {% endif %}
+
+        <h2>Escrow Details</h2>
+        {# Display relevant escrow info based on currency - BE CAREFUL WITH SENSITIVE DATA #}
+        {% if order.selected_currency == 'XMR' %}
+             <p><strong>XMR Escrow Address:</strong> <code>{{ order.xmr_multisig_escrow_address|default:"Not Set" }}</code></p>
+        {% elif order.selected_currency == 'BTC' %}
+             <p><strong>BTC Escrow Address:</strong> <code>{{ order.btc_escrow_address|default:"Not Set" }}</code></p>
+             <p><strong>BTC Redeem Script:</strong> <code>{{ order.btc_redeem_script|slice:":50" }}{% if order.btc_redeem_script|length > 50 %}...{% endif %}</code></p>
+        {% elif order.selected_currency == 'ETH' %}
+              <p><strong>ETH Escrow Contract:</strong> <code>{{ order.eth_escrow_contract_address|default:"Not Set" }}</code></p>
+        {% endif %}
+        <p><strong>Release Initiated:</strong> {{ order.release_initiated|yesno:"Yes,No" }}</p>
+        <p><strong>Buyer Signed:</strong> {{ order.release_signature_buyer|yesno:"Yes,No" }}</p> {# Assuming boolean flags now #}
+        <p><strong>Vendor Signed:</strong> {{ order.release_signature_vendor|yesno:"Yes,No" }}</p>
+        <p><strong>Broadcast TX Hash:</strong> <code>{{ order.release_tx_broadcast_hash|default:"N/A" }}</code></p>
+
+
+        <h2>Shipping</h2>
+        {% if order.product.is_digital %}
+             <p>Digital product.</p>
+        {% elif order.encrypted_shipping_info %}
+             <p>Shipping info is PGP encrypted for the vendor.</p>
+             {# Admin cannot decrypt this without vendor's key #}
+             <details>
+                 <summary>Show Encrypted Blob (Admin Only)</summary>
+                 <textarea readonly style="width: 100%; height: 100px; font-family: monospace; background: #eee;">{{ order.encrypted_shipping_info }}</textarea>
+             </details>
+        {% else %}
+             <p style="color: orange;">Shipping info missing for physical order.</p>
+        {% endif %}
+
+    </div>
+</div>
+
+{# --- Dispute Resolution Section (Show only if disputed) --- #}
+{% if order.status == 'disputed' %}
+<div style="margin-top: 2rem; padding: 1.5rem; border: 1px solid orange; border-radius: 8px;">
+    <h2>Dispute Resolution</h2>
+    <p>This order is disputed. Review communications and evidence via linked support ticket.</p>
+    {# TODO: Link to support ticket if created automatically #}
+
+    {# Add Dispute Resolution Form Here #}
+    <form method="post" action="#"> {# Add URL for resolving dispute #}
+        {% csrf_token %}
+        <p><strong>Moderator Decision:</strong></p>
+        <div>
+            <label for="resolution_notes">Resolution Notes (Required):</label>
+            <textarea name="resolution_notes" id="resolution_notes" rows="4" required style="width: 100%;"></textarea>
+        </div>
+        <div style="margin-top: 1rem;">
+            <label for="release_percent">Release Percentage to Buyer (0-100):</label>
+            <input type="number" name="release_to_buyer_percent" id="release_percent" min="0" max="100" value="0" required style="width: 100px;"> %
+            <span style="margin-left: 1rem;">(Remaining % goes to Vendor)</span>
+        </div>
+        <div style="margin-top: 1rem;">
+             <p class="text-danger">Ensure percentage is correct before submitting. This will initiate fund release from escrow based on your decision.</p>
+             <button type="submit" class="button danger">Resolve Dispute & Initiate Release</button>
+        </div>
+    </form>
+</div>
+{% endif %}
+
+
+{# Add links to related support tickets, feedback etc. #}
+
+{% endblock %}

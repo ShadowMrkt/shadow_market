@@ -1,0 +1,175 @@
+# shadow_market/docker-compose.yml
+# Revision History:
+# 2025-04-07: Initial creation from scratch for LOCAL DEVELOPMENT environment.
+#             - Defines services: db (Postgres), redis, backend, frontend.
+#             - Uses official images for postgres:15-alpine and redis:7-alpine.
+#             - Builds backend and frontend from local Dockerfiles.
+#             - Mounts local code volumes for hot-reloading during development.
+#             - Uses named volumes for persistent db/redis data.
+#             - Relies on a '.env' file in the same directory for configuration.
+#             - Overrides commands for development servers (runserver, yarn start).
+#             - Configures ports, networks, dependencies, and healthchecks.
+
+version: '3.8' # Specify a recent Compose file version
+
+# --- Environment Variables ---
+# Create a file named '.env' in this directory (shadow_market/)
+# Add variables like these (use strong passwords, even for dev):
+#
+# POSTGRES_DB=shadowdb_dev
+# POSTGRES_USER=shadowuser_dev
+# POSTGRES_PASSWORD=replace_with_strong_dev_password
+#
+# REDIS_PASSWORD=replace_with_strong_dev_redis_password # Optional: Set if Redis needs auth
+#
+# # Django Settings
+# DJANGO_SECRET_KEY=replace_with_a_long_random_string_for_dev_secret_key # Use a real random key
+# DJANGO_SETTINGS_MODULE=mymarketplace.settings.dev # Development settings file
+#
+# # Port Mappings (Host:Container)
+# FRONTEND_PORT=3000 # Host port for frontend dev server
+# BACKEND_PORT=8000  # Host port for backend dev server
+# POSTGRES_PORT=5432 # Host port for database access
+# REDIS_PORT=6379    # Host port for redis access
+#
+# # Frontend Specific (if needed by your React app/dev server)
+# REACT_APP_API_URL=http://localhost:8000/api # Example API endpoint accessed by React
+# # CHOKIDAR_USEPOLLING=true # Uncomment if hot-reloading doesn't work reliably
+# WDS_SOCKET_PORT=3000 # Ensure WebSocket uses the mapped port
+
+services:
+  # --- Database Service (PostgreSQL) ---
+  db:
+    image: postgres:15-alpine # Use specific, stable version
+    container_name: shadow_market_db_dev
+    volumes:
+      - postgres_data:/var/lib/postgresql/data # Mount named volume for data persistence
+    environment:
+      # Credentials and DB name loaded from .env file (with defaults)
+      POSTGRES_DB: ${POSTGRES_DB:-shadowdb_dev}
+      POSTGRES_USER: ${POSTGRES_USER:-shadowuser_dev}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD?Variable POSTGRES_PASSWORD is required} # Require password in .env
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432" # Map host port to container port
+    networks:
+      - shadow-net # Connect to the custom network
+    restart: unless-stopped
+    healthcheck:
+      # Check if the database is ready to accept connections
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-shadowuser_dev} -d ${POSTGRES_DB:-shadowdb_dev}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # --- Cache Service (Redis) ---
+  redis:
+    image: redis:7-alpine # Use specific, stable version
+    container_name: shadow_market_redis_dev
+    volumes:
+      - redis_data:/data # Mount named volume for data persistence
+    ports:
+      - "${REDIS_PORT:-6379}:6379" # Map host port to container port
+    # Uncomment command if Redis password is set in .env
+    # command: redis-server --requirepass ${REDIS_PASSWORD?Variable REDIS_PASSWORD is required if command is uncommented}
+    networks:
+      - shadow-net
+    restart: unless-stopped
+    healthcheck:
+      # Check if Redis server is responding to ping
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # --- Backend Service (Django/Python) ---
+  backend:
+    build:
+      context: ./backend # Path to backend code and Dockerfile
+      dockerfile: Dockerfile
+      # If your backend Dockerfile has specific build stages for dev, target it:
+      # target: development
+    container_name: shadow_market_backend_dev
+    # Override the Dockerfile's CMD with the Django development server for hot-reloading
+    command: python manage.py runserver 0.0.0.0:${BACKEND_PORT:-8000}
+    volumes:
+      - ./backend:/app # Mount local backend code into the container's /app directory
+      # Optional: Define non-mounted sub-volumes if mounting /app causes issues
+      # with files generated inside the container (like staticfiles if collected):
+      # - /app/staticfiles
+      # - /app/media
+    ports:
+      # Map the host port (from .env or default 8000) to the container port
+      - "${BACKEND_PORT:-8000}:${BACKEND_PORT:-8000}"
+    env_file:
+      - .env # Load variables defined in the .env file
+    environment:
+      # Override specific variables for the development environment
+      DJANGO_ENV: development
+      # Set database URL to connect to the 'db' service container
+      DATABASE_URL: postgresql://${POSTGRES_USER:-shadowuser_dev}:${POSTGRES_PASSWORD?Variable POSTGRES_PASSWORD is required}@db:5432/${POSTGRES_DB:-shadowdb_dev}
+      # Set Redis URL to connect to the 'redis' service container (using DB 1 for cache example)
+      REDIS_URL: redis://redis:6379/1
+      # Uncomment if Redis password is set and required by Django settings
+      # REDIS_PASSWORD: ${REDIS_PASSWORD?}
+      PYTHONUNBUFFERED: 1 # Ensure Python output appears in logs immediately
+      PYTHONDONTWRITEBYTECODE: 1 # Prevent .pyc file creation
+    depends_on:
+      # Wait for db and redis to be healthy before starting backend
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - shadow-net
+    restart: unless-stopped # Adjust as needed for dev (maybe 'no')
+
+  # --- Frontend Service (Node/React) ---
+  frontend:
+    build:
+      context: ./frontend # Path to frontend code and Dockerfile
+      dockerfile: Dockerfile
+      # Pass build-time ARGs to frontend Dockerfile if needed (e.g., API URL)
+      # args:
+      #   REACT_APP_API_URL: ${REACT_APP_API_URL:-http://localhost:8000/api}
+      # If your frontend Dockerfile has specific build stages for dev, target it:
+      # target: development
+    container_name: shadow_market_frontend_dev
+    # Override the Dockerfile's CMD with the development server command (from package.json)
+    command: yarn start
+    volumes:
+      - ./frontend:/app # Mount local frontend code
+      # Prevent host node_modules from overwriting container node_modules
+      # Speeds up initial start if node_modules exist locally but keeps container isolated
+      - /app/node_modules
+    ports:
+      # Map host port (from .env or default 3000) to container port (React default is 3000)
+      - "${FRONTEND_PORT:-3000}:3000"
+    env_file:
+      - .env # Load variables needed by React app or dev server from .env
+    environment:
+      NODE_ENV: development # Standard variable for Node apps
+      # Uncomment if hot-reloading needs polling (common on some Docker setups/OSes)
+      # CHOKIDAR_USEPOLLING: "true"
+      # Ensure React dev server WebSocket uses the correct mapped port
+      WDS_SOCKET_PORT: ${FRONTEND_PORT:-3000}
+    depends_on:
+      # Optional dependency: Ensures backend is available, but often not strictly needed
+      # as frontend usually calls backend APIs dynamically.
+      - backend
+    networks:
+      - shadow-net
+    restart: unless-stopped # Adjust as needed for dev (maybe 'no')
+
+# --- Named Volumes Definition ---
+# These volumes persist data even when containers are removed and recreated.
+volumes:
+  postgres_data:
+    driver: local # Use the local driver (default)
+  redis_data:
+    driver: local
+
+# --- Network Definition ---
+# Creates a custom bridge network for inter-service communication
+networks:
+  shadow-net:
+    driver: bridge

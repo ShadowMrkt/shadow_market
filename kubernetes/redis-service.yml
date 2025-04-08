@@ -1,0 +1,24 @@
+# shadow_market/kubernetes/redis-service.yaml
+# Revision History:
+# 2025-04-07: Initial creation. Defines the ClusterIP Service for the Redis Deployment.
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: shadow-market-redis-svc # Name used by other services to connect (matches ConfigMap)
+  namespace: shadow-market     # Deployed into the application's namespace
+  labels:
+    app: redis               # Labels to associate with the Redis Deployment
+    tier: cache
+spec:
+  ports:
+    - port: 6379             # Port the Service will expose internally
+      targetPort: redis-port # Name of the port defined in the Redis Deployment Pod template
+      protocol: TCP
+      name: tcp-redis        # Optional name for the port mapping
+  selector:
+    # Selects the Pods managed by the Redis Deployment based on their labels
+    app: redis
+    tier: cache
+  # type: ClusterIP is the default and suitable for an internal cache service.
+  type: ClusterIP

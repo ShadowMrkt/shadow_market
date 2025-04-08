@@ -1,0 +1,54 @@
+{% extends "adminpanel/base_admin.html" %}
+
+{% block title %}Admin Dashboard{% endblock %}
+
+{% block content %}
+<h1>Admin Dashboard</h1>
+<p>Welcome, {{ user.username }}! This is the main dashboard for staff.</p>
+
+<h2>Quick Stats</h2>
+<ul>
+    <li>Pending Disputes: <strong>{{ pending_disputes }}</strong></li>
+    <li>Open Support Tickets: <strong>{{ open_tickets }}</strong></li>
+    {# Add more relevant stats #}
+</ul>
+
+<h2>Recent Orders</h2>
+{% if recent_orders %}
+<table>
+    <thead>
+        <tr>
+            <th>ID</th>
+            <th>Product</th>
+            <th>Buyer</th>
+            <th>Vendor</th>
+            <th>Status</th>
+            <th>Date</th>
+            <th>Action</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for order in recent_orders %}
+        <tr>
+            <td><code>{{ order.id|stringformat:"s"|slice:":8" }}...</code></td>
+            <td>{{ order.product.name|truncatechars:30 }}</td>
+            <td>{{ order.buyer.username }}</td>
+            <td>{{ order.vendor.username }}</td>
+            <td>{{ order.get_status_display }}</td>
+            <td>{{ order.created_at|date:"Y-m-d H:i" }}</td>
+            <td><a href="{% url 'adminpanel:order_detail' order.id %}" class="button secondary" style="font-size: 0.8em; padding: 0.3rem 0.6rem;">View</a></td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% else %}
+<p>No recent orders found.</p>
+{% endif %}
+
+{# Add links to other sections #}
+<p style="margin-top: 2rem;">
+    <a href="{% url 'adminpanel:user_list' %}" class="button primary">Manage Users</a>
+    <a href="{% url 'adminpanel:order_list' %}" class="button primary">Manage Orders</a>
+</p>
+
+{% endblock %}

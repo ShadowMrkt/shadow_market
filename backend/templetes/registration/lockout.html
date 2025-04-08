@@ -1,0 +1,23 @@
+{# backend/templates/registration/lockout.html #}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Account Locked</title>
+    <style>
+        body { font-family: sans-serif; line-height: 1.6; padding: 2em; background-color: #f4f4f4; color: #333; }
+        .container { max-width: 600px; margin: 2rem auto; padding: 2rem; background: #fff; border: 1px solid #ccc; border-radius: 8px; text-align: center; }
+        h1 { color: #dc3545; margin-bottom: 1rem; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Account Locked</h1>
+        <p>Your account access has been temporarily locked due to too many failed login attempts.</p>
+        <p>Please wait a while and try again later, or contact support if you believe this is an error.</p>
+        {# You can optionally provide a link back to the login page or homepage #}
+        {# <p><a href="/login">Back to Login</a></p> #}
+        {# Note: Displaying Axes specific cooloff time might leak info, keep message generic #}
+    </div>
+</body>
+</html>

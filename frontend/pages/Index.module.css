@@ -1,0 +1,74 @@
+/* frontend/pages/Index.module.css */
+/* --- REVISION HISTORY --- */
+/* 2025-04-07: Rev 1 - Initial CSS Module for Home Page (index.js Rev 1). */
+/* - Styles for container, title, error message, product grid, and no products state. */
+/* - Implemented basic responsive CSS Grid layout. */
+/* - Aligned with dark theme. */
+
+/* TODO: Refine grid layout (column count, item sizing) based on ProductCard dimensions. */
+/* TODO: Add more specific responsive adjustments if needed. */
+
+.container {
+  padding: 1rem 0; /* Vertical padding, horizontal handled by Layout */
+  /* Maybe add max-width similar to other pages if content needs constraining */
+  /* max-width: 1400px; */
+  /* margin: 0 auto; */
+}
+
+.title {
+  margin-bottom: 1.5rem;
+  color: #e0e0e0;
+  font-size: 1.8rem;
+  border-bottom: 1px solid #444; /* Consistent separator */
+  padding-bottom: 0.5rem;
+}
+
+/* Error Message Styling */
+.error {
+  background-color: #4d2a2a; /* Dark red background */
+  border: 1px solid #a05050; /* Reddish border */
+  color: #ffdddd; /* Light pink/red text */
+  padding: 1rem 1.5rem;
+  margin: 2rem 0;
+  border-radius: 4px;
+}
+
+.error small {
+  color: #ffaaaa; /* Lighter red for error details */
+  display: block;
+  margin-top: 0.5rem;
+  font-size: 0.8em;
+}
+
+/* Product Grid Layout */
+.productsGrid {
+  display: grid;
+  /* Define columns: repeat(auto-fill, minmax(min-width, 1fr)) is common for responsive grids */
+  /* Adjust minmax values based on desired ProductCard size */
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); /* Example: min 280px width */
+  gap: 1.5rem; /* Space between grid items */
+  padding: 1rem 0; /* Padding around the grid */
+}
+
+/* No Products Message */
+.noProducts {
+  margin-top: 2rem;
+  color: #888; /* Muted grey */
+  text-align: center;
+  padding: 2rem;
+  background-color: #2a2a2a; /* Consistent with Orders page */
+  border: 1px dashed #444;
+  border-radius: 4px;
+}
+
+/* Basic Responsive Example (Optional: Adjust grid for very small screens) */
+@media (max-width: 600px) {
+  .productsGrid {
+    grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); /* Smaller min width */
+    gap: 1rem; /* Reduce gap */
+  }
+
+  .title {
+    font-size: 1.6rem; /* Slightly smaller title */
+  }
+}

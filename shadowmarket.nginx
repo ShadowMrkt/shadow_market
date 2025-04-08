@@ -1,0 +1,86 @@
+# /etc/nginx/sites-available/shadowmarket
+# Configuration for Shadow Market reverse proxy
+
+# Define upstream servers for backend and frontend
+upstream backend_server {
+    # Gunicorn listens on localhost port 8000
+    server 127.0.0.1:8000 fail_timeout=10s; # Quick failure timeout
+    # Keepalive connections can improve performance slightly
+    keepalive 16;
+}
+
+upstream frontend_server {
+    # Next.js listens on localhost port 3000
+    server 127.0.0.1:3000 fail_timeout=10s;
+    keepalive 16;
+}
+
+server {
+    # Listen ONLY on the localhost port that Tor will forward to
+    # Port 8080 is used as an example here
+    listen 127.0.0.1:8080 default_server;
+
+    # Your .onion address (optional but good practice)
+    server_name YOUR_ONION_ADDRESS_HERE.onion;
+
+    # --- Logging ---
+    access_log /var/log/nginx/shadowmarket-access.log;
+    error_log /var/log/nginx/shadowmarket-error.log warn;
+
+    # --- Security Headers (Defense-in-Depth) ---
+    # These complement headers set by Django/Next.js middleware
+    add_header X-Frame-Options "DENY" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+    # HSTS is not needed for .onion access
+    # add_header Strict-Transport-Security "max-age=63072000; includeSubDomains; preload" always;
+    # CSP should be primarily handled by the application middleware for nonces,
+    # but you could add a base policy here if needed.
+
+    # --- Proxy Settings ---
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr; # Client IP (Tor exit node)
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme; # Will be 'http' from Tor
+    proxy_set_header Upgrade $http_upgrade; # For WebSocket support
+    proxy_set_header Connection "upgrade";   # For WebSocket support
+    proxy_redirect off;
+    proxy_request_buffering off; # Send request body immediately
+    proxy_buffering off;         # Disable response buffering
+
+    # Increase timeouts for potentially slow Tor network / backend operations
+    proxy_connect_timeout 75s;
+    proxy_send_timeout   180s;
+    proxy_read_timeout   180s;
+
+    # --- Backend API & Admin Routing ---
+    # Route API, custom panel, and Django admin to the backend
+    location ~ ^/(api|panel|control)/ {
+        proxy_pass http://backend_server;
+    }
+
+    # --- Static Files Routing ---
+    # Serve files collected by 'collectstatic' directly
+    location /static/ {
+        # Ensure this path matches settings.STATIC_ROOT
+        alias /opt/shadow_market_app/backend/staticfiles/;
+        expires 1y;
+        access_log off;
+        add_header Cache-Control "public";
+    }
+
+    # --- Media Files Routing ---
+    # Serve user-uploaded content (e.g., product images)
+    location /media/ {
+        # Ensure this path matches settings.MEDIA_ROOT
+        alias /opt/shadow_market_app/backend/media/;
+        # Add stricter access control / security headers if needed
+    }
+
+    # --- Frontend Routing (Catch-all) ---
+    # All other requests go to the Next.js frontend
+    location / {
+        proxy_pass http://frontend_server;
+    }
+}

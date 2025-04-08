@@ -1,0 +1,77 @@
+# shadow_market/kubernetes/networkpolicy-allow-backend-egress.yaml
+# Revision History:
+# 2025-04-07: Initial creation. Allows necessary egress from backend pods.
+#             - Allows egress to Postgres pods on port 5432.
+#             - Allows egress to Redis pods on port 6379.
+#             - Re-allows DNS egress specifically for backend pods.
+
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-backend-egress
+  namespace: shadow-market # Apply policy within the application's namespace
+spec:
+  # Apply this policy ONLY to backend pods
+  podSelector:
+    matchLabels:
+      app: shadow-market
+      tier: backend
+  policyTypes:
+    - Egress # This policy only defines egress rules
+  egress:
+    # --- Rule 1: Allow traffic TO Database (Postgres) Pods ---
+    - to:
+      - podSelector: # Select pods based on labels
+          matchLabels:
+            app: postgres # Labels of the Postgres StatefulSet pods
+            tier: database
+      ports:
+        - protocol: TCP
+          port: 5432 # Standard PostgreSQL port
+
+    # --- Rule 2: Allow traffic TO Cache (Redis) Pods ---
+    - to:
+      - podSelector: # Select pods based on labels
+          matchLabels:
+            app: redis # Labels of the Redis Deployment pods
+            tier: cache
+      ports:
+        - protocol: TCP
+          port: 6379 # Standard Redis port
+
+    # --- Rule 3: Re-allow DNS Egress specifically for Backend Pods ---
+    # Since this podSelector is now targeted by an Egress policy,
+    # we need to explicitly allow DNS again here.
+    - to:
+      - namespaceSelector:
+          matchLabels:
+            kubernetes.io/metadata.name: kube-system
+        podSelector:
+          matchLabels:
+            k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+
+    # --- Rule 4 (Optional): Allow Egress to External Services ---
+    # Uncomment and modify if backend needs to reach services outside the cluster.
+    # Example: Allow egress to Vault running outside the cluster on specific IP/Port
+    # - to:
+    #   - ipBlock:
+    #       cidr: 192.168.1.100/32 # Replace with actual Vault IP/CIDR
+    #   ports:
+    #   - protocol: TCP
+    #     port: 8200 # Vault port
+    # Example: Allow egress to any external IP on port 443 (HTTPS) - Less Secure!
+    # - to:
+    #   - ipBlock:
+    #       cidr: 0.0.0.0/0
+    #       except: # Block traffic to private RFC1918 ranges
+    #         - 10.0.0.0/8
+    #         - 172.16.0.0/12
+    #         - 192.168.0.0/16
+    #   ports:
+    #   - protocol: TCP
+    #     port: 443

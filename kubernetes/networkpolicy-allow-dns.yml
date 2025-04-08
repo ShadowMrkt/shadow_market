@@ -1,0 +1,40 @@
+# shadow_market/kubernetes/networkpolicy-allow-dns.yaml
+# Revision History:
+# 2025-04-07: Initial creation. Allows DNS egress from all pods in the namespace.
+
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-dns-egress
+  namespace: shadow-market # Apply policy within the application's namespace
+spec:
+  # Apply this policy to all pods in the 'shadow-market' namespace
+  podSelector: {}
+  policyTypes:
+    - Egress # This policy only defines egress rules
+  egress:
+    # Allow traffic TO the Kubernetes DNS service (CoreDNS/kube-dns)
+    - to:
+      - namespaceSelector: # Select the namespace where DNS service runs
+          matchLabels:
+            # This label selects the kube-system namespace
+            kubernetes.io/metadata.name: kube-system
+        podSelector: # Select the DNS pods within that namespace
+          matchLabels:
+            # Standard label for Kubernetes DNS pods
+            k8s-app: kube-dns
+      ports:
+        # Allow traffic on standard DNS ports
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+
+    # --- Optional: Allow Egress to Cluster API Server (if needed by pods) ---
+    # Some applications or service meshes might need to talk to the K8s API server.
+    # - to:
+    #   - ipBlock:
+    #       cidr: <API_SERVER_IP_OR_CIDR> # Find your cluster's API server IP/CIDR
+    #   ports:
+    #   - protocol: TCP
+    #     port: <API_SERVER_PORT> # Usually 443 or 6443

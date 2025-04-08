@@ -1,0 +1,360 @@
+/* frontend/styles/globals.css */
+/* --- REVISION HISTORY --- */
+/* 2025-04-07: Rev 1 - Converted to Dark Theme, introduced CSS variables, updated base styles. */
+/* - Changed base body background/color to dark. */
+/* - Defined CSS variables (--bg-primary, --text-primary, etc.) for dark theme. */
+/* - Updated link, heading, form, button, table, message styles for dark theme using variables. */
+/* - Commented out global .card style to favor component modules. */
+/* - Added revision history block. */
+
+/* Define CSS Variables for Dark Theme */
+:root {
+  /* Backgrounds */
+  --bg-primary: #121212;        /* Deep dark (main body) */
+  --bg-secondary: #1f1f1f;      /* Slightly lighter (headers, footers) */
+  --bg-tertiary: #2a2a2a;       /* Lighter dark (cards, filter bars) */
+  --bg-hover: #383838;         /* Hover background */
+  --bg-input: #333333;         /* Input field background */
+
+  /* Text */
+  --text-primary: #e0e0e0;      /* Main light text */
+  --text-secondary: #bbbbbb;    /* Muted light text */
+  --text-tertiary: #888888;     /* Very muted text */
+  --text-placeholder: #666666; /* Placeholder text in inputs */
+  --text-on-accent: #ffffff;    /* Text on colored buttons/accents */
+  --text-inverse: #121212;     /* Text for light backgrounds (e.g., warning button) */
+
+  /* Borders */
+  --border-primary: #444444;    /* Default border */
+  --border-secondary: #555555;  /* Slightly lighter border */
+  --border-focus: #61aeee;      /* Focus border color (light blue) */
+
+  /* Accents */
+  --accent-blue: #61aeee;       /* Links, primary actions */
+  --accent-blue-hover: #82c1ff;
+  --accent-green: #66d9a0;       /* Success */
+  --accent-red: #ff7777;         /* Danger */
+  --accent-yellow: #ffdd77;      /* Warning */
+  --accent-orange: #ffcc66;      /* Emphasis / Action Needed */
+  --accent-cyan: #77eeee;        /* Info */
+  --accent-grey: #888888;        /* Secondary actions / disabled */
+
+  /* Shadows (Optional - use sparingly in dark themes) */
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.3);
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.4);
+}
+
+
+/* Basic Reset & Box Sizing (Keep As Is) */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html {
+  /* Smooth scrolling */
+  scroll-behavior: smooth;
+}
+
+body {
+  padding: 0;
+  margin: 0;
+  font-family: -apple-system, BlinkMacSystemFont, Segoe UI, Roboto, Oxygen,
+    Ubuntu, Cantarell, Fira Sans, Droid Sans, Helvetica Neue, sans-serif;
+  line-height: 1.6;
+  font-size: 16px;
+  /* Dark Theme Base */
+  background-color: var(--bg-primary);
+  color: var(--text-primary);
+}
+
+a {
+  /* Dark Theme Link */
+  color: var(--accent-blue);
+  text-decoration: none;
+  transition: color 0.2s ease;
+}
+
+a:hover {
+  color: var(--accent-blue-hover);
+  text-decoration: underline;
+}
+
+img {
+  max-width: 100%;
+  display: block; /* Removes bottom space */
+}
+
+/* Basic Typography (Dark Theme) */
+h1, h2, h3, h4, h5, h6 {
+  margin-bottom: 1rem;
+  line-height: 1.3;
+  font-weight: 600;
+  color: var(--text-primary); /* Ensure headings use primary text color */
+}
+
+h1 { font-size: 2.2em; border-bottom: 1px solid var(--border-primary); padding-bottom: 0.5rem; }
+h2 { font-size: 1.8em; margin-top: 1.5rem; border-bottom: 1px solid var(--border-primary); padding-bottom: 0.4rem; }
+h3 { font-size: 1.4em; margin-top: 1.2rem; }
+p { margin-bottom: 1rem; color: var(--text-secondary); /* Use secondary text for paragraphs by default? Or primary? */ }
+p:last-child { margin-bottom: 0; } /* Avoid extra space at end of containers */
+
+/* Layout & Container */
+/* Keep container classes, but remove global card styling */
+.container {
+  max-width: 1100px;
+  margin: 2rem auto;
+  padding: 0 1rem; /* Use horizontal padding only */
+}
+.container-narrow {
+   max-width: 800px;
+   margin: 2rem auto;
+   padding: 0 1rem;
+}
+/* .card { ... } */ /* Removed: Handled by component CSS modules */
+
+
+/* Forms (Dark Theme) */
+.form-group {
+  margin-bottom: 1.25rem;
+}
+
+.form-label {
+  display: block;
+  margin-bottom: 0.5rem;
+  font-weight: 600;
+  color: var(--text-secondary); /* Lighter label color */
+}
+
+.form-input,
+.form-textarea,
+.form-select {
+  display: block;
+  width: 100%;
+  padding: 0.75rem 1rem;
+  font-size: 1rem;
+  font-weight: 400;
+  line-height: 1.5;
+  color: var(--text-primary); /* Light text */
+  background-color: var(--bg-input); /* Dark background */
+  background-clip: padding-box;
+  border: 1px solid var(--border-secondary); /* Dark border */
+  border-radius: 0.375rem;
+  transition: border-color 0.15s ease-in-out, box-shadow 0.15s ease-in-out;
+}
+
+/* Style placeholder text */
+.form-input::placeholder,
+.form-textarea::placeholder {
+    color: var(--text-placeholder);
+    opacity: 1; /* Firefox */
+}
+
+.form-input:focus,
+.form-textarea:focus,
+.form-select:focus {
+  border-color: var(--border-focus); /* Use accent blue for focus */
+  outline: 0;
+  /* Subtle focus shadow */
+  box-shadow: 0 0 0 0.2rem rgba(97, 174, 238, 0.3); /* Adjust color/opacity */
+}
+
+.form-textarea {
+  min-height: 120px;
+  font-family: monospace, sans-serif; /* Keep monospace for code/keys */
+}
+
+/* Select dropdown arrow (basic dark theme version) */
+.form-select {
+    appearance: none;
+    background-image: url('data:image/svg+xml;charset=US-ASCII,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%22292.4%22%20height%3D%22292.4%22%3E%3Cpath%20fill%3D%22%23cccccc%22%20d%3D%22M287%2069.4a17.6%2017.6%200%200%200-13-5.4H18.4c-5%200-9.3%201.8-12.9%205.4A17.6%2017.6%200%200%200%200%2082.2c0%205%201.8%209.3%205.4%2012.9l128%20127.9c3.6%203.6%207.8%205.4%2012.8%205.4s9.2-1.8%2012.8-5.4L287%2095c3.5-3.5%205.4-7.8%205.4-12.8%200-5-1.9-9.2-5.5-12.8z%22%2F%3E%3C%2Fsvg%3E');
+    background-repeat: no-repeat;
+    background-position: right 0.9rem center;
+    background-size: 0.65em auto;
+    padding-right: 2.5rem; /* Make space for arrow */
+}
+
+.form-help-text {
+  font-size: 0.875em;
+  color: var(--text-tertiary); /* Very muted help text */
+  margin-top: 0.25rem;
+}
+
+
+/* Buttons (Dark Theme) */
+.button {
+  display: inline-block;
+  font-weight: 600; /* Slightly bolder */
+  line-height: 1.5;
+  color: var(--text-on-accent); /* Default: White text */
+  text-align: center;
+  text-decoration: none;
+  vertical-align: middle;
+  cursor: pointer;
+  user-select: none;
+  background-color: var(--accent-grey); /* Default: Grey background */
+  border: 1px solid var(--accent-grey);
+  padding: 0.75rem 1.25rem;
+  font-size: 1rem;
+  border-radius: 0.375rem;
+  transition: opacity 0.15s ease-in-out, background-color 0.15s ease-in-out, border-color 0.15s ease-in-out;
+  margin-right: 0.5rem;
+  margin-bottom: 0.5rem;
+}
+.button:hover:not(:disabled) {
+  opacity: 0.85; /* Slightly dim on hover */
+}
+.button:disabled,
+.button.disabled {
+  background-color: #555; /* Darker grey for disabled */
+  border-color: #555;
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+/* Use CSS Variables for variants */
+.button-primary { background-color: var(--accent-blue); border-color: var(--accent-blue); }
+.button-secondary { background-color: var(--accent-grey); border-color: var(--accent-grey); color: var(--text-primary); } /* Grey button, light text */
+.button-success { background-color: var(--accent-green); border-color: var(--accent-green); }
+.button-danger { background-color: var(--accent-red); border-color: var(--accent-red); }
+/* Warning/Info might need dark text if backgrounds are too light */
+.button-warning { background-color: var(--accent-yellow); border-color: var(--accent-yellow); color: var(--text-inverse); }
+.button-info { background-color: var(--accent-cyan); border-color: var(--accent-cyan); color: var(--text-inverse); }
+/* Link button uses link color */
+.button-link { background: none; border: none; color: var(--accent-blue); text-decoration: underline; padding: 0; }
+.button-link:hover { color: var(--accent-blue-hover); }
+
+
+/* Utility Classes (Adjust colors for dark theme) */
+.text-danger { color: var(--accent-red) !important; }
+.text-success { color: var(--accent-green) !important; }
+.text-warning { color: var(--accent-yellow) !important; }
+.text-info { color: var(--accent-cyan) !important; }
+.text-muted { color: var(--text-tertiary) !important; }
+.text-center { text-align: center !important; }
+.font-monospace { font-family: monospace, sans-serif !important; }
+.font-weight-bold { font-weight: bold !important; }
+/* Spacing utilities (mt-*, mb-*, p-*, etc.) are generally theme-agnostic, keep as is */
+/* Consider if these are needed or if spacing should be handled in modules */
+.mt-1 { margin-top: 0.25rem !important; }
+.mt-2 { margin-top: 0.5rem !important; }
+.mt-3 { margin-top: 1rem !important; }
+.mt-4 { margin-top: 1.5rem !important; }
+.mt-5 { margin-top: 3rem !important; }
+.mb-1 { margin-bottom: 0.25rem !important; }
+.mb-2 { margin-bottom: 0.5rem !important; }
+.mb-3 { margin-bottom: 1rem !important; }
+.mb-4 { margin-bottom: 1.5rem !important; }
+.mb-5 { margin-bottom: 3rem !important; }
+.p-1 { padding: 0.25rem !important; }
+.p-2 { padding: 0.5rem !important; }
+.p-3 { padding: 1rem !important; }
+.p-4 { padding: 1.5rem !important; }
+.p-5 { padding: 3rem !important; }
+
+
+/* Specific Component Styles (Dark Theme Examples) */
+.code-block {
+    white-space: pre-wrap;
+    word-wrap: break-word;
+    background: var(--bg-input); /* Use input background */
+    padding: 1rem;
+    border: 1px solid var(--border-secondary);
+    border-radius: 0.375rem;
+    max-height: 300px; /* Increase height slightly? */
+    overflow-y: auto;
+    font-family: monospace, sans-serif;
+    font-size: 0.9em;
+    color: var(--text-secondary); /* Lighter code text */
+}
+/* Message Boxes (Dark Theme) */
+.error-message {
+    color: #ffbbbb; /* Lighter red text */
+    background-color: rgba(255, 80, 80, 0.15); /* Darker, transparent red bg */
+    border: 1px solid rgba(255, 80, 80, 0.3);
+    padding: 0.75rem 1.25rem;
+    border-radius: 0.375rem;
+    margin: 1rem 0;
+    white-space: pre-wrap; /* Allow line breaks */
+}
+.success-message {
+    color: #aaffaa; /* Lighter green text */
+    background-color: rgba(80, 200, 80, 0.15); /* Darker, transparent green bg */
+    border: 1px solid rgba(80, 200, 80, 0.3);
+    padding: 0.75rem 1.25rem;
+    border-radius: 0.375rem;
+    margin: 1rem 0;
+}
+.info-message {
+    color: #aaeef8; /* Lighter cyan text */
+    background-color: rgba(80, 200, 250, 0.15); /* Darker, transparent cyan bg */
+    border: 1px solid rgba(80, 200, 250, 0.3);
+    padding: 0.75rem 1.25rem;
+    border-radius: 0.375rem;
+    margin: 1rem 0;
+}
+.warning-message {
+    color: #ffe08f; /* Lighter yellow text */
+    background-color: rgba(255, 200, 80, 0.15); /* Darker, transparent yellow bg */
+    border: 1px solid rgba(255, 200, 80, 0.3);
+    padding: 0.75rem 1.25rem;
+    border-radius: 0.375rem;
+    margin: 1rem 0;
+}
+
+
+/* Table Styling (Dark Theme) */
+.table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 1rem;
+    background-color: transparent; /* Use container background */
+    box-shadow: none; /* Remove shadow */
+    border: 1px solid var(--border-primary); /* Add border around table */
+    border-radius: 4px; /* Optional: round corners */
+    overflow: hidden; /* Clip content to border-radius */
+}
+.table th {
+    background-color: var(--bg-tertiary); /* Dark header */
+    padding: 12px 15px;
+    border: none; /* Remove individual cell borders initially */
+    border-bottom: 2px solid var(--border-primary); /* Stronger bottom border on header */
+    text-align: left;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+.table td {
+    padding: 12px 15px;
+    border: none; /* Remove individual cell borders */
+    border-top: 1px solid var(--border-primary); /* Use top border as row separator */
+    vertical-align: middle;
+    line-height: 1.5;
+    color: var(--text-secondary);
+}
+.table tbody tr:nth-of-type(odd) {
+    /* Optional: Subtle row striping for dark theme */
+     background-color: rgba(255, 255, 255, 0.03); /* Very subtle light overlay */
+}
+.table tbody tr {
+    transition: background-color 0.15s ease;
+}
+.table tbody tr:hover {
+    background-color: rgba(255, 255, 255, 0.07); /* Slightly lighter hover */
+}
+
+/* Ensure focus styles are visible on dark backgrounds */
+*:focus-visible {
+    outline: 2px solid var(--border-focus);
+    outline-offset: 2px;
+    box-shadow: none; /* Override input focus shadow if using outline */
+}
+/* Or for form elements, keep the box-shadow if preferred */
+.form-input:focus-visible,
+.form-textarea:focus-visible,
+.form-select:focus-visible {
+  border-color: var(--border-focus);
+  outline: 0;
+  box-shadow: 0 0 0 0.2rem rgba(97, 174, 238, 0.3);
+}

@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}Shadow Market Admin{% endblock %} - Admin Panel</title>
+    <style>
+        body { font-family: sans-serif; margin: 0; background-color: #f4f4f4; }
+        header { background-color: #333; color: #fff; padding: 1rem; display: flex; justify-content: space-between; align-items: center; }
+        header a { color: #fff; text-decoration: none; margin-left: 15px; }
+        .brand { font-size: 1.5em; font-weight: bold; }
+        nav ul { list-style: none; padding: 0; margin: 0; display: flex; gap: 15px; }
+        nav a { color: #fff; text-decoration: none; }
+        nav a:hover { text-decoration: underline; }
+        .container { max-width: 1200px; margin: 2rem auto; padding: 1.5rem; background-color: #fff; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }
+        h1, h2 { border-bottom: 1px solid #eee; padding-bottom: 0.5rem; margin-bottom: 1rem; }
+        .messages { list-style: none; padding: 0; margin: 0 0 1.5rem 0; }
+        .messages li { padding: 1rem; margin-bottom: 1rem; border-radius: 4px; }
+        .messages li.success { background-color: #d4edda; color: #155724; border: 1px solid #c3e6cb; }
+        .messages li.error { background-color: #f8d7da; color: #721c24; border: 1px solid #f5c6cb; }
+        .messages li.warning { background-color: #fff3cd; color: #856404; border: 1px solid #ffeeba; }
+        .messages li.info { background-color: #d1ecf1; color: #0c5460; border: 1px solid #bee5eb; }
+        form p { margin-bottom: 1rem; }
+        label { font-weight: bold; display: block; margin-bottom: 0.3rem; }
+        input[type="text"], input[type="password"], input[type="number"], input[type="email"], textarea, select {
+            width: 100%; padding: 0.7rem; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box; margin-bottom: 0.5rem;
+        }
+        textarea { min-height: 100px; font-family: monospace; }
+        button, .button { padding: 0.8rem 1.5rem; border: none; border-radius: 4px; cursor: pointer; font-size: 1rem; text-decoration: none; display: inline-block; }
+        button[type="submit"], .button.primary { background-color: #007bff; color: #fff; }
+        button[type="submit"]:hover, .button.primary:hover { background-color: #0056b3; }
+        .button.danger { background-color: #dc3545; color: #fff; }
+        .button.danger:hover { background-color: #c82333; }
+        .button.secondary { background-color: #6c757d; color: #fff; }
+        .button.secondary:hover { background-color: #5a6268; }
+        table { width: 100%; border-collapse: collapse; margin-top: 1rem; }
+        th, td { border: 1px solid #ddd; padding: 10px; text-align: left; }
+        th { background-color: #f2f2f2; }
+        code { background: #eee; padding: 2px 4px; border-radius: 3px; }
+        .text-danger { color: #dc3545; font-weight: bold; }
+        footer { text-align: center; margin-top: 3rem; padding-top: 1rem; border-top: 1px solid #eee; color: #777; font-size: 0.9em; }
+    </style>
+</head>
+<body>
+    <header>
+        <div class="brand">
+             <a href="{% url 'adminpanel:dashboard' %}">Shadow Market Admin</a>
+        </div>
+        <nav>
+            {% if user.is_authenticated %}
+            <ul>
+                <li><a href="{% url 'adminpanel:dashboard' %}">Dashboard</a></li>
+                <li><a href="{% url 'adminpanel:user_list' %}">Users</a></li>
+                <li><a href="{% url 'adminpanel:order_list' %}">Orders</a></li>
+                {# Add link to tickets if admin can view tickets #}
+                {# <li><a href="#">Tickets</a></li> #}
+                {# Conditional Owner Link - assumes 'is_owner' check is possible via user object/group #}
+                {% if user.is_superuser or user.is_owner %} {# Simplified check, adjust as needed #}
+                    <li><a href="{% url 'adminpanel:owner_dashboard' %}" style="color: yellow; font-weight: bold;">Owner Panel</a></li>
+                {% endif %}
+                 <li><span>Welcome, {{ user.username }}</span></li>
+                 <li><a href="#">Logout (TODO)</a></li> {# Add proper logout URL/form later #}
+            </ul>
+            {% endif %}
+        </nav>
+    </header>
+
+    <div class="container">
+        {# Display Django messages framework messages #}
+        {% if messages %}
+        <ul class="messages">
+            {% for message in messages %}
+            <li{% if message.tags %} class="{{ message.tags }}"{% endif %}>{{ message }}</li>
+            {% endfor %}
+        </ul>
+        {% endif %}
+
+        {% block content %}
+        {# Page specific content goes here #}
+        {% endblock %}
+    </div>
+
+    <footer>
+        Shadow Market Admin Panel | Server Time (UTC): {% now "Y-m-d H:i:s" %} UTC
+        {# Add current location/time if needed, but use UTC for consistency #}
+        {# Current Location: Springville, Utah, United States | Time: (Use JS for local time) #}
+    </footer>
+
+</body>
+</html>

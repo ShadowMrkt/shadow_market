@@ -1,0 +1,13 @@
+// frontend/.babelrc.js
+// --- REVISION HISTORY ---
+// 2025-04-08: Rev 1 - Renamed from babel.config.js to potentially improve discovery by babel-jest.
+//           - Contains the essential next/babel preset configuration.
+
+// This file configures Babel.
+// By using the .js extension, we can use JavaScript syntax (like module.exports).
+// It tells Babel to use the standard Next.js preset, which includes JSX/React support.
+{
+	"presets": ["next/babel"]
+	// You can add plugins here if needed later, e.g.:
+	// "plugins": ["some-babel-plugin"]
+}

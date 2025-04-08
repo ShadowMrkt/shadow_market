@@ -1,0 +1,18 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Admin Control Panel</title>
+</head>
+<body>
+    <h1>Admin Control Panel</h1>
+    <h2>Pending Orders (Support Tickets/Disputes)</h2>
+    <ul>
+    {% for order in pending_orders %}
+        <li>Order ID: {{ order.id }} - Status: {{ order.status }}</li>
+    {% empty %}
+        <li>No pending orders.</li>
+    {% endfor %}
+    </ul>
+    <a href="{% url 'adminpanel:owner_panel' %}">Switch to Owner Panel</a>
+</body>
+</html>

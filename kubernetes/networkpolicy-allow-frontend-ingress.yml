@@ -1,0 +1,49 @@
+# shadow_market/kubernetes/networkpolicy-allow-frontend-ingress.yaml
+# Revision History:
+# 2025-04-07: Initial creation. Allows necessary ingress to frontend pods.
+#             - Allows ingress ONLY from Ingress controller pods (selectors need verification) on port 8080.
+
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-frontend-ingress
+  namespace: shadow-market # Apply policy within the application's namespace
+spec:
+  # Apply this policy ONLY to frontend pods
+  podSelector:
+    matchLabels:
+      app: shadow-market
+      tier: frontend
+  policyTypes:
+    - Ingress # This policy only defines ingress rules
+  ingress:
+    # --- Rule 1: Allow Ingress FROM Ingress Controller Pods ---
+    # Adjust selectors below to match your specific Ingress controller deployment
+    - from:
+      - namespaceSelector: # Select the namespace where the Ingress controller runs
+          matchLabels:
+            # Example label for Nginx Ingress namespace (VERIFY/ADJUST)
+            kubernetes.io/metadata.name: ingress-nginx
+            # Or simply use: name: ingress-nginx
+        podSelector: # Select the Ingress controller pods within that namespace
+          matchLabels:
+            # Example label for Nginx Ingress controller pods (VERIFY/ADJUST)
+            app.kubernetes.io/name: ingress-nginx
+            app.kubernetes.io/component: controller
+      ports:
+        - protocol: TCP
+          port: 8080 # Frontend container port (Nginx)
+
+    # --- Rule 2 (Optional): Allow Ingress FROM Monitoring (e.g., Prometheus) ---
+    # Uncomment and adjust if Prometheus needs to scrape Nginx metrics directly
+    # - from:
+    #   - namespaceSelector:
+    #       matchLabels:
+    #         kubernetes.io/metadata.name: monitoring
+    #     podSelector:
+    #       matchLabels:
+    #         app.kubernetes.io/name: prometheus
+    #   ports:
+    #   - protocol: TCP
+    #     # Port Nginx exposes vts-metrics on (if using nginx-module-vts)
+    #     port: 8081 # Example Nginx metrics port

@@ -1,0 +1,64 @@
+# shadow_market/kubernetes/networkpolicy-allow-backend-ingress.yaml
+# Revision History:
+# 2025-04-07: Initial creation. Allows necessary ingress to backend pods.
+#             - Allows ingress from frontend pods on port 8000.
+#             - Allows ingress from Ingress controller pods (selectors need verification) on port 8000.
+
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-backend-ingress
+  namespace: shadow-market # Apply policy within the application's namespace
+spec:
+  # Apply this policy ONLY to backend pods
+  podSelector:
+    matchLabels:
+      app: shadow-market
+      tier: backend
+  policyTypes:
+    - Ingress # This policy only defines ingress rules
+  ingress:
+    # --- Rule 1: Allow Ingress FROM Frontend Pods ---
+    - from:
+      - podSelector: # Select pods within the same namespace based on labels
+          matchLabels:
+            app: shadow-market # Labels of the Frontend Deployment pods
+            tier: frontend
+      ports:
+        - protocol: TCP
+          port: 8000 # Backend container port (Gunicorn)
+
+    # --- Rule 2: Allow Ingress FROM Ingress Controller Pods ---
+    # Adjust selectors below to match your specific Ingress controller deployment
+    - from:
+      - namespaceSelector: # Select the namespace where the Ingress controller runs
+          matchLabels:
+            # Example label for Nginx Ingress namespace (VERIFY/ADJUST)
+            # Use kubectl get ns --show-labels to find the correct label
+            kubernetes.io/metadata.name: ingress-nginx
+            # Or simply use: name: ingress-nginx
+        podSelector: # Select the Ingress controller pods within that namespace
+          matchLabels:
+            # Example label for Nginx Ingress controller pods (VERIFY/ADJUST)
+            # Use kubectl get pods -n <ingress-namespace> --show-labels
+            app.kubernetes.io/name: ingress-nginx
+            app.kubernetes.io/component: controller
+      ports:
+        - protocol: TCP
+          port: 8000 # Backend container port
+
+    # --- Rule 3 (Optional): Allow Ingress FROM Monitoring (e.g., Prometheus) ---
+    # Uncomment and adjust if Prometheus needs to scrape metrics directly from backend pods
+    # - from:
+    #   - namespaceSelector:
+    #       matchLabels:
+    #         # Adjust for your Prometheus deployment namespace
+    #         kubernetes.io/metadata.name: monitoring
+    #     podSelector:
+    #       matchLabels:
+    #         # Adjust for your Prometheus pod labels
+    #         app.kubernetes.io/name: prometheus
+    #   ports:
+    #   - protocol: TCP
+    #     # Port your backend exposes metrics on (might be different from 8000)
+    #     port: 9102 # Example metrics port

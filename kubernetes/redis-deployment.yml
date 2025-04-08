@@ -1,0 +1,73 @@
+# shadow_market/kubernetes/redis-deployment.yaml
+# Revision History:
+# 2025-04-07: Initial creation. Defines the Redis Deployment (for cache).
+#             - Uses redis:7-alpine image.
+#             - Configures optional password from Secret.
+#             - Includes readiness and liveness probes using redis-cli ping.
+#             - Sets basic resource requests/limits suitable for a cache.
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: shadow-market-redis # Name of the Deployment
+  namespace: shadow-market   # Deployed into the application's namespace
+  labels:
+    app: redis             # Labels for selecting/grouping
+    tier: cache
+spec:
+  replicas: 1 # Start with 1 replica; HA Redis requires Sentinel/Cluster setup
+  selector:
+    matchLabels: # Selector to find Pods managed by this Deployment
+      app: redis
+      tier: cache
+  template: # Pod template used to create new Pods
+    metadata:
+      labels: # Labels applied to each Pod
+        app: redis
+        tier: cache
+    spec:
+      containers:
+        - name: redis
+          image: redis:7-alpine # Use a specific, stable image version
+          imagePullPolicy: IfNotPresent # Pull if image not present locally
+          ports:
+            - name: redis-port # Port name for reference
+              containerPort: 6379 # Standard Redis port
+              protocol: TCP
+          # Optional: Command/Args to explicitly start redis-server and require a password
+          # command: ["redis-server"]
+          # args: ["--requirepass", "$(REDIS_PASSWORD)"] # Requires REDIS_PASSWORD env var
+          env:
+             # Source optional password from Secret
+             - name: REDIS_PASSWORD
+               valueFrom:
+                 secretKeyRef:
+                   name: shadow-market-secrets # Reference the Secret created earlier
+                   key: REDIS_PASSWORD
+                   # Set 'optional: true' in case the REDIS_PASSWORD key doesn't exist in the Secret
+                   # (i.e., Redis authentication is not enabled). The application connecting
+                   # also needs to handle the case where no password is required.
+                   optional: true
+          resources: # Resource requests/limits for the container (adjust for cache size/load)
+            requests: # Minimum resources required
+              memory: "128Mi"
+              cpu: "100m" # 0.1 CPU core
+            limits: # Maximum resources allowed
+              memory: "512Mi"
+              cpu: "500m" # 0.5 CPU core
+          readinessProbe: # Check if Redis is ready to accept commands
+            exec:
+              command: ["redis-cli", "ping"]
+            initialDelaySeconds: 10 # Wait before first probe
+            periodSeconds: 10       # How often to probe
+            timeoutSeconds: 5       # When to time out
+            failureThreshold: 3     # How many failures before marking Unready
+          livenessProbe: # Check if the Redis process is still running
+            exec:
+              command: ["redis-cli", "ping"]
+            initialDelaySeconds: 20 # Wait longer before first liveness probe
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 3
+          # No volume mounts defined as we assume Redis is used only as a cache here.
+          # Add volume mounts and a PVC if Redis persistence is required.

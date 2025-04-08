@@ -1,0 +1,102 @@
+# shadow_market/kubernetes/postgres-statefulset.yaml
+# Revision History:
+# 2025-04-07: Initial creation. Defines the PostgreSQL StatefulSet.
+#             - Uses postgres:15-alpine image.
+#             - Configures environment from ConfigMap/Secret.
+#             - Defines PersistentVolumeClaim template for storage.
+#             - Includes readiness and liveness probes using pg_isready.
+#             - Sets basic resource requests/limits.
+
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: shadow-market-postgres # Name of the StatefulSet
+  namespace: shadow-market    # Deployed into the application's namespace
+  labels:
+    app: postgres           # Labels for selecting/grouping
+    tier: database
+spec:
+  # Must match the name of the headless Service created for the StatefulSet
+  serviceName: shadow-market-postgres-svc
+  replicas: 1 # Start with 1 replica; production HA requires more complex setups (e.g., Patroni, Cloud SQL)
+  selector:
+    matchLabels: # Selector to find Pods managed by this StatefulSet
+      app: postgres
+      tier: database
+  template: # Pod template used to create new Pods
+    metadata:
+      labels: # Labels applied to each Pod
+        app: postgres
+        tier: database
+    spec:
+      # Time allowed for graceful pod shutdown
+      terminationGracePeriodSeconds: 30 # Allow time for Postgres to shut down cleanly
+      # Security context for the pod (optional, can enhance security)
+      # securityContext:
+      #   fsGroup: 999 # Ensure mounted volume has correct group ownership (Postgres GID in official image)
+      containers:
+        - name: postgres
+          image: postgres:15-alpine # Use a specific, stable image version
+          imagePullPolicy: IfNotPresent # Pull if image not present locally
+          ports:
+            - name: postgresql # Port name for reference
+              containerPort: 5432 # Standard PostgreSQL port
+              protocol: TCP
+          env: # Environment variables for the container
+            # Source non-sensitive config from ConfigMap
+            - name: POSTGRES_DB
+              valueFrom:
+                configMapKeyRef:
+                  name: shadow-market-config # Reference the ConfigMap created earlier
+                  key: POSTGRES_DB
+            - name: POSTGRES_USER
+              valueFrom:
+                configMapKeyRef:
+                  name: shadow-market-config
+                  key: POSTGRES_USER
+            # Source sensitive password from Secret
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: shadow-market-secrets # Reference the Secret created earlier
+                  key: POSTGRES_PASSWORD
+            # Recommended: Set PGDATA to a subdirectory within the volume mount
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+          volumeMounts: # Mount the persistent volume
+            - name: postgres-persistent-storage # Must match volumeClaimTemplates name
+              mountPath: /var/lib/postgresql/data # Standard data directory
+          resources: # Resource requests/limits for the container
+            requests: # Minimum resources required
+              memory: "256Mi" # Adjust based on needs
+              cpu: "250m"    # 0.25 CPU core
+            limits: # Maximum resources allowed
+              memory: "1Gi" # Adjust based on needs and node capacity
+              cpu: "1"       # 1 CPU core
+          readinessProbe: # Check if the database is ready to accept connections
+            exec:
+              # Use pg_isready with user/db sourced from env vars
+              command: ["pg_isready", "-U", "$(POSTGRES_USER)", "-d", "$(POSTGRES_DB)"]
+            initialDelaySeconds: 15 # Wait before first probe
+            periodSeconds: 10       # How often to probe
+            timeoutSeconds: 5       # When to time out
+            failureThreshold: 3     # How many failures before marking Unready
+          livenessProbe: # Check if the Postgres process is still running
+            exec:
+              # Simpler check just to see if server is alive
+              command: ["pg_isready", "-U", "$(POSTGRES_USER)"]
+            initialDelaySeconds: 45 # Wait longer before first liveness probe
+            periodSeconds: 20
+            timeoutSeconds: 5
+            failureThreshold: 3
+  # Volume Claim Template defines the Persistent Volume Claim for each pod
+  volumeClaimTemplates:
+  - metadata:
+      name: postgres-persistent-storage # Name used in volumeMounts
+    spec:
+      accessModes: [ "ReadWriteOnce" ] # Volume can be mounted RW by a single node (standard for DBs)
+      resources:
+        requests:
+          storage: 5Gi # Request 5 GB of persistent storage (adjust size as needed)
+      # Optional: Specify a StorageClass if required by your K8s environment
+      # storageClassName: "your-storage-class-name" # e.g., gp2, standard, managed-premium

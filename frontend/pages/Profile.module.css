@@ -1,0 +1,72 @@
+/* frontend/pages/Profile.module.css */
+/* --- REVISION HISTORY --- */
+/* 2025-04-07: Rev 1 - Initial CSS Module for ProfilePage component (Rev 2). */
+/* - Styles for sectionTitle, readOnlyValue, loginPhrase, modal elements. */
+/* - Dark theme compatible styling using CSS variables. */
+
+/* TODO: Adjust colors/styles as needed to perfectly match design requirements. */
+
+/* Custom styling for section titles within profile cards */
+.sectionTitle {
+  /* Overrides global h2 styles if needed, otherwise remove this rule */
+  margin-top: 0; /* Remove top margin if it's the first element in card */
+  margin-bottom: 1.5rem;
+  font-size: 1.3em; /* Slightly smaller than default h2? */
+  font-weight: 600;
+  color: var(--text-primary);
+  border-bottom: 1px solid var(--border-primary); /* Consistent border */
+  padding-bottom: 0.5rem;
+}
+
+/* Style for read-only information display */
+.readOnlyValue {
+  background-color: var(--bg-input); /* Use input background */
+  border: 1px solid var(--border-secondary); /* Use secondary border */
+  padding: 0.75rem 1rem; /* Match input padding */
+  border-radius: 4px; /* Match input radius */
+  font-family: monospace, sans-serif; /* Monospace for IDs, dates etc. */
+  white-space: pre-wrap; /* Allow wrapping */
+  word-break: break-word; /* Break long words/hashes */
+  font-size: 0.9em;
+  color: var(--text-secondary); /* Muted text color */
+  margin-bottom: 1rem; /* Add some space below */
+  line-height: 1.5;
+}
+
+/* Style for the anti-phishing login phrase */
+.loginPhrase {
+  font-weight: bold;
+  color: var(--accent-green); /* Use success color */
+  background-color: rgba(102, 217, 160, 0.1); /* Subtle green background */
+  border: 1px solid rgba(102, 217, 160, 0.3); /* Subtle green border */
+  padding: 0.8rem 1rem;
+  border-radius: 4px;
+  margin-bottom: 1rem;
+  text-align: center;
+  word-break: break-word; /* Break long phrases */
+  font-size: 1.1em; /* Make it stand out */
+}
+
+/* Style for the warning list inside the PGP modal */
+.warningList {
+  list-style: disc;
+  margin-left: 20px; /* Indent list items */
+  margin-bottom: 1rem;
+  margin-top: 0.5rem; /* Space above list */
+  padding-left: 1rem; /* Padding for markers */
+  color: var(--text-secondary); /* Standard text color for list */
+}
+
+.warningList li {
+  margin-bottom: 0.5rem; /* Space between list items */
+}
+
+/* Layout for actions (buttons) within the modal */
+.modalActions {
+  margin-top: 1.5rem;
+  padding-top: 1rem; /* Space above buttons */
+  border-top: 1px solid var(--border-primary); /* Separator line */
+  display: flex;
+  justify-content: flex-end; /* Align buttons to the right */
+  gap: 1rem; /* Space between buttons */
+}

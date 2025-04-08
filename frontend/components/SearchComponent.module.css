@@ -1,0 +1,82 @@
+/* frontend/components/SearchComponent.module.css */
+/* --- REVISION HISTORY --- */
+/* 2025-04-07: Rev 1 - Initial CSS Module for SearchComponent (Rev 1). */
+/* - Styles for form layout, visually hidden label, input, and button. */
+/* - Dark theme compatible styling using CSS variables. */
+/* - Aligns input and button horizontally using flexbox. */
+
+/* TODO: Adjust width, sizing, and button style based on final placement in the header layout. */
+
+.searchForm {
+  display: flex; /* Align input and button horizontally */
+  align-items: center; /* Vertically align items */
+  gap: 0.5rem; /* Small gap between input and button */
+  /* Allow form to grow if needed in the navbar */
+  /* flex-grow: 1; */
+  /* max-width: 400px; */ /* Optional max width */
+}
+
+/* Standard visually hidden class for accessibility */
+.visuallyHidden {
+  border: 0;
+  clip: rect(0 0 0 0);
+  height: 1px;
+  margin: -1px;
+  overflow: hidden;
+  padding: 0;
+  position: absolute;
+  width: 1px;
+  white-space: nowrap;
+}
+
+/* Customizations for the search input */
+.searchInput {
+  /* Inherits from global .form-input */
+  flex-grow: 1; /* Allow input to take available space */
+  /* Adjust padding if button is placed inside */
+  /* padding-right: 2.5rem; */
+  /* Override default background/color if needed, but global should handle dark theme */
+  /* background-color: var(--bg-input); */
+  /* color: var(--text-primary); */
+  /* border-color: var(--border-secondary); */
+  height: 38px; /* Example fixed height - match button */
+  /* Remove default browser search styling (like clear button 'X') if desired */
+  appearance: none;
+  -webkit-appearance: none;
+}
+.searchInput::-webkit-search-cancel-button {
+    /* Hide Webkit's cancel button */
+    -webkit-appearance: none;
+}
+
+/* Customizations for the search button */
+.searchButton {
+  /* Inherits from global .button .button-secondary */
+  flex-shrink: 0; /* Prevent button from shrinking */
+  padding: 0.5rem 0.8rem; /* Adjust padding for compact look */
+  height: 38px; /* Match input height */
+  line-height: 1; /* Ensure icon is centered vertically */
+  margin-right: 0; /* Override global button margin */
+  /* Style SVG icon inside */
+  & svg {
+      display: block; /* Remove extra space below SVG */
+      /* Size inherited from font-size or set explicitly */
+      /* width: 1em; */
+      /* height: 1em; */
+      /* Color should inherit via fill="currentColor" in SVG tag */
+  }
+}
+/* Remove background/border for icon-only button (alternative style) */
+/*
+.searchButton {
+    background: none;
+    border: none;
+    padding: 0.5rem;
+    color: var(--text-secondary); // Icon color
+    margin-left: -2.5rem; // Position over input padding
+    z-index: 2; // Ensure above input
+}
+.searchButton:hover {
+    color: var(--text-primary);
+}
+*/

@@ -1,0 +1,112 @@
+# shadow_market/kubernetes/frontend-deployment.yaml
+# Revision History:
+# 2025-04-07: Initial creation. Defines the Deployment for the Nginx frontend.
+#             - Configures replicas, image source (from CI/CD).
+#             - Sets basic resource requests/limits (usually low for static serving).
+#             - Implements strict securityContext (non-root, read-only filesystem).
+#             - Includes placeholder volumeMounts/volumes for /tmp and nginx cache.
+#             - Configures HTTP readiness and liveness probes.
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: shadow-market-frontend # Name of the Deployment
+  namespace: shadow-market      # Deployed into the application's namespace
+  labels:
+    app: shadow-market        # Labels for selecting/grouping
+    tier: frontend
+spec:
+  replicas: 2 # Run at least 2 replicas for basic availability
+  selector:
+    matchLabels: # Selector to find Pods managed by this Deployment
+      app: shadow-market
+      tier: frontend
+  strategy: # Define deployment strategy (RollingUpdate is default)
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1
+      maxSurge: 1
+  template: # Pod template used to create new Pods
+    metadata:
+      labels: # Labels applied to each Pod
+        app: shadow-market
+        tier: frontend
+    spec:
+      terminationGracePeriodSeconds: 15 # Allow Nginx time for graceful shutdown
+      containers:
+        - name: frontend # Container name
+          # Image built and pushed by the CI/CD pipeline
+          # IMPORTANT: Replace '<your-github-owner>' or use a variable substitution mechanism
+          image: ghcr.io/<your-github-owner>/shadow_market_frontend:latest
+          # Use 'Always' or specific SHA tags from CI/CD
+          imagePullPolicy: Always
+          ports:
+            - name: http # Port name for reference
+              # Port Nginx listens on inside the container (from frontend Dockerfile/nginx.conf)
+              containerPort: 8080
+              protocol: TCP
+          # Environment variables usually aren't heavily used by Nginx serving static files,
+          # unless you have entrypoint scripts or runtime config needs.
+          # The NGINX_LISTEN_PORT from ConfigMap isn't directly used by Nginx itself here,
+          # but could be used by monitoring or templating tools if needed.
+          # env:
+          #   - name: NGINX_LISTEN_PORT
+          #     valueFrom:
+          #       configMapKeyRef:
+          #         name: shadow-market-config
+          #         key: NGINX_LISTEN_PORT
+          #   - name: REACT_APP_API_URL # Example: if needed by entrypoint script modifying config
+          #     valueFrom:
+          #       configMapKeyRef:
+          #         name: shadow-market-config
+          #         key: REACT_APP_API_URL
+          resources: # Define resource requests/limits (usually low for static file serving)
+            requests: # Minimum resources required
+              memory: "64Mi"
+              cpu: "50m" # 0.05 CPU core
+            limits: # Maximum resources allowed
+              memory: "128Mi"
+              cpu: "100m" # 0.1 CPU core
+          securityContext: # Apply security best practices
+            allowPrivilegeEscalation: false # Prevent privilege escalation
+            runAsNonRoot: true              # Ensure container runs as non-root (nginx user from base image)
+            # runAsUser: <nginx-UID>        # Optional: Specify UID if known and needed (official image handles this)
+            readOnlyRootFilesystem: true    # RECOMMENDED: Makes filesystem immutable
+            capabilities:
+              drop:
+                - ALL # Drop all Linux capabilities
+          volumeMounts: # Mount writable directories if using readOnlyRootFilesystem
+            - name: tmp-volume          # For any temporary files Nginx might need
+              mountPath: /tmp
+            - name: nginx-cache-volume  # Nginx needs to write cache files etc.
+              mountPath: /var/cache/nginx
+            # Nginx logs are often directed to stdout/stderr in containers, but if writing
+            # to /var/log/nginx, that would also need a writable volume mount.
+            # - name: nginx-log-volume
+            #   mountPath: /var/log/nginx
+          readinessProbe: # Check if Nginx is serving the root path
+            httpGet:
+              path: /index.html # Or just '/' - check if Nginx responds successfully
+              port: http      # Reference the container port by name ('http' -> 8080)
+              scheme: HTTP
+            initialDelaySeconds: 5  # Nginx starts quickly
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          livenessProbe: # Check if Nginx process is still running
+            httpGet:
+              path: /index.html # Same check as readiness is usually fine
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 15
+            timeoutSeconds: 3
+            failureThreshold: 3
+      # --- Volume Definitions ---
+      volumes:
+        # Define emptyDir volumes needed for readOnlyRootFilesystem
+        - name: tmp-volume
+          emptyDir: {}
+        - name: nginx-cache-volume
+          emptyDir: {}
+        # - name: nginx-log-volume
+        #   emptyDir: {}

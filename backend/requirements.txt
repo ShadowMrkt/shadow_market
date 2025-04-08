@@ -1,0 +1,69 @@
+# Target Environment:
+# Installs the LATEST available version of each package upon installation.
+# WARNING: This can lead to unexpected breaking changes and non-reproducible environments.
+# Consider using dependency management tools like pip-tools for better control.
+
+# --- Core Framework ---
+Django
+djangorestframework
+django-environ
+gunicorn
+
+# --- Database & Cache ---
+psycopg2-binary
+redis
+django-redis
+
+# --- Background Tasks ---
+celery
+django-celery-results
+
+# --- Authentication & Security ---
+django-axes
+django-otp
+django-simple-captcha
+python-gnupg
+PyNaCl
+bleach
+hvac
+webauthn
+djangorestframework-simplejwt
+
+# --- API & Utilities ---
+requests
+python-json-logger
+django-filter
+websockets
+
+# --- Cryptocurrency Libraries ---
+#web3 dependency commented out as in original file, uncomment if needed
+web3
+python-bitcoinlib
+
+# --- Image Handling ---
+Pillow
+
+
+# --- Core Testing Tools ---
+django-solo
+pytest
+pytest-django
+pytest-cov
+sentry-sdk
+django-debug-toolbar
+
+
+# --- Other Development/Testing Tools (Optional - Uncomment if needed) ---
+# bandit
+# safety
+# pip-audit
+# mypy
+# flake8
+# black
+# isort
+# icontract
+
+# NOTE: The actual output of 'pip freeze' after installing with this file
+# will likely include MANY more packages than listed here, as it includes
+# all indirect dependencies at their latest versions compatible with the
+# primary dependencies requested here.

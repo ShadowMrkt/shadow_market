@@ -1,0 +1,73 @@
+# shadow_market/kubernetes/ingress.yaml
+# Revision History:
+# 2025-04-07: Initial creation. Defines Ingress rules for frontend and backend.
+#             - Includes placeholder hostname, TLS secret reference, and ingress class.
+#             - Routes /api/* to backend-svc, / to frontend-svc.
+#             - Adds comments regarding prerequisites (Ingress Controller, TLS Secret/Cert-Manager, DNS/Tor).
+
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: shadow-market-ingress # Name of the Ingress resource
+  namespace: shadow-market     # Deployed into the application's namespace
+  annotations:
+    # --- Common Annotations (Examples - Adjust based on your Ingress Controller) ---
+
+    # --- For Cert-Manager (if used for automatic TLS certs) ---
+    # cert-manager.io/cluster-issuer: "letsencrypt-prod" # Or your specific issuer name
+    # kubernetes.io/tls-acme: "true" # Deprecated, but sometimes still seen
+
+    # --- For Nginx Ingress Controller (Examples - check documentation) ---
+    nginx.ingress.kubernetes.io/proxy-body-size: "50m"      # Allow larger request bodies if needed
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"        # Enforce HTTPS redirect (often default)
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "true"  # Stronger HTTPS enforcement
+    # nginx.ingress.kubernetes.io/rewrite-target: /$2       # Needed if path rewrite is used (e.g., strip /api)
+
+    # --- Add other annotations needed for CORS, timeouts, proxy headers etc. ---
+
+spec:
+  # Specify which Ingress Controller should handle this Ingress resource
+  # Find the correct class name for your installed controller (e.g., 'nginx', 'traefik', 'gce', 'alb')
+  ingressClassName: nginx # Example: Replace with your actual ingress class name
+
+  # --- TLS Configuration ---
+  # Defines how TLS (HTTPS) is handled for the specified hosts.
+  tls:
+    - hosts:
+        # !!! REPLACE with your actual production hostname (.onion or clearnet) !!!
+        - your-service.your-onion-address.onion
+      # Name of the Kubernetes Secret containing the TLS certificate and private key.
+      # This Secret must exist in the same namespace ('shadow-market').
+      # RECOMMENDED: Use cert-manager to automatically provision and manage this Secret.
+      secretName: shadow-market-tls-secret # Example secret name
+
+  # --- Routing Rules ---
+  rules:
+    # Rule for your primary hostname
+    - host: your-service.your-onion-address.onion # !!! REPLACE with your actual hostname !!!
+      http:
+        paths:
+          # --- Rule for Backend API ---
+          # Routes requests starting with /api/ to the backend service
+          - path: /api # Match paths starting with /api
+            pathType: Prefix # Matches /api, /api/, /api/users, etc.
+            backend:
+              service:
+                # Name of the backend Service created earlier
+                name: shadow-market-backend-svc
+                port:
+                  # Port name defined in the backend Service ('http' -> port 80)
+                  name: http
+
+          # --- Rule for Frontend Application ---
+          # Routes all other requests (including the root path) to the frontend service.
+          # This rule MUST come after more specific rules like /api.
+          - path: / # Match the root path and everything else
+            pathType: Prefix # Matches everything not caught by previous rules
+            backend:
+              service:
+                # Name of the frontend Service created earlier
+                name: shadow-market-frontend-svc
+                port:
+                  # Port name defined in the frontend Service ('http' -> port 80)
+                  name: http

@@ -1,0 +1,43 @@
+/* frontend/components/LoadingSpinner.module.css */
+/* --- REVISION HISTORY --- */
+/* 2025-04-07: Rev 1 - Initial CSS Module for LoadingSpinner component (Rev 2). */
+/* - Styles for container, spinner base, and message text. */
+/* - Defined @keyframes spin locally within the module. */
+/* - Used CSS variables for dark theme integration. */
+
+/* TODO: Adjust spinner colors (border-color, border-top-color) if needed to match theme accents precisely. */
+
+.spinnerContainer {
+	display: inline-flex; /* Allows message to sit alongside spinner */
+	justify-content: center;
+	align-items: center;
+	padding: 0.5rem; /* Padding around the whole component */
+	gap: 0.8rem; /* Space between spinner and message */
+	color: var(--text-secondary); /* Default text color for the message */
+	vertical-align: middle; /* Align with surrounding text/elements if used inline */
+  }
+  
+  /* Define the spin animation locally */
+  @keyframes spin {
+	0% { transform: rotate(0deg); }
+	100% { transform: rotate(360deg); }
+  }
+  
+  .spinnerBase {
+	/* Dynamic width, height, borderWidth applied via inline style */
+	border-style: solid;
+	/* Use a subtle background/border color for the track */
+	border-color: var(--bg-input); /* Use input background color for the track */
+	/* Use an accent color for the moving part of the spinner */
+	border-top-color: var(--accent-blue); /* Use theme's accent blue */
+	border-radius: 50%;
+	flex-shrink: 0; /* Prevent spinner from shrinking in flex container */
+	/* Apply the locally defined animation */
+	animation: spin 1s linear infinite;
+  }
+  
+  .messageText {
+	/* Inherits color from spinnerContainer by default */
+	font-size: 0.9em; /* Slightly smaller message text */
+	line-height: 1.2; /* Adjust line height if needed */
+  }

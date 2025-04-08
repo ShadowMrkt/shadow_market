@@ -1,0 +1,22 @@
+# shadow_market/kubernetes/networkpolicy-default-deny.yaml
+# Revision History:
+# 2025-04-07: Initial creation. Implements default deny for all pods in the namespace.
+
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-all
+  namespace: shadow-market # Apply policy within the application's namespace
+spec:
+  # Apply this policy to all pods in the 'shadow-market' namespace
+  # An empty podSelector selects all pods in the namespace.
+  podSelector: {}
+  policyTypes:
+    # Apply rules for both Ingress (incoming) and Egress (outgoing) traffic.
+    - Ingress
+    - Egress
+  # By specifying 'Ingress' and 'Egress' in policyTypes but leaving the respective
+  # 'ingress' and 'egress' rule arrays empty, we effectively deny all traffic
+  # by default. Other NetworkPolicy resources must explicitly allow specific traffic.
+  ingress: [] # Deny all ingress traffic by default
+  egress: []  # Deny all egress traffic by default

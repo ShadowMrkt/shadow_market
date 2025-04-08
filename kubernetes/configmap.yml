@@ -1,0 +1,63 @@
+# shadow_market/kubernetes/configmap.yaml
+# Revision History:
+# 2025-04-07: Initial creation. Defines non-sensitive configuration.
+#             - Includes settings for Django, DB/Redis connections (using K8s service names),
+#               Gunicorn, Nginx port, Axes limits, and placeholders for external services.
+#             - Contains CRITICAL placeholder for DJANGO_ALLOWED_HOSTS.
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: shadow-market-config # Name used to reference this ConfigMap
+  namespace: shadow-market  # Deployed into the application's namespace
+data:
+  # --- General Application Settings ---
+  DJANGO_ENV: "production"
+  DJANGO_SETTINGS_MODULE: "mymarketplace.settings.prod" # Path to production settings
+
+  # --- Database Connection (Internal Kubernetes Service Names) ---
+  POSTGRES_DB: "shadowmarket_prod"
+  POSTGRES_USER: "shadowmarket_user"
+  # Service name MUST match the name defined in postgres-service.yaml
+  POSTGRES_HOST: "shadow-market-postgres-svc"
+  POSTGRES_PORT: "5432"
+
+  # --- Redis Connection (Internal Kubernetes Service Name) ---
+  # Service name MUST match the name defined in redis-service.yaml
+  REDIS_HOST: "shadow-market-redis-svc"
+  REDIS_PORT: "6379"
+  REDIS_DB_CACHE: "1" # Database index for Django cache (as per prod settings)
+  # Construct Redis URL for django-redis (password handled via Secret)
+  REDIS_URL: "redis://shadow-market-redis-svc:6379/1"
+
+  # --- Backend WSGI Server (Gunicorn) ---
+  # Number of worker processes (adjust based on pod CPU limits/requests)
+  GUNICORN_WORKERS: "4"
+  # Address Gunicorn should bind to inside the container (matches backend Dockerfile EXPOSE)
+  GUNICORN_BIND_ADDR: "0.0.0.0:8000"
+
+  # --- Frontend Web Server (Nginx) ---
+  # Internal port Nginx listens on (matches frontend Dockerfile EXPOSE and nginx.conf)
+  NGINX_LISTEN_PORT: "8080"
+  # Optional: URL for the backend API, if needed by frontend at runtime
+  # This is often better handled during the frontend build process if possible.
+  # REACT_APP_API_URL: "https://your-prod-domain.com/api"
+
+  # --- Allowed Hosts ---
+  # CRITICAL: Replace this placeholder with your actual production hostname(s)!
+  # This MUST include your .onion address and any clearnet domains serving the app.
+  # Example: ".your-xyz-onion-address.onion,www.your-clearnet-domain.com"
+  DJANGO_ALLOWED_HOSTS: ".replace-with-your-onion-address.onion" # <<< MUST BE REPLACED!
+
+  # --- Django Axes (Login Security) ---
+  # Rate limiting configuration for django-axes
+  AXES_FAILURE_LIMIT: "5"
+  AXES_COOLOFF_MINUTES: "15"
+
+  # --- External Service Placeholders (Update if used) ---
+  # Example: Internal address for HashiCorp Vault
+  # VAULT_ADDR: "http://vault.vault.svc.cluster.local:8200"
+  # Crypto node connection details (if applicable)
+  # MONERO_RPC_URL: "http://monero-node.crypto.svc.cluster.local:18081/json_rpc"
+  # BITCOIN_RPC_URL: "http://bitcoin-node.crypto.svc.cluster.local:8332"
+  # ETHEREUM_NODE_URL: "ws://ethereum-node.crypto.svc.cluster.local:8546"

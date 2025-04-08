@@ -1,0 +1,88 @@
+{% comment %}
+# backend/forum/templetes/forum/create_thread.html
+# <<< Rewritten for Form Rendering Best Practices, Security, Base Extension >>>
+{% endcomment %}
+
+{% extends "base.html" %} {# <<< CHANGE: Extends the forum base template >>> #}
+{% load i18n %}
+
+{% block page_title %}{% blocktrans with category_name=category.name %}Create New Thread in {{ category_name }}{% endblocktrans %}{% endblock page_title %}
+
+{% comment %} Breadcrumbs block - Index > Category > Create Thread {% endcomment %}
+{% block breadcrumbs %}
+  <li class="flex items-center">
+    {# <<< CHANGE: Use category.id for URL >>> #}
+    <a href="{% url 'forum:category_detail' category.id %}" class="hover:text-blue-700">{{ category.name }}</a>
+    <span class="mx-2">/</span> {# Separator #}
+  </li>
+  <li class="flex items-center text-gray-500" aria-current="page">
+    {% trans "Create New Thread" %}
+  </li>
+{% endblock breadcrumbs %}
+{% block breadcrumbs_separator %}{% endblock breadcrumbs_separator %}{# Override separator for last item #}
+
+
+{% block main_content %}
+  <div class="forum-create-thread">
+    <h1 class="text-xl font-semibold mb-4">{% blocktrans with category_name=category.name %}Start New Thread in "{{ category_name }}"{% endblocktrans %}</h1>
+
+    {# <<< BEST PRACTICE: novalidate prevents browser validation, rely on Django's server-side validation >>> #}
+    <form method="post" action="" novalidate class="space-y-4"> {# Post to same URL, handled by view #}
+        {% csrf_token %} {# <<< SECURITY: Always include CSRF token >>> #}
+
+        {# Display Non-Field Errors (e.g., validation errors not specific to a field) #}
+        {% if thread_form.non_field_errors %}
+            <div class="form-errors-nonfield p-3 bg-red-100 text-red-700 border border-red-300 rounded text-sm">
+                {% for error in thread_form.non_field_errors %}
+                    <p>{{ error }}</p>
+                {% endfor %}
+            </div>
+        {% endif %}
+
+        {# <<< BEST PRACTICE: Manual field rendering for layout control >>> #}
+        <div class="form-field-group">
+            {{ thread_form.title.label_tag }} {# Renders <label> tag #}
+            {# Add necessary classes for styling to the widget in forms.py or here if needed #}
+            {{ thread_form.title }} {# Renders the <input> widget #}
+            {% if thread_form.title.help_text %}
+                {# <<< SECURITY CHANGE: Removed |safe filter from help_text >>> #}
+                <p class="form-help-text text-xs text-gray-500 mt-1">{{ thread_form.title.help_text }}</p>
+            {% endif %}
+            {% if thread_form.title.errors %}
+                <div class="form-field-errors text-sm text-red-600 mt-1">
+                    {% for error in thread_form.title.errors %}
+                        <p>{{ error }}</p>
+                    {% endfor %}
+                </div>
+            {% endif %}
+        </div>
+
+        <div class="form-field-group">
+            {{ thread_form.content.label_tag }}
+            {{ thread_form.content }} {# Renders the <textarea> widget #}
+            {% if thread_form.content.help_text %}
+                 {# <<< SECURITY CHANGE: Removed |safe filter from help_text >>> #}
+                <p class="form-help-text text-xs text-gray-500 mt-1">{{ thread_form.content.help_text }}</p>
+            {% endif %}
+            {% if thread_form.content.errors %}
+                <div class="form-field-errors text-sm text-red-600 mt-1">
+                    {% for error in thread_form.content.errors %}
+                        <p>{{ error }}</p>
+                    {% endfor %}
+                </div>
+            {% endif %}
+        </div>
+
+        <div class="form-actions mt-6 flex items-center space-x-3">
+            <button type="submit" class="button button-primary">
+                <i class="fas fa-check mr-1"></i> {% trans "Create Thread" %}
+            </button>
+            {# <<< CHANGE: Use category.id for cancel link >>> #}
+            <a href="{% url 'forum:category_detail' category.id %}" class="button button-secondary">
+                {% trans "Cancel" %}
+            </a>
+        </div>
+    </form>
+
+  </div>
+{% endblock main_content %}

@@ -1,0 +1,160 @@
+{% comment %}
+# backend/forum/templetes/forum/category_detail.html
+# <<< Rewritten for Clarity, Pagination, Correct Context Usage >>>
+{% endcomment %}
+
+{% extends "base.html" %} {# <<< CHANGE: Extends the forum base template >>> #}
+{% load i18n %}
+{% load tz %} {# <<< BEST PRACTICE: Load timezone tags for date formatting >>> #}
+
+{% block page_title %}{{ category.name }} - {% trans "Forum" %}{% endblock page_title %}
+
+{% comment %} Breadcrumbs block - Index > Category Name {% endcomment %}
+{% block breadcrumbs %}
+  <li class="flex items-center text-gray-500" aria-current="page">
+    {{ category.name }}
+  </li>
+{% endblock breadcrumbs %}
+{% block breadcrumbs_separator %}{% endblock breadcrumbs_separator %}{# Override separator for last item #}
+
+{% block main_content %}
+  <div class="forum-category-detail">
+
+    <div class="category-header-actions flex justify-between items-center mb-4">
+      <div class="category-info">
+        <h1 class="text-xl font-semibold">{{ category.name }}</h1>
+        {% if category.description %}
+          <p class="text-sm text-gray-600 mt-1">{{ category.description }}</p>
+        {% endif %}
+      </div>
+      <div class="category-actions">
+        {% if user.is_authenticated %}
+          {# <<< CHANGE: Use category.id instead of slug >>> #}
+          <a href="{% url 'forum:create_thread' category.id %}" class="button button-primary button-sm">
+            <i class="fas fa-plus mr-1"></i> {% trans "New Thread" %} {# Example with icon #}
+          </a>
+        {% else %}
+           <a href="{{ settings.LOGIN_URL }}?next={{ request.path }}" class="button button-secondary button-sm">{% trans "Login to Post" %}</a>
+        {% endif %}
+      </div>
+    </div>
+
+    {% if not threads %}
+      <div class="p-4 bg-blue-100 text-blue-800 border border-blue-300 rounded text-center" role="alert">
+        {% trans "There are no threads in this category yet." %}
+        {% if user.is_authenticated %}
+           {% trans "Why not" %} <a href="{% url 'forum:create_thread' category.id %}" class="font-medium underline hover:text-blue-700">{% trans "create the first one" %}</a>?
+        {% endif %}
+      </div>
+    {% else %}
+      {# <<< CHANGE: Cleaned up table structure, removed Views column >>> #}
+      <div class="table-container overflow-x-auto border rounded">
+        <table class="forum-thread-list min-w-full divide-y divide-gray-200">
+          <thead class="bg-gray-50">
+            <tr>
+              <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-2/5">{% trans "Thread / Author" %}</th>
+              <th scope="col" class="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">{% trans "Replies" %}</th>
+              <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-2/5">{% trans "Last Post" %}</th>
+            </tr>
+          </thead>
+          <tbody class="bg-white divide-y divide-gray-200">
+            {% for thread in threads %}
+            <tr class="hover:bg-gray-50">
+              <td class="px-6 py-4 whitespace-nowrap">
+                <div class="flex items-center mb-1">
+                  {# <<< CHANGE: Simplified badges >>> #}
+                  {% if thread.is_sticky %}
+                    <span class="badge badge-sticky mr-2">{% trans "Sticky" %}</span>
+                  {% endif %}
+                  {% if thread.is_locked %}
+                    <span class="badge badge-locked mr-2">{% trans "Locked" %}</span>
+                  {% endif %}
+                  {# <<< CHANGE: Use url tag and thread.id >>> #}
+                  <a href="{% url 'forum:thread_detail' thread.id %}" class="text-sm font-medium text-blue-600 hover:text-blue-800 truncate">
+                    {{ thread.title }}
+                  </a>
+                </div>
+                <div class="text-xs text-gray-500">
+                  {% trans "Started by" %}
+                  {# <<< CHANGE: Use default filter for potentially deleted author >>> #}
+                  <span class="font-medium {% if thread.author.is_vendor %}text-green-600{% endif %}">
+                      {{ thread.author.username|default:_("[deleted]") }}
+                  </span>
+                  - {{ thread.created_at|timesince }} {% trans "ago" %}
+                </div>
+              </td>
+              <td class="px-6 py-4 whitespace-nowrap text-center text-sm text-gray-500">
+                {# <<< CHANGE: Correct calculation assumes post_count includes OP >>> #}
+                {{ thread.post_count|add:"-1" }}
+              </td>
+              <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                {% if thread.last_post_at %}
+                  {# <<< BEST PRACTICE: Use timezone conversion if needed and format date >>> #}
+                  {{ thread.last_post_at|utc|date:"Y-m-d H:i" }} {% trans "UTC" %}
+                  <br>
+                  <span class="text-xs">
+                    {% trans "by" %}
+                    {# <<< CHANGE: Use default filter for potentially deleted last poster >>> #}
+                    <span class="font-medium {% if thread.last_post_by.is_vendor %}text-green-600{% endif %}">
+                        {{ thread.last_post_by.username|default:_("[deleted]") }}
+                    </span>
+                    {# <<< TODO: Add link to last post if feasible/desired >>> #}
+                    {# <a href="{% url 'forum:thread_detail' thread.id %}?page={{ threads.paginator.num_pages }}#post-{{ thread.last_post_id }}">&raquo;</a> #}
+                  </span>
+                {% else %}
+                  <span class="text-xs">{% trans "No replies yet." %}</span>
+                {% endif %}
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+
+      {# <<< CHANGE: Improved Pagination Controls >>> #}
+      {% if threads.has_other_pages %}
+        <nav aria-label="Thread navigation" class="pagination-nav mt-6 flex items-center justify-between border-t border-gray-200 px-4 sm:px-0">
+            {# Previous Button #}
+            <div class="-mt-px w-0 flex-1 flex">
+                {% if threads.has_previous %}
+                    <a href="?page={{ threads.previous_page_number }}" class="pagination-previous">
+                        <svg class="mr-3 h-5 w-5 text-gray-400" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><path fill-rule="evenodd" d="M7.707 14.707a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414l4-4a1 1 0 011.414 1.414L5.414 9H17a1 1 0 110 2H5.414l2.293 2.293a1 1 0 010 1.414z" clip-rule="evenodd" /></svg>
+                        {% trans "Previous" %}
+                    </a>
+                {% else %}
+                     <span class="pagination-disabled pagination-previous">
+                        <svg class="mr-3 h-5 w-5 text-gray-400" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><path fill-rule="evenodd" d="M7.707 14.707a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414l4-4a1 1 0 011.414 1.414L5.414 9H17a1 1 0 110 2H5.414l2.293 2.293a1 1 0 010 1.414z" clip-rule="evenodd" /></svg>
+                        {% trans "Previous" %}
+                    </span>
+                {% endif %}
+            </div>
+
+            {# Page Numbers (Optional - simplified for brevity) #}
+            <div class="hidden md:-mt-px md:flex">
+                <span class="pagination-info">
+                    {% blocktrans with current=threads.number total=threads.paginator.num_pages %}Page {{ current }} of {{ total }}{% endblocktrans %}
+                </span>
+                {# Add full page number links here if needed, similar to original template logic but cleaned up #}
+            </div>
+
+            {# Next Button #}
+            <div class="-mt-px w-0 flex-1 flex justify-end">
+                {% if threads.has_next %}
+                    <a href="?page={{ threads.next_page_number }}" class="pagination-next">
+                        {% trans "Next" %}
+                        <svg class="ml-3 h-5 w-5 text-gray-400" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><path fill-rule="evenodd" d="M12.293 5.293a1 1 0 011.414 0l4 4a1 1 0 010 1.414l-4 4a1 1 0 01-1.414-1.414L14.586 11H3a1 1 0 110-2h11.586l-2.293-2.293a1 1 0 010-1.414z" clip-rule="evenodd" /></svg>
+                    </a>
+                {% else %}
+                    <span class="pagination-disabled pagination-next">
+                        {% trans "Next" %}
+                        <svg class="ml-3 h-5 w-5 text-gray-400" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><path fill-rule="evenodd" d="M12.293 5.293a1 1 0 011.414 0l4 4a1 1 0 010 1.414l-4 4a1 1 0 01-1.414-1.414L14.586 11H3a1 1 0 110-2h11.586l-2.293-2.293a1 1 0 010-1.414z" clip-rule="evenodd" /></svg>
+                    </span>
+                {% endif %}
+            </div>
+        </nav>
+      {% endif %} {# End pagination nav #}
+
+    {% endif %} {# End if not threads #}
+
+  </div>
+{% endblock main_content %}

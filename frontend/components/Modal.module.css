@@ -1,0 +1,91 @@
+/* frontend/components/Modal.module.css */
+/* --- REVISION HISTORY --- */
+/* 2025-04-07: Rev 1 - Initial CSS Module for Modal component (Rev 1). */
+/* - Styles for overlay, modal container, close button, title. */
+/* - Dark theme compatible styling using CSS variables. */
+/* - Basic fade-in animation added. */
+
+/* TODO: Adjust max-width, padding, animation as needed. */
+/* TODO: Ensure close button contrast and size are accessible. */
+
+/* --- Modal Overlay --- */
+.overlay {
+  position: fixed;
+  inset: 0; /* Equivalent to top: 0, left: 0, right: 0, bottom: 0 */
+  background-color: rgba(0, 0, 0, 0.75); /* Dark semi-transparent overlay */
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  z-index: 1050; /* High z-index (ensure higher than other elements) */
+  padding: 1rem; /* Add padding for smaller screens */
+  /* Basic fade-in animation */
+  animation: fadeIn 0.2s ease-out;
+}
+
+/* --- Modal Container --- */
+.modal {
+  background-color: var(--bg-secondary); /* Use secondary background */
+  color: var(--text-primary);
+  padding: 2rem;
+  border-radius: 8px;
+  max-width: 600px; /* Adjust max width as needed */
+  width: 95%; /* Responsive width */
+  position: relative; /* For absolute positioning of close button */
+  max-height: 90vh; /* Limit height based on viewport */
+  overflow-y: auto; /* Enable scroll if content exceeds max height */
+  border: 1px solid var(--border-primary);
+  box-shadow: 0 5px 15px rgba(0, 0, 0, 0.3);
+  /* Scale-up animation */
+  animation: scaleUp 0.25s ease-out;
+  outline: none; /* Remove outline if focus is programmatically set here */
+}
+
+/* --- Modal Title --- */
+.title {
+  margin-top: 0;
+  margin-bottom: 1.5rem;
+  font-size: 1.6em;
+  font-weight: 600;
+  color: var(--text-primary);
+  padding-right: 2rem; /* Ensure space for close button */
+}
+
+/* --- Close Button --- */
+.closeButton {
+  position: absolute;
+  top: 10px;
+  right: 15px;
+  background: none;
+  border: none;
+  font-size: 2rem; /* Larger target size */
+  line-height: 1; /* Prevent extra vertical space */
+  cursor: pointer;
+  color: var(--text-tertiary); /* Muted color */
+  padding: 0.25rem 0.5rem; /* Add some padding for easier clicking */
+  transition: color 0.15s ease;
+}
+
+.closeButton:hover,
+.closeButton:focus {
+  color: var(--text-primary); /* Brighter on hover/focus */
+  outline: none; /* Use browser default or custom focus ring */
+}
+/* Optional focus ring */
+/*
+.closeButton:focus-visible {
+    outline: 2px solid var(--border-focus);
+    outline-offset: 2px;
+    border-radius: 4px;
+}
+*/
+
+/* --- Animations --- */
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes scaleUp {
+  from { transform: scale(0.95); opacity: 0.8; }
+  to { transform: scale(1); opacity: 1; }
+}

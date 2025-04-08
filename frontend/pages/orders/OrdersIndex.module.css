@@ -1,0 +1,235 @@
+/* frontend/pages/orders/OrdersIndex.module.css */
+/* --- REVISION HISTORY --- */
+/* 2025-04-07: Rev 1 - Initial CSS Module for OrderListPage (orders/index.js Rev 1). */
+/* - Implemented dark theme styles for container, filter bar, table, etc. */
+/* - Added styles for roles, action needed status, buttons. */
+/* - Added basic responsive handling for table (horizontal scroll). */
+/* - Added visually hidden style for filter descriptions. */
+
+/* TODO: Refine colors (especially for roles/status) for optimal contrast and branding. */
+/* TODO: Enhance responsiveness beyond basic table scroll if needed. */
+/* TODO: Add focus styles for better keyboard navigation. */
+
+.container {
+  padding: 1rem 0; /* Add vertical padding, horizontal handled by Layout */
+}
+
+.title {
+  margin-bottom: 1.5rem;
+  color: #e0e0e0; /* Light title color */
+  font-size: 1.8rem;
+  border-bottom: 1px solid #444; /* Subtle separator below title */
+  padding-bottom: 0.5rem;
+}
+
+/* Filter Bar */
+.filterBar {
+  background-color: #2a2a2a; /* Slightly distinct dark background */
+  padding: 1rem 1.5rem;
+  margin-bottom: 2rem;
+  border-radius: 6px;
+  border: 1px solid #444;
+  display: flex;
+  gap: 1.5rem; /* Space between filter groups/button */
+  flex-wrap: wrap; /* Allow wrapping on smaller screens */
+  align-items: flex-end; /* Align items to the bottom edge */
+}
+
+.filterGroup {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem; /* Space between label and select */
+}
+
+.filterLabel {
+  font-size: 0.85em;
+  font-weight: 600;
+  color: #bbbbbb; /* Lighter grey for labels */
+}
+
+.filterSelect {
+  padding: 0.6rem 0.8rem;
+  background-color: #333333; /* Dark background for select */
+  color: #e0e0e0; /* Light text */
+  border: 1px solid #555;
+  border-radius: 4px;
+  min-width: 180px; /* Give selects some base width */
+  height: calc(1.5em + 1.2rem + 2px); /* Match button height approx */
+  font-size: 0.9rem;
+  appearance: none; /* Basic reset */
+  background-image: url('data:image/svg+xml;charset=US-ASCII,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%22292.4%22%20height%3D%22292.4%22%3E%3Cpath%20fill%3D%22%23cccccc%22%20d%3D%22M287%2069.4a17.6%2017.6%200%200%200-13-5.4H18.4c-5%200-9.3%201.8-12.9%205.4A17.6%2017.6%200%200%200%200%2082.2c0%205%201.8%209.3%205.4%2012.9l128%20127.9c3.6%203.6%207.8%205.4%2012.8%205.4s9.2-1.8%2012.8-5.4L287%2095c3.5-3.5%205.4-7.8%205.4-12.8%200-5-1.9-9.2-5.5-12.8z%22%2F%3E%3C%2Fsvg%3E'); /* Simple SVG arrow */
+  background-repeat: no-repeat;
+  background-position: right 0.7em top 50%;
+  background-size: 0.65em auto;
+  cursor: pointer;
+}
+
+.filterSelect:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.filterResetButton {
+  /* Reuse button styles from Layout or define specific */
+  padding: 0.6rem 1rem;
+  background-color: #555; /* Grey background */
+  color: #e0e0e0;
+  border: 1px solid #777;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 1.1rem; /* Make icon slightly larger */
+  line-height: 1.5em; /* Ensure vertical alignment */
+  height: calc(1.5em + 1.2rem + 2px); /* Match select height */
+  align-self: flex-end; /* Explicitly align self if needed */
+  transition: background-color 0.2s ease;
+}
+
+.filterResetButton:hover:not(:disabled),
+.filterResetButton:focus:not(:disabled) {
+  background-color: #666;
+  border-color: #888;
+  outline: none;
+}
+
+.filterResetButton:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* Visually hidden class for descriptions */
+.filterDescription {
+  border: 0;
+  clip: rect(0 0 0 0);
+  height: 1px;
+  margin: -1px;
+  overflow: hidden;
+  padding: 0;
+  position: absolute;
+  width: 1px;
+  white-space: nowrap; /* Avoid line breaks */
+}
+
+
+/* Table Styles */
+.tableContainer {
+  overflow-x: auto; /* Enable horizontal scroll on small screens */
+  margin-top: 1rem;
+  border: 1px solid #444; /* Border around the scroll container */
+  border-radius: 4px;
+  background-color: #222; /* Dark background for table area */
+}
+
+.orderTable {
+  width: 100%;
+  border-collapse: collapse;
+  min-width: 800px; /* Minimum width before scrollbar appears */
+}
+
+.th,
+.td {
+  padding: 10px 12px;
+  border: 1px solid #444; /* Darker borders */
+  text-align: left;
+  vertical-align: middle; /* Align cell content vertically */
+  font-size: 0.9rem;
+  white-space: nowrap; /* Prevent text wrapping initially */
+}
+
+.th {
+  background-color: #333; /* Darker header background */
+  color: #e0e0e0;
+  font-weight: 600;
+  white-space: normal; /* Allow header text to wrap */
+}
+
+.td {
+  color: #cccccc; /* Slightly lighter text for data */
+}
+
+/* Alternate row color (optional) */
+.orderTable tbody tr:nth-child(odd) {
+   background-color: #252525; /* Very subtle difference */
+}
+
+.orderTable tbody tr:hover {
+   background-color: #383838; /* Highlight on hover */
+}
+
+/* Link styling */
+.link {
+  color: #61aeee; /* Lighter blue for links */
+  text-decoration: none;
+}
+
+.link:hover,
+.link:focus {
+  color: #82c1ff;
+  text-decoration: underline;
+  outline: none;
+}
+
+/* Role and Status Styles */
+/* TODO: Choose colors with sufficient contrast against backgrounds (#222, #252525) */
+.roleBuyer {
+  font-weight: bold;
+  color: #77b3ff; /* Light Blue */
+}
+
+.roleVendor {
+  font-weight: bold;
+  color: #66d9a0; /* Light Green */
+}
+
+.actionNeeded {
+  font-weight: bold;
+  color: #ffcc66; /* Light Orange/Yellow */
+  /* Add a subtle indicator? */
+  /* display: inline-block; */
+  /* &::before { content: '⚠️ '; } */
+}
+
+/* Button Link Style */
+.buttonLink {
+  /* Style like a small button */
+  display: inline-block;
+  padding: 0.3rem 0.7rem;
+  background-color: #4a5568; /* Dark Grayish Blue */
+  color: #e2e8f0; /* Light Gray */
+  border: 1px solid #718096; /* Medium Gray */
+  border-radius: 4px;
+  text-decoration: none;
+  font-size: 0.8rem;
+  line-height: 1.2;
+  text-align: center;
+  transition: background-color 0.2s ease, border-color 0.2s ease;
+  cursor: pointer;
+}
+
+.buttonLink:hover,
+.buttonLink:focus {
+  background-color: #5a6578;
+  border-color: #8190a6;
+  color: #ffffff;
+  outline: none;
+}
+
+.buttonSmall {
+  /* Inherits from buttonLink, can add specific overrides */
+  padding: 0.2rem 0.5rem;
+  font-size: 0.75rem;
+}
+
+
+/* No Orders / Loading */
+.noOrders {
+  margin-top: 2rem;
+  color: #888; /* Muted grey */
+  text-align: center;
+  padding: 2rem;
+  background-color: #2a2a2a;
+  border: 1px dashed #444;
+  border-radius: 4px;
+}
+
+/* Loading state - primarily handled by LoadingSpinner component now */
+/* .loading { } */

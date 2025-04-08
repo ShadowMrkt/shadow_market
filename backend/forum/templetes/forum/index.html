@@ -1,0 +1,56 @@
+{% comment %}
+# backend/forum/templetes/forum/index.html
+# <<< Rewritten to extend correct base, use blocks, cleaner structure >>>
+{% endcomment %}
+
+{% extends "base.html" %} {# <<< CHANGE: Extends the forum base template >>> #}
+{% load i18n %}
+
+{% block page_title %}{% trans "Forum Index" %}{% endblock page_title %}
+
+{% comment %} Breadcrumbs block - only the index link is needed here {% endcomment %}
+{% block breadcrumbs %}
+  {# No additional breadcrumbs needed on the index page #}
+{% endblock breadcrumbs %}
+{% block breadcrumbs_separator %}{# No separator needed #}{% endblock breadcrumbs_separator %}
+
+
+{% block main_content %}
+  <div class="forum-index-content">
+    <h1 class="text-xl font-semibold mb-4">{% trans "Forum Categories" %}</h1> {# <<< CHANGE: Use main_content block header if desired, or keep here >>> #}
+
+    {% if not categories %}
+      <div class="p-4 bg-yellow-100 text-yellow-800 border border-yellow-300 rounded" role="alert"> {# <<< CHANGE: Simplified styling placeholder >>> #}
+          {% trans "No forum categories have been created yet." %}
+      </div>
+    {% else %}
+      {# <<< CHANGE: Use a simpler list structure >>> #}
+      <ul class="category-list space-y-3">
+          {% for category in categories %}
+          <li class="category-item border rounded p-4 hover:bg-gray-50 transition duration-150 ease-in-out">
+            <div class="category-header mb-1">
+              <h2 class="category-title text-lg font-medium">
+                {# <<< BEST PRACTICE: Use url tag >>> #}
+                <a href="{% url 'forum:category_detail' category.id %}" class="hover:text-blue-700 hover:underline">
+                  {{ category.name }}
+                </a>
+              </h2>
+              {# <<< TODO: Add thread/post counts here if annotated in view >>> #}
+              {# <span class="text-sm text-gray-500">(Threads: X, Posts: Y)</span> #}
+            </div>
+            {% if category.description %}
+              <p class="category-description text-sm text-gray-600">
+                {{ category.description }}
+              </p>
+            {% endif %}
+            {# <<< TODO: Add last post info here if annotated in view >>> #}
+            {# <p class="category-last-post text-xs text-gray-500 mt-1">Last Post: ...</p> #}
+          </li>
+          {% endfor %}
+      </ul>
+    {% endif %}
+
+    {# Removed commented-out admin link and extra CSS block #}
+
+  </div>
+{% endblock main_content %}
