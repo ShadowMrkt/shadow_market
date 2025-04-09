@@ -1,43 +1,40 @@
 /* frontend/styles/globals.css */
 /* --- REVISION HISTORY --- */
-/* 2025-04-07: Rev 1 - Converted to Dark Theme, introduced CSS variables, updated base styles. */
-/* - Changed base body background/color to dark. */
-/* - Defined CSS variables (--bg-primary, --text-primary, etc.) for dark theme. */
-/* - Updated link, heading, form, button, table, message styles for dark theme using variables. */
-/* - Commented out global .card style to favor component modules. */
-/* - Added revision history block. */
+/* 2025-04-08: Rev 1.2 - Added -webkit- prefix for user-select compatibility (Safari) by Gemini Persona. */
+/* 2025-04-08: Rev 1.1 - Added responsive image scaling rule by Gemini Persona. */
+/* 2025-04-07: Rev 1.0 - Converted to Dark Theme, CSS variables, updated base styles by User/Gemini. */
 
 /* Define CSS Variables for Dark Theme */
 :root {
   /* Backgrounds */
-  --bg-primary: #121212;        /* Deep dark (main body) */
-  --bg-secondary: #1f1f1f;      /* Slightly lighter (headers, footers) */
-  --bg-tertiary: #2a2a2a;       /* Lighter dark (cards, filter bars) */
-  --bg-hover: #383838;         /* Hover background */
-  --bg-input: #333333;         /* Input field background */
+  --bg-primary: #121212;         /* Deep dark (main body) */
+  --bg-secondary: #1f1f1f;       /* Slightly lighter (headers, footers) */
+  --bg-tertiary: #2a2a2a;        /* Lighter dark (cards, filter bars) */
+  --bg-hover: #383838;          /* Hover background */
+  --bg-input: #333333;          /* Input field background */
 
   /* Text */
-  --text-primary: #e0e0e0;      /* Main light text */
-  --text-secondary: #bbbbbb;    /* Muted light text */
-  --text-tertiary: #888888;     /* Very muted text */
-  --text-placeholder: #666666; /* Placeholder text in inputs */
-  --text-on-accent: #ffffff;    /* Text on colored buttons/accents */
-  --text-inverse: #121212;     /* Text for light backgrounds (e.g., warning button) */
+  --text-primary: #e0e0e0;       /* Main light text */
+  --text-secondary: #bbbbbb;     /* Muted light text */
+  --text-tertiary: #888888;      /* Very muted text */
+  --text-placeholder: #666666;  /* Placeholder text in inputs */
+  --text-on-accent: #ffffff;     /* Text on colored buttons/accents */
+  --text-inverse: #121212;       /* Text for light backgrounds (e.g., warning button) */
 
   /* Borders */
-  --border-primary: #444444;    /* Default border */
-  --border-secondary: #555555;  /* Slightly lighter border */
-  --border-focus: #61aeee;      /* Focus border color (light blue) */
+  --border-primary: #444444;     /* Default border */
+  --border-secondary: #555555;   /* Slightly lighter border */
+  --border-focus: #61aeee;       /* Focus border color (light blue) */
 
   /* Accents */
-  --accent-blue: #61aeee;       /* Links, primary actions */
+  --accent-blue: #61aeee;        /* Links, primary actions */
   --accent-blue-hover: #82c1ff;
   --accent-green: #66d9a0;       /* Success */
   --accent-red: #ff7777;         /* Danger */
-  --accent-yellow: #ffdd77;      /* Warning */
-  --accent-orange: #ffcc66;      /* Emphasis / Action Needed */
-  --accent-cyan: #77eeee;        /* Info */
-  --accent-grey: #888888;        /* Secondary actions / disabled */
+  --accent-yellow: #ffdd77;       /* Warning */
+  --accent-orange: #ffcc66;       /* Emphasis / Action Needed */
+  --accent-cyan: #77eeee;         /* Info */
+  --accent-grey: #888888;         /* Secondary actions / disabled */
 
   /* Shadows (Optional - use sparingly in dark themes) */
   --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.3);
@@ -83,10 +80,15 @@ a:hover {
   text-decoration: underline;
 }
 
+/* --- Responsive Image Scaling --- */
 img {
-  max-width: 100%;
-  display: block; /* Removes bottom space */
+  max-width: 100%; /* Ensure images don't overflow container */
+  height: auto;    /* Maintain aspect ratio */
+  display: block;  /* Optional: Remove potential extra space below image */
+  /* Consider adding object-fit if images are often placed in fixed-size containers */
+  /* object-fit: contain; */
 }
+/* -------------------------------------- */
 
 /* Basic Typography (Dark Theme) */
 h1, h2, h3, h4, h5, h6 {
@@ -194,7 +196,8 @@ p:last-child { margin-bottom: 0; } /* Avoid extra space at end of containers */
   text-decoration: none;
   vertical-align: middle;
   cursor: pointer;
-  user-select: none;
+  -webkit-user-select: none; /* Safari/iOS compatibility */ /* ADDED */
+  user-select: none; /* Standard */
   background-color: var(--accent-grey); /* Default: Grey background */
   border: 1px solid var(--accent-grey);
   padding: 0.75rem 1.25rem;

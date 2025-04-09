@@ -4,15 +4,15 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/router';
 import Link from 'next/link';
-import { useAuth } from '../../context/AuthContext'; // <<< Ensure path is correct >>>
-import { registerUser } from '../../utils/api'; // <<< Ensure path is correct >>>
-import Layout from '../../components/Layout'; // <<< Ensure path is correct >>>
+import { useAuth } from '../context/AuthContext'; // <<< Ensure path is correct >>>
+import { registerUser } from '../utils/api'; // <<< Ensure path is correct >>>
+import Layout from '../components/Layout'; // <<< Ensure path is correct >>>
 // <<< ADDED: Import necessary components and constants >>>
-import CaptchaInput from '../../components/CaptchaInput';
-import FormError from '../../components/FormError';
-import LoadingSpinner from '../../components/LoadingSpinner';
-import { MIN_PASSWORD_LENGTH } from '../../utils/constants'; // <<< Ensure path is correct >>>
-import { showSuccessToast, showErrorToast } from '../../utils/notifications'; // <<< Ensure path is correct >>>
+import CaptchaInput from '../components/CaptchaInput';
+import FormError from '../components/FormError';
+import LoadingSpinner from '../components/LoadingSpinner';
+import { MIN_PASSWORD_LENGTH } from '../utils/constants'; // <<< Ensure path is correct >>>
+import { showSuccessToast, showErrorToast } from '../utils/notifications'; // <<< Ensure path is correct >>>
 
 // Styles (ensure consistency with globals.css)
 const styles = {

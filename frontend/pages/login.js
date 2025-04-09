@@ -12,15 +12,15 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/router';
 import Link from 'next/link';
-import { useAuth } from '../../context/AuthContext'; // <<< Verify path is correct
-import { loginInit, loginPgpVerify } from '../../utils/api'; // <<< Verify path is correct
-import Layout from '../../components/Layout'; // <<< Verify path is correct & implements necessary security (e.g., headers if needed)
+import { useAuth } from '../context/AuthContext'; // <<< Verify path is correct
+import { loginInit, loginPgpVerify } from '../utils/api'; // <<< Verify path is correct
+import Layout from '../components/Layout'; // <<< Verify path is correct & implements necessary security (e.g., headers if needed)
 // <<< Import necessary components - Assume these are implemented securely >>>
-import CaptchaInput from '../../components/CaptchaInput'; // Assumes handles CAPTCHA display/input correctly
-import PgpChallengeSigner from '../../components/PgpChallengeSigner'; // Assumes handles challenge display/signature input correctly & securely
-import FormError from '../../components/FormError'; // Assumes safely renders error messages
-import LoadingSpinner from '../../components/LoadingSpinner';
-import { showSuccessToast, showErrorToast } from '../../utils/notifications'; // <<< Verify path & assume functions sanitize inputs >>>
+import CaptchaInput from '../components/CaptchaInput'; // Assumes handles CAPTCHA display/input correctly
+import PgpChallengeSigner from '../components/PgpChallengeSigner'; // Assumes handles challenge display/signature input correctly & securely
+import FormError from '../components/FormError'; // Assumes safely renders error messages
+import LoadingSpinner from '../components/LoadingSpinner';
+import { showSuccessToast, showErrorToast } from '../utils/notifications'; // <<< Verify path & assume functions sanitize inputs >>>
 
 // Styles object (can be replaced/merged with global CSS classes like .card, .form-group etc.)
 const styles = {
