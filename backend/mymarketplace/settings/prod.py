@@ -1,147 +1,105 @@
 # backend/mymarketplace/settings/prod.py
+# <<< Revision v1.1.0 (Enterprise Polish) >>>
 # Revision History:
-# 2025-04-08: Addressed Bandit B105 warning by Gemini.
-#           - Added '# nosec B105' to the SECRET_KEY check line to suppress the
-#             warning, as the check against the default key is intentional.
-# 2025-04-07: Initial update for production hardening.
-#           - Added HTTPS security headers (HSTS, Secure Cookies, SSL Redirect).
-#           - Uncommented SECURE_PROXY_SSL_HEADER (assuming proxy).
-#           - Uncommented Whitenoise staticfiles storage.
-#           - Added explicit AXES failure limits.
-#           - Replaced print statement with logger info.
-#           - Added comments emphasizing secure env var loading in base.py.
-#           - Kept existing critical setting checks as safeguards.
-#           - Ensured BrowsableAPIRenderer removal.
+# - v1.1.0 (Current - 2025-04-10):
+#   - REFACTOR: Removed redundant settings definitions (Cache URL, HSTS, Axes); rely on base.py + environ.
+#   - REFACTOR: Refined critical setting checks to ensure values are loaded (not None/empty), not checking specific defaults.
+#   - REFACTOR: Removed redundant ALLOWED_HOSTS check (present in base.py).
+#   - REFACTOR: Removed direct manipulation of LOGGING and REST_FRAMEWORK dicts; rely on base.py logic based on DEBUG=False.
+#   - IMPROVEMENT: Use logger for critical errors before sys.exit.
+#   - STYLE: Removed unused imports (os, sys, timedelta).
+# - v1.0.1 (2025-04-08): Addressed Bandit B105 warning by Gemini.
+# - v1.0.0 (2025-04-07): Initial update for production hardening.
 
-from .base import * # noqa: F403, F401
-import os
-import sys
+from .base import * # noqa: F403, F401 - Import base settings (includes environ 'env')
 import logging
-from datetime import timedelta # Added missing timedelta import
+import sys
 
-logger = logging.getLogger(__name__)
+# Acquire the logger configured in base.py
+# Use 'django' or a specific logger name if preferred over root
+logger = logging.getLogger(__name__) # Use __name__ for this file's logger
 
 # --- Production Specific Settings ---
 DEBUG = False
 
-# Set environment variable for other parts of the system to know
-os.environ['DJANGO_ENV'] = 'production'
+# Set environment variable for other parts of the system (redundant if DJANGO_ENV is already set externally)
+# os.environ['DJANGO_ENV'] = 'production' # This should ideally be set in the deployment environment itself
 
 # --- Critical Setting Validation ---
-# These checks act as safeguards. The primary mechanism for loading these
-# MUST be via environment variables or a secure vault integration configured
-# in base.py (e.g., using django-environ). Never commit default/dev values.
+# These checks act as safeguards ensuring that settings loaded via Vault/Environment
+# in base.py are actually present and not empty/None in the production context.
 
-# Ensure SECRET_KEY is properly set via environment or vault
-if not SECRET_KEY or SECRET_KEY == 'dev-secret-key-replace-me-if-not-using-vault': # noqa: F405 # nosec B105
-    sys.stderr.write("CRITICAL: Production SECRET_KEY is not set or is insecure! Ensure DJANGO_SECRET_KEY env var is set.\n")
+# Ensure SECRET_KEY was successfully loaded
+# base.py already exits if it's None after trying env/Vault. This is an extra check.
+if not SECRET_KEY:  # noqa: F405
+    logger.critical("CRITICAL: Production SECRET_KEY is missing after loading base settings!")
     sys.exit(1)
 
-# Ensure Database connection is properly configured via environment or vault
-# Check a key setting like USER, assuming it's populated from env vars like DATABASE_USER
-if not DATABASES['default'].get('USER') or DATABASES['default']['USER'] == 'user': # noqa: F405
-    sys.stderr.write("CRITICAL: Production Database is not configured correctly! Check DATABASE_* env vars.\n")
-    sys.exit(1)
-# Add similar checks for other critical DB settings if necessary (PASSWORD, HOST, etc.)
-
-# Ensure ALLOWED_HOSTS is correctly populated via DJANGO_ALLOWED_HOSTS env var
-# It should ONLY contain the production domain(s) / .onion address(es).
-# Example: DJANGO_ALLOWED_HOSTS=.your-onion-domain.onion,www.your-clearnet-domain.com
-# The env var should be parsed in base.py, e.g., using env.list('DJANGO_ALLOWED_HOSTS')
-if 'localhost' in ALLOWED_HOSTS or '127.0.0.1' in ALLOWED_HOSTS or not ALLOWED_HOSTS: # noqa: F405
-    sys.stderr.write("CRITICAL: DJANGO_ALLOWED_HOSTS is not configured correctly for production!\n")
-    sys.stderr.write(f"           Current value: {ALLOWED_HOSTS}\n") # noqa: F405
-    sys.stderr.write("           Ensure DJANGO_ALLOWED_HOSTS env var is set and contains ONLY production hostnames.\n")
+# Ensure essential Database connection parameters were loaded
+# Check essential keys that should be present in a production URL/config
+# Note: base.py env.db() provides defaults, so these checks ensure prod values were likely sourced.
+db_default = DATABASES.get('default', {}) # noqa: F405
+if not all([db_default.get('ENGINE'), db_default.get('NAME'), db_default.get('USER')]): # Add HOST/PORT if needed
+    logger.critical(
+        "CRITICAL: Production Database seems incorrectly configured "
+        f"(ENGINE: {db_default.get('ENGINE')}, NAME: {db_default.get('NAME')}, USER: {db_default.get('USER')}). "
+        "Check DATABASE_URL env var/Vault secret."
+    )
     sys.exit(1)
 
+# Note: ALLOWED_HOSTS check is performed in base.py and exits if misconfigured for production.
 
 # --- Production Security Enhancements ---
+# These settings rely on values potentially loaded from environment variables in base.py.
+# Ensure the respective env vars (e.g., SECURE_PROXY_SSL_HEADER_SETTING, REDIS_URL) are set in production.
 
-# HTTPS Security Settings (Assuming TLS termination at a proxy like Nginx/Tor)
-# Trust the X-Forwarded-Proto header from the proxy to determine scheme
-SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
-# Redirect all HTTP requests to HTTPS
-SECURE_SSL_REDIRECT = True
-# Ensure session cookies are only sent over HTTPS
-SESSION_COOKIE_SECURE = True
-# Ensure CSRF cookies are only sent over HTTPS
-CSRF_COOKIE_SECURE = True
-# Enable HTTP Strict Transport Security (HSTS)
-# Set a long duration (e.g., 1 year = 31536000 seconds) once confident
-SECURE_HSTS_SECONDS = 31536000  # Start with a smaller value (e.g., 3600) during initial deployment
-SECURE_HSTS_INCLUDE_SUBDOMAINS = True
-# Consider adding your domain to the HSTS preload list after thorough testing
-# SECURE_HSTS_PRELOAD = True
+# Assuming TLS termination at a proxy (Nginx/Tor) that sets X-Forwarded-Proto
+# Use value configured via env var in base.py (defaults to ('HTTP_X_FORWARDED_PROTO', 'https'))
+# SECURE_PROXY_SSL_HEADER = env.tuple('SECURE_PROXY_SSL_HEADER_SETTING', default=('HTTP_X_FORWARDED_PROTO', 'https')) # Configured in base
 
+# Ensure HTTPS settings loaded from base.py are active (True by default via env)
+# SECURE_SSL_REDIRECT = env.bool('SECURE_SSL_REDIRECT', default=True)
+# SESSION_COOKIE_SECURE = env.bool('SESSION_COOKIE_SECURE', default=True)
+# CSRF_COOKIE_SECURE = env.bool('CSRF_COOKIE_SECURE', default=True)
 
-# Use a more robust cache backend like Redis in production
-CACHES = {
-    'default': {
-        'BACKEND': 'django_redis.cache.RedisCache',
-        # Ensure REDIS_URL is set via environment variable
-        'LOCATION': env('REDIS_URL', default='redis://127.0.0.1:6379/1'), # noqa: F405 Use DB 1 for cache
-        'OPTIONS': {
-            'CLIENT_CLASS': 'django_redis.client.DefaultClient',
-            # Load password from environment if Redis requires authentication
-            # 'PASSWORD': env('REDIS_PASSWORD', default=None), # noqa: F405
-            # Consider adding connection pool settings for high load
-            # 'CONNECTION_POOL_KWARGS': {'max_connections': 50}
-        }
-    }
-}
+# Ensure HSTS settings loaded from base.py are active
+# SECURE_HSTS_SECONDS = env.int('SECURE_HSTS_SECONDS', default=63072000) # 2 years default in base
+# SECURE_HSTS_INCLUDE_SUBDOMAINS = env.bool('SECURE_HSTS_INCLUDE_SUBDOMAINS', default=True)
+# SECURE_HSTS_PRELOAD = env.bool('SECURE_HSTS_PRELOAD', default=True)
 
-# Ensure Axes uses cache handler for distributed environments and set limits
-AXES_HANDLER = 'axes.handlers.cache.AxesCacheHandler'
-AXES_CACHE = 'default' # Use the default Redis cache
-AXES_FAILURE_LIMIT = env.int('AXES_FAILURE_LIMIT', 5)  # Lock out after 5 failures # noqa: F405
-AXES_COOLOFF_TIME = timedelta(minutes=env.int('AXES_COOLOFF_MINUTES', 15)) # Lockout duration # noqa: F405 F821
+# --- Production Cache ---
+# Rely on CACHES configuration defined in base.py, which uses env('REDIS_URL').
+# Ensure REDIS_URL environment variable is set correctly in production.
+if 'default' not in CACHES or 'django_redis.cache.RedisCache' not in CACHES['default'].get('BACKEND', ''): # noqa: F405
+    logger.warning("WARNING: Default cache backend does not appear to be Redis. Check CACHES in base.py and REDIS_URL env var.")
 
-# Session engine: Cached DB backend recommended for security
-SESSION_ENGINE = 'django.contrib.sessions.backends.cached_db'
+# --- Axes Handler ---
+# Rely on AXES_HANDLER ('axes.handlers.cache.AxesCacheHandler') set in base.py.
+# Ensure AXES_ENABLED=True and cache is working.
 
-# Static files storage: Use Whitenoise for serving static files directly from Python
-# Ensure 'whitenoise.middleware.WhiteNoiseMiddleware' is high up in MIDDLEWARE (base.py)
+# --- Session Engine ---
+# Ensure secure session engine is used (cached_db recommended)
+SESSION_ENGINE = 'django.contrib.sessions.backends.cached_db' # Explicitly set for production
+
+# --- Static Files ---
+# Use Whitenoise for serving static files directly from Python application
+# Ensure 'whitenoise.middleware.WhiteNoiseMiddleware' is correctly placed in MIDDLEWARE (base.py)
+# Ensure STATIC_ROOT is defined (base.py) and `collectstatic` is run during deployment.
 STATICFILES_STORAGE = 'whitenoise.storage.CompressedManifestStaticFilesStorage'
-# STATIC_ROOT must be set in base.py and `collectstatic` must be run during deployment
+
+# --- Logging ---
+# Rely on the LOGGING configuration defined in base.py.
+# base.py should configure formatters (JSON) and handlers (file rotation, console)
+# based on the DEBUG setting (which is False here). Ensure Sentry is configured there if used.
+logger.info("Production logging configuration active (check base.py for details).")
+
+# --- REST Framework ---
+# Rely on REST_FRAMEWORK configuration in base.py.
+# base.py should remove the BrowsableAPIRenderer when DEBUG is False.
+logger.info("Production DRF configuration active (check base.py for details).")
 
 
-# Logging configuration for production
-# Recommendation: Configure a JSON formatter in base.py for structured logging
-# Recommendation: Send logs to a central aggregation system (e.g., ELK, Splunk, Datadog)
-# Ensure sensitive information (passwords, tokens, PII) is NOT logged anywhere.
-LOGGING['handlers']['console']['level'] = 'INFO'  # Or WARNING # noqa: F405
-LOGGING['loggers']['django']['level'] = 'INFO' # noqa: F405
-LOGGING['loggers']['myapp'] = {  # Example: Set level for your specific app # noqa: F405
-    'handlers': ['console'], # Add file/remote handlers as needed
-    'level': 'INFO',
-    'propagate': False,
-}
-# Example (assuming JSON formatter 'json_formatter' is defined in base.py LOGGING dict):
-# LOGGING['handlers']['console']['formatter'] = 'json_formatter'
-
-
-# Remove DRF's Browsable API Renderer in production for security/cleanliness
-# Check if REST_FRAMEWORK is defined and has DEFAULT_RENDERER_CLASSES
-if 'REST_FRAMEWORK' in locals() and 'DEFAULT_RENDERER_CLASSES' in REST_FRAMEWORK: # noqa: F405 F821
-    REST_FRAMEWORK['DEFAULT_RENDERER_CLASSES'] = tuple( # noqa: F405 F821
-        cls for cls in REST_FRAMEWORK['DEFAULT_RENDERER_CLASSES'] # noqa: F405 F821
-        if cls != 'rest_framework.renderers.BrowsableAPIRenderer'
-    )
-else:
-    # If REST_FRAMEWORK is not defined here, ensure it's handled correctly in base.py
-    # or define it here specifically for production without the BrowsableAPIRenderer.
-    # Example:
-    # REST_FRAMEWORK = {
-    #     'DEFAULT_RENDERER_CLASSES': (
-    #         'rest_framework.renderers.JSONRenderer',
-    #         # Other production renderers...
-    #     ),
-    #     # Other production DRF settings...
-    # }
-    pass # Assuming REST_FRAMEWORK is defined and handled in base.py
-
-
-# Log startup mode
-logger.info("--- Running Django Configuration: Production Mode ---")
+# --- Final Startup Log ---
+logger.info(f"--- Django Configuration Loaded: Production Mode (PID: {os.getpid()}) ---") # noqa: F405 Added PID for clarity
 
 # --- END Production Settings ---

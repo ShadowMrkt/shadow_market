@@ -1,0 +1,45 @@
+// frontend/tsconfig.json
+{
+  "compilerOptions": {
+    // Type Checking
+    "target": "es5", // Target ES version (Next.js handles actual transpilation)
+    "lib": [
+      "dom",
+      "dom.iterable",
+      "esnext"
+    ], // Standard libraries for browser + modern JS
+    "allowJs": true, // *** Allow JavaScript files to be compiled ***
+    "skipLibCheck": true, // Skip type checking of declaration files (.d.ts)
+    "strict": true, // Standard Next.js default; set to true for stricter checking if desired
+    "noEmit": true, // Next.js handles emitting files, TS only does type checking
+    "esModuleInterop": true, // Allows default imports from commonjs modules
+    "module": "esnext", // Use ES module system
+    "moduleResolution": "bundler", // Recommended modern resolution strategy for tools like Vite/Next.js/etc. (aligns with ESM/Node.js resolution)
+    "resolveJsonModule": true, // Allow importing .json files
+    "isolatedModules": true, // Ensure each file can be safely transpiled without relying on other imports
+    "jsx": "preserve", // *** Preserve JSX for Next.js to handle ***
+    "forceConsistentCasingInFileNames": true, // enforce consistent casing for file names across OSes
+    // Path Aliases (Optional - Adjust if you use them)
+    "baseUrl": ".", // Base directory for path aliases
+    "paths": {
+      // Example: "@/*": ["./src/*"] // Uncomment and adjust if you use src directory or other aliases
+    },
+    // Jest Integration
+    "types": [
+      "jest",
+      "node"
+    ] // *** Include types for Jest and Node.js globals ***
+    ,
+    "incremental": true
+  },
+  "include": [
+    "next-env.d.ts", // Next.js type definitions
+    "**/*.ts",
+    "**/*.tsx",
+    "**/*.js", // *** Include JavaScript files ***
+    "**/*.jsx" // *** Include JSX files if you use them ***
+  ],
+  "exclude": [
+    "node_modules" // Exclude node_modules folder
+  ]
+}

@@ -1,5 +1,6 @@
 // frontend/utils/notifications.js
 // --- REVISION HISTORY ---
+// 2025-04-09: Rev 3 - Added more detail to theme matching TODO comment.
 // 2025-04-07: Rev 2 - Used duration constants, set theme to dark, added ToastContainer reminder.
 //           - Imported and used TOAST_SUCCESS_DURATION, TOAST_ERROR_DURATION from constants.
 //           - Changed default theme to "dark" for better integration.
@@ -17,7 +18,8 @@ import { TOAST_SUCCESS_DURATION, TOAST_ERROR_DURATION } from './constants'; // I
 
 // IMPORTANT: For toasts to appear, you must render the <ToastContainer /> component
 // somewhere in your application's component tree (typically in _app.js or Layout.js).
-// Example: <ToastContainer />
+// Ensure its props (theme, autoClose, etc.) match the defaults set here or desired global behavior.
+// Example: <ToastContainer theme="dark" autoClose={TOAST_SUCCESS_DURATION} /> in _app.js
 
 // Default configuration for all toasts
 const toastConfig = {
@@ -29,8 +31,14 @@ const toastConfig = {
     draggable: true,
     progress: undefined,
     theme: "dark", // Use the built-in dark theme as a base
-    // TODO: For perfect theme matching, consider overriding react-toastify CSS classes
-    // in globals.css using your defined CSS variables (e.g., --accent-green for success bg).
+
+    // TODO ADVANCED THEME: For perfect theme matching with globals.css variables, you might need to:
+    // 1. Override specific `react-toastify` CSS classes in `globals.css`.
+    //    Example:
+    //    .Toastify__toast--success { background-color: var(--accent-green) !important; color: var(--text-on-accent) !important; }
+    //    .Toastify__progress-bar--success { background: var(--text-on-accent) !important; }
+    //    (Use !important carefully if needed to override default styles)
+    // 2. OR potentially pass style objects/classNames directly in options if the API supports it well enough.
 };
 
 /**
@@ -53,29 +61,34 @@ export const showSuccessToast = (message, options = {}) => {
  * SECURITY NOTE: Assumes 'message' is a string or Error object. Extracts message property if Error.
  * Relies on react-toastify's default behavior to escape string content, preventing XSS.
  * Calling code must ensure provided messages/errors don't expose sensitive info unintentionally.
- * @param {string | Error} error The error message string or Error object to display/log.
+ * @param {string | Error | any} error The error message string, Error object, or other value to display/log.
  * @param {import('react-toastify').ToastOptions} [options={}] Optional configuration overrides for react-toastify (can include toastId).
  */
 export const showErrorToast = (error, options = {}) => {
     let originalMessage = 'An unknown error occurred.';
+    let errorToLog = error; // Keep original error for logging
+
     // Attempt to extract message if an Error object is passed
     if (typeof error === 'string') {
         originalMessage = error || originalMessage; // Use provided string or default
     } else if (error instanceof Error && error.message) {
         originalMessage = error.message;
     } else {
+        // Try to stringify other types, but log the original object
          try {
              originalMessage = String(error ?? originalMessage); // Coerce other types, use ??
          } catch { /* Ignore coercion errors, use default */ }
+         errorToLog = error; // Ensure the original object/value is logged
     }
 
     // Prevent overly long error messages in toasts for better UI, log full error instead.
-    const displayMessage = originalMessage.length > 150
-        ? originalMessage.substring(0, 147) + '...' // Truncate and add ellipsis
+    const MAX_TOAST_MSG_LENGTH = 150;
+    const displayMessage = originalMessage.length > MAX_TOAST_MSG_LENGTH
+        ? originalMessage.substring(0, MAX_TOAST_MSG_LENGTH - 3) + '...' // Truncate and add ellipsis
         : originalMessage;
 
     // Log the *full* original error message or object for debugging purposes.
-    console.error("Error Toast Triggered:", error); // Log the original input
+    console.error("Error Toast Triggered:", errorToLog); // Log the original input
 
     toast.error(displayMessage, {
         ...toastConfig,
@@ -109,8 +122,8 @@ export const showInfoToast = (message, options = {}) => {
 export const showWarningToast = (message, options = {}) => {
     // Ensure message is treated as a string.
     const displayMessage = typeof message === 'string' ? message : String(message ?? 'Warning'); // Use ??
-    // Optionally use a specific duration constant if defined, otherwise default
-    // const warningDuration = constants.TOAST_WARNING_DURATION || 6000;
+    // Optionally use a specific duration constant if defined in constants.js
+    // const warningDuration = constants.TOAST_WARNING_DURATION || TOAST_SUCCESS_DURATION;
     toast.warn(displayMessage, { ...toastConfig, /* autoClose: warningDuration, */ ...options });
 };
 
@@ -130,7 +143,7 @@ export const showWarningToast = (message, options = {}) => {
 //       <Component {...pageProps} />
 //       <ToastContainer
 //          position="top-right"
-//          autoClose={5000} // Set base autoClose here matches toastConfig
+//          autoClose={5000} // Base autoClose matches toastConfig
 //          hideProgressBar={false}
 //          newestOnTop={false}
 //          closeOnClick
@@ -138,7 +151,7 @@ export const showWarningToast = (message, options = {}) => {
 //          pauseOnFocusLoss
 //          draggable
 //          pauseOnHover
-//          theme="dark" // Set theme here matches toastConfig
+//          theme="dark" // Theme matches toastConfig
 //        />
 //     </>
 //   );

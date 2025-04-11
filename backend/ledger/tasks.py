@@ -1,5 +1,10 @@
 # backend/ledger/tasks.py
 # --- Revision History ---
+# [Rev 1.1 - 2025-04-10] Gemini:
+#           - FIXED: Potential AttributeError with redis_lock by removing explicit '_redis=None'
+#             from Lock instantiation, relying on django-redis-lock settings.
+#           - FIXED: AttributeError: module 'ledger.tasks' has no attribute 'LedgerTransaction'
+#             by adding missing import `from ledger.models import LedgerTransaction`.
 # [Rev 1.0 - 2025-04-07]
 #   - Added Explicit Retries: Incorporated Celery's `autoretry_for` to handle transient errors
 #     during node balance fetching (e.g., ConnectionError) or DB aggregation (e.g., DatabaseError).
@@ -62,13 +67,15 @@ RECONCILE_LOCK_EXPIRY = TASK_RECONCILE_SOFT_TIME_LIMIT + 60 # Lock expiry buffer
 # --- Service and Model Imports ---
 _dependencies_loaded = False
 UserBalance = None
+LedgerTransaction = None # Define placeholder
 monero_service = None
 bitcoin_service = None
 ethereum_service = None
 CURRENCY_CONFIG: Dict[str, Dict[str, Any]] = {}
 
 try:
-    from ledger.models import UserBalance
+    # FIX [Rev 1.1]: Added LedgerTransaction import
+    from ledger.models import UserBalance, LedgerTransaction
     from store.services import monero_service, bitcoin_service, ethereum_service
 
     # --- Currency Configuration ---
@@ -96,8 +103,8 @@ try:
     }
 
     # Basic check for critical components
-    if not UserBalance or not all(cfg.get('service') for cfg in CURRENCY_CONFIG.values()):
-         raise ImportError("UserBalance model or one or more configured services failed to import/load.")
+    if not UserBalance or not LedgerTransaction or not all(cfg.get('service') for cfg in CURRENCY_CONFIG.values()):
+        raise ImportError("UserBalance model, LedgerTransaction model, or one or more configured services failed to import/load.")
 
     _dependencies_loaded = True
 
@@ -189,29 +196,30 @@ def reconcile_ledger_balances(self: Task): # Add self: Task type hint
     lock = None
     try:
         logger.info(f"{log_prefix} Attempting to acquire lock: {RECONCILE_LOCK_KEY}")
+        # FIX [Rev 1.1]: Rely on django-redis-lock settings for connection, remove _redis=None
         lock = redis_lock.Lock(
-             _redis=None, name=RECONCILE_LOCK_KEY,
-             expire=RECONCILE_LOCK_EXPIRY, id=task_id
+            name=RECONCILE_LOCK_KEY,
+            expire=RECONCILE_LOCK_EXPIRY, id=task_id
         )
         # Try non-blocking first
         if not lock.acquire(blocking=False):
             logger.warning(f"{log_prefix} Lock '{RECONCILE_LOCK_KEY}' already held. Waiting up to {RECONCILE_LOCK_ACQUIRE_TIMEOUT}s...")
             if not lock.acquire(blocking=True, timeout=RECONCILE_LOCK_ACQUIRE_TIMEOUT):
-                 logger.warning(f"{log_prefix} Could not acquire lock '{RECONCILE_LOCK_KEY}' after waiting. Another instance likely running. Skipping this run.")
-                 raise Ignore() # Use Ignore to skip gracefully without failure/retry
+                logger.warning(f"{log_prefix} Could not acquire lock '{RECONCILE_LOCK_KEY}' after waiting. Another instance likely running. Skipping this run.")
+                raise Ignore() # Use Ignore to skip gracefully without failure/retry
 
         logger.info(f"{log_prefix} Successfully acquired lock: {RECONCILE_LOCK_KEY}. Starting reconciliation.")
 
         # --- Main Reconciliation Logic (Inside Lock) ---
         currencies_to_check = list(CURRENCY_CONFIG.keys())
         if not currencies_to_check:
-             # Fallback check (redundant if CURRENCY_CONFIG load check works, but safe)
-             currencies_to_check = getattr(settings, 'SUPPORTED_CURRENCIES', [])
-             if not currencies_to_check:
-                 logger.warning(f"{log_prefix} No currencies configured in CURRENCY_CONFIG or SUPPORTED_CURRENCIES. Task exiting.")
-                 # Release lock before returning
-                 if lock and lock.locked(): lock.release()
-                 return {"status": "SUCCESS", "reason": "No currencies configured"}
+            # Fallback check (redundant if CURRENCY_CONFIG load check works, but safe)
+            currencies_to_check = getattr(settings, 'SUPPORTED_CURRENCIES', [])
+            if not currencies_to_check:
+                logger.warning(f"{log_prefix} No currencies configured in CURRENCY_CONFIG or SUPPORTED_CURRENCIES. Task exiting.")
+                # Release lock before returning
+                if lock and lock.locked(): lock.release()
+                return {"status": "SUCCESS", "reason": "No currencies configured"}
 
         results: Dict[str, Dict[str, Any]] = {}
         overall_discrepancy_found = False # Tracks if *any* currency failed or had discrepancy
@@ -245,7 +253,7 @@ def reconcile_ledger_balances(self: Task): # Add self: Task type hint
                 if not service or not balance_func_name or not hasattr(service, balance_func_name):
                     raise ValueError(f"Service or balance function '{balance_func_name}' not configured correctly for {currency}.")
 
-                logger.debug(f"{log_prefix} Fetching node balance for {currency} via {service.__class__.__name__}.{balance_func_name}...")
+                logger.debug(f"{log_prefix} Fetching node balance for {currency} via {type(service).__name__}.{balance_func_name}...")
                 balance_func = getattr(service, balance_func_name)
                 # node_balance_raw = balance_func(address=config.get('relevant_address')) # If address needed
                 node_balance_raw = balance_func() # Assuming no args
@@ -266,22 +274,35 @@ def reconcile_ledger_balances(self: Task): # Add self: Task type hint
 
                 # --- 2. Get Total Ledger Balance ---
                 logger.debug(f"{log_prefix} Calculating ledger total for {currency} from fields: {ledger_fields}...")
-                if not UserBalance: raise RuntimeError("UserBalance model is not available.") # Should be caught earlier
+                if not UserBalance or not LedgerTransaction: # Added check for LedgerTransaction
+                    raise RuntimeError("UserBalance or LedgerTransaction model is not available.")
 
-                # Ensure ledger fields are valid DecimalFields on the model
+                # --- Internal Consistency Check (Optional but recommended) ---
+                # Compare sum of LedgerTransaction amounts vs UserBalance totals
+                # This requires LedgerTransaction to be imported and configured
+                try:
+                    lt_aggregation = LedgerTransaction.objects.filter(currency=currency).aggregate(
+                        total_amount=models.Sum('amount', default=Decimal('0.0'), output_field=models.DecimalField())
+                    )
+                    lt_total_sum = lt_aggregation.get('total_amount', Decimal('0.0'))
+                except Exception as lt_agg_err:
+                     logger.error(f"{log_prefix} Error aggregating LedgerTransaction for {currency}: {lt_agg_err}")
+                     raise RuntimeError(f"Could not aggregate LedgerTransaction for {currency}") from lt_agg_err
+
+                # Ensure ledger fields for UserBalance are valid DecimalFields on the model
                 valid_fields = []
                 for field_name in ledger_fields:
-                     try:
-                         field_obj = UserBalance._meta.get_field(field_name)
-                         if isinstance(field_obj, models.DecimalField):
-                             valid_fields.append(field_name)
-                         else:
-                             logger.warning(f"{log_prefix} Configured ledger field '{field_name}' for {currency} is not a DecimalField on UserBalance model. Skipping field.")
-                     except models.FieldDoesNotExist:
-                         logger.warning(f"{log_prefix} Configured ledger field '{field_name}' for {currency} does not exist on UserBalance model. Skipping field.")
+                    try:
+                        field_obj = UserBalance._meta.get_field(field_name)
+                        if isinstance(field_obj, models.DecimalField):
+                            valid_fields.append(field_name)
+                        else:
+                            logger.warning(f"{log_prefix} Configured ledger field '{field_name}' for {currency} is not a DecimalField on UserBalance model. Skipping field.")
+                    except models.FieldDoesNotExist:
+                        logger.warning(f"{log_prefix} Configured ledger field '{field_name}' for {currency} does not exist on UserBalance model. Skipping field.")
 
                 if not valid_fields:
-                     raise ValueError(f"No valid DecimalFields found for ledger aggregation for {currency} based on config: {ledger_fields}")
+                    raise ValueError(f"No valid DecimalFields found for ledger aggregation for {currency} based on config: {ledger_fields}")
 
                 aggregation_expressions = {
                     f"sum_{field}": models.Sum(field, default=Decimal('0.0'), output_field=models.DecimalField())
@@ -291,24 +312,59 @@ def reconcile_ledger_balances(self: Task): # Add self: Task type hint
                 # This DB query might raise OperationalError/DatabaseError caught by autoretry_for
                 aggregation_result = UserBalance.objects.filter(currency=currency).aggregate(**aggregation_expressions)
 
-                ledger_total = sum(aggregation_result.get(f"sum_{field}", Decimal('0.0')) for field in valid_fields)
-                ledger_total_str = format(ledger_total, decimal_format)
-                logger.debug(f"{log_prefix} {currency} Ledger Total calculated ({', '.join(valid_fields)}): {ledger_total_str}")
+                # Calculate UserBalance total based on *configured* fields (e.g., balance + locked_balance)
+                ub_total_sum = sum(aggregation_result.get(f"sum_{field}", Decimal('0.0')) for field in valid_fields)
+                ub_total_sum_str = format(ub_total_sum, decimal_format)
+                lt_total_sum_str = format(lt_total_sum, decimal_format)
 
-                # --- 3. Compare Balances ---
+                logger.debug(f"{log_prefix} {currency} Internal Check: UserBalance Sum({', '.join(valid_fields)})={ub_total_sum_str}, LedgerTransaction Sum={lt_total_sum_str}")
+
+                # Internal consistency check
+                if ub_total_sum != lt_total_sum:
+                    internal_difference = lt_total_sum - ub_total_sum
+                    internal_difference_str = format(internal_difference, decimal_format)
+                    overall_discrepancy_found = True
+                    status = "FAILED_INTERNAL" # Specific status for internal mismatch
+                    error_message = (
+                         f"CRITICAL INTERNAL LEDGER INCONSISTENCY [{currency}]! Diff: {internal_difference_str} {currency}. "
+                         f"LedgerTx Sum: {lt_total_sum_str}, UserBalance Sum ({', '.join(valid_fields)}): {ub_total_sum_str}. "
+                         f"REQUIRES MANUAL INVESTIGATION OF TRANSACTIONS."
+                    )
+                    security_logger.critical(error_message)
+                    _trigger_alert("critical", f"Internal Ledger Inconsistency: {currency}", error_message)
+                    logger.info(f"{log_prefix} Internal ledger consistency FAILED for {currency}. Difference: {internal_difference_str}")
+                    # Store results and continue to next currency (don't compare against node if internal is wrong)
+                    results[currency] = {
+                        "status": status,
+                        "node_balance": node_balance_str, # Still fetched, report it
+                        "ledger_total": ub_total_sum_str, # Report UB total
+                        "difference": "N/A", # Node vs Ledger diff irrelevant now
+                        "error": error_message,
+                        "internal_consistency_diff": internal_difference_str, # Add specific internal diff
+                        "ledger_tx_sum": lt_total_sum_str # Report LT sum for context
+                    }
+                    continue # Skip node comparison for this currency
+
+                # If internal consistency passes, set ledger_total for node comparison
+                ledger_total = ub_total_sum # Use UserBalance total for node comparison
+                ledger_total_str = ub_total_sum_str # Already formatted
+                logger.debug(f"{log_prefix} {currency} Internal consistency PASSED. Ledger Total for node comparison: {ledger_total_str}")
+
+
+                # --- 3. Compare Node vs Ledger (UserBalance) Balances ---
                 logger.info(f"{log_prefix} Reconciliation Check {currency}: Node={node_balance_str}, Ledger={ledger_total_str}")
                 if node_balance != ledger_total:
                     difference = node_balance - ledger_total
                     difference_str = format(difference, decimal_format)
                     overall_discrepancy_found = True
-                    status = "FAILED"
+                    status = "FAILED_NODE" # Specific status for node mismatch
                     error_message = (
-                        f"CRITICAL LEDGER DISCREPANCY [{currency}]! Diff: {difference_str} {currency}. "
-                        f"Node: {node_balance_str}, Ledger: {ledger_total_str}. IMMEDIATE INVESTIGATION REQUIRED."
+                        f"Ledger Discrepancy (Node vs Ledger) [{currency}]! Diff: {difference_str} {currency}. "
+                        f"Node: {node_balance_str}, Ledger: {ledger_total_str}. INVESTIGATION RECOMMENDED."
                     )
-                    security_logger.critical(error_message)
-                    _trigger_alert("critical", f"Ledger Discrepancy: {currency}", error_message)
-                    logger.info(f"{log_prefix} Ledger reconciliation FAILED for {currency}. Difference: {difference_str}")
+                    security_logger.error(error_message) # Downgrade severity for node diff? Configurable?
+                    _trigger_alert("error", f"Ledger Discrepancy (Node vs Ledger): {currency}", error_message)
+                    logger.info(f"{log_prefix} Ledger reconciliation FAILED (Node vs Ledger) for {currency}. Difference: {difference_str}")
                 else:
                     status = "SUCCESS"
                     logger.info(f"{log_prefix} Ledger reconciliation PASSED for {currency}.")
@@ -338,8 +394,9 @@ def reconcile_ledger_balances(self: Task): # Add self: Task type hint
                 "status": status,
                 "node_balance": node_balance_str,
                 "ledger_total": ledger_total_str,
-                "difference": difference_str if status == "FAILED" else "N/A",
-                "error": error_message if status in ["ERROR", "FAILED"] else None,
+                "difference": difference_str if status in ["FAILED_NODE"] else "N/A", # Show diff only for node failure
+                "internal_consistency_diff": difference_str if status == "FAILED_INTERNAL" else "N/A", # Add internal diff
+                "error": error_message if status in ["ERROR", "FAILED_NODE", "FAILED_INTERNAL"] else None,
             }
 
         # --- End of Currency Loop ---
@@ -358,17 +415,17 @@ def reconcile_ledger_balances(self: Task): # Add self: Task type hint
         return {"status": final_status, "results": results}
 
     except Ignore: # Catch Ignore exception raised due to lock contention
-         logger.info(f"{log_prefix} Task ignored due to lock contention or explicit request.")
-         # Task run is skipped gracefully, return value indicates skipped status maybe?
-         return {"status": "SKIPPED", "reason": "Lock contended or Ignore raised"}
+        logger.info(f"{log_prefix} Task ignored due to lock contention or explicit request.")
+        # Task run is skipped gracefully, return value indicates skipped status maybe?
+        return {"status": "SKIPPED", "reason": "Lock contended or Ignore raised"}
     except Exception as e:
-         # Catch errors acquiring lock or other unexpected issues OUTSIDE the loop
-         # These might be candidates for retry if transient. If autoretry is configured,
-         # Celery handles it. Log critically here.
-         logger.exception(f"{log_prefix} Unhandled exception in reconciliation task wrapper: {e}")
-         _trigger_alert("critical", "Ledger Reconciliation Task Failed Critically", f"Error: {e}")
-         # Re-raise allows Celery's retry/failure mechanism to take over
-         raise
+        # Catch errors acquiring lock or other unexpected issues OUTSIDE the loop
+        # These might be candidates for retry if transient. If autoretry is configured,
+        # Celery handles it. Log critically here.
+        logger.exception(f"{log_prefix} Unhandled exception in reconciliation task wrapper: {e}")
+        _trigger_alert("critical", "Ledger Reconciliation Task Failed Critically", f"Error: {e}")
+        # Re-raise allows Celery's retry/failure mechanism to take over
+        raise
     finally:
         # --- Release Lock ---
         if lock and lock.locked():

@@ -12,6 +12,7 @@
     "audit": "npm audit --audit-level=moderate"
   },
   "dependencies": {
+    "date-fns": "^4.1.0",
     "decimal.js": "^10.4.3",
     "frontend": "file:",
     "js-cookie": "^3.0.5",
@@ -23,8 +24,9 @@
     "swr": "^2.3.3"
   },
   "devDependencies": {
-    "@testing-library/jest-dom": "^6.4.5",
-    "@testing-library/react": "^16.0.0",
+    "@testing-library/jest-dom": "^6.6.3",
+    "@testing-library/react": "^16.3.0",
+    "@testing-library/user-event": "^14.6.1",
     "@types/jest": "^29.5.12",
     "@types/js-cookie": "^3.0.6",
     "@types/lodash.debounce": "^4.0.9",
@@ -35,6 +37,7 @@
     "@typescript-eslint/parser": "^7.11.0",
     "babel-jest": "^29.7.0",
     "cross-env": "^7.0.3",
+    "cypress": "^14.3.0",
     "eslint": "^8.57.0",
     "eslint-config-next": "^14.2.3",
     "eslint-plugin-react": "^7.34.2",

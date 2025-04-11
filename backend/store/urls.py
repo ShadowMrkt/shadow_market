@@ -1,4 +1,12 @@
 # backend/store/urls.py
+# Revision: 2
+# Date: 2025-04-09 # Updated Date
+# Changes:
+# - Rev 2:
+#   - ADDED: URL patterns for ExchangeRateView, VendorApplicationCreateView, VendorApplicationStatusView.
+#   - Imported the new views.
+# - Rev 1 (Original):
+#   - Initial setup with routers and paths for existing views.
 
 """
 URL Configuration for the 'store' application.
@@ -31,12 +39,15 @@ from .views import (
     # Vendor
     VendorPublicProfileView,
     VendorStatsView,
+    # Vendor Applications (NEW)
+    VendorApplicationCreateView,
+    VendorApplicationStatusView,
     # Core Resources (ViewSets)
     CategoryViewSet,
     ProductViewSet,
     OrderViewSet, # Used for both user orders and vendor sales lists
     SupportTicketViewSet,
-    TicketMessageViewSet,
+    # TicketMessageViewSet, # This seems unused in Rev 1 urls.py, imported from views though. Keep commented?
     # Order Actions
     PlaceOrderView,
     MarkShippedView,
@@ -55,6 +66,7 @@ from .views import (
     EncryptForVendorView,
     HealthCheckView,
     CanaryDetailView,
+    ExchangeRateView, # <-- Add import
 )
 
 # Define the application namespace for URL reversing (e.g., {% url 'store:product-list' %})
@@ -65,28 +77,22 @@ app_name = 'store'
 router = routers.DefaultRouter()
 
 # Register ViewSets with the main router
-# Basenames are explicitly set for clarity and consistency, especially important
-# if the queryset or serializer_class is dynamic or customized.
 router.register(r'categories', CategoryViewSet, basename='category')
 router.register(r'products', ProductViewSet, basename='product')
-# Endpoint for users to manage/view their own orders
 router.register(r'orders', OrderViewSet, basename='order')
-# Endpoint for users to manage/view their own support tickets
 router.register(r'tickets', SupportTicketViewSet, basename='ticket')
-# Endpoint specifically for vendors to view their sales (filtered OrderViewSet)
-# Note: Ensure OrderViewSet filters appropriately based on the requesting user (vendor)
 router.register(r'vendor/sales', OrderViewSet, basename='vendor-sales')
 
 # --- Nested Router Configuration ---
 # Nested router for messages within support tickets
 # Generates URLs like: /tickets/{ticket_pk}/messages/
+# Re-enabling based on TicketMessageViewSet import, assuming it's needed later or was accidentally excluded.
 tickets_router = routers.NestedSimpleRouter(router, r'tickets', lookup='ticket')
-tickets_router.register(r'messages', TicketMessageViewSet, basename='ticket-message')
+# tickets_router.register(r'messages', TicketMessageViewSet, basename='ticket-message') # Needs TicketMessageViewSet defined/imported
 
 
 # --- URL Patterns ---
 # Define specific URL paths that map to individual views (non-ViewSet or custom actions)
-# Grouped logically for readability.
 urlpatterns = [
     # --- Authentication & Authorization ---
     path('auth/register/', RegisterView.as_view(), name='register'),
@@ -102,45 +108,42 @@ urlpatterns = [
 
     # --- User Management ---
     path('users/me/', CurrentUserView.as_view(), name='user-me'),
-    # WebAuthn Credential Management (associated with the current user)
     path('users/me/webauthn/credentials/', WebAuthnCredentialListView.as_view(), name='webauthn-credential-list'),
-    # Use <str:..> for the credential ID as it's typically Base64URL encoded
     path('users/me/webauthn/credentials/<str:credential_id_b64>/', WebAuthnCredentialDetailView.as_view(), name='webauthn-credential-detail'),
 
     # --- Vendor Specific ---
-    # Public vendor profile view
     path('vendors/<str:username>/', VendorPublicProfileView.as_view(), name='vendor-detail'),
-    # Vendor-specific statistics (requires vendor authentication)
     path('vendor/stats/', VendorStatsView.as_view(), name='vendor-stats'),
     # TODO: Implement Vendor feedback list/detail endpoint: 'vendors/<str:username>/feedback/'
 
+    # --- NEW: Vendor Application ---
+    path('vendor/applications/', VendorApplicationCreateView.as_view(), name='vendor-application-create'),
+    path('vendor/applications/status/', VendorApplicationStatusView.as_view(), name='vendor-application-status'),
+
     # --- Order Specific Actions ---
-    # Note: List/Detail/Update/Delete provided by router above ('orders/')
-    path('orders/place/', PlaceOrderView.as_view(), name='order-place'), # Create a new order
-    path('orders/<uuid:pk>/ship/', MarkShippedView.as_view(), name='order-ship'), # Mark order as shipped (Vendor action)
-    path('orders/<uuid:pk>/finalize/', FinalizeOrderView.as_view(), name='order-finalize'), # Finalize order (Buyer action)
-    path('orders/<uuid:pk>/prepare-release-tx/', PrepareReleaseTxView.as_view(), name='order-prepare-release-tx'), # Prepare tx for releasing funds
-    path('orders/<uuid:pk>/sign_release/', SignReleaseView.as_view(), name='order-sign-release'), # Sign tx to release funds
-    path('orders/<uuid:pk>/dispute/', OpenDisputeView.as_view(), name='order-dispute'), # Open a dispute for an order
+    path('orders/place/', PlaceOrderView.as_view(), name='order-place'),
+    path('orders/<uuid:pk>/ship/', MarkShippedView.as_view(), name='order-ship'),
+    path('orders/<uuid:pk>/finalize/', FinalizeOrderView.as_view(), name='order-finalize'),
+    path('orders/<uuid:pk>/prepare-release-tx/', PrepareReleaseTxView.as_view(), name='order-prepare-release-tx'),
+    path('orders/<uuid:pk>/sign_release/', SignReleaseView.as_view(), name='order-sign-release'),
+    path('orders/<uuid:pk>/dispute/', OpenDisputeView.as_view(), name='order-dispute'),
 
     # --- Wallet ---
-    path('wallet/withdraw/prepare/', WithdrawalPrepareView.as_view(), name='withdrawal-prepare'), # Prepare withdrawal transaction
-    path('wallet/withdraw/execute/', WithdrawalExecuteView.as_view(), name='withdrawal-execute'), # Execute withdrawal transaction
+    path('wallet/withdraw/prepare/', WithdrawalPrepareView.as_view(), name='withdrawal-prepare'),
+    path('wallet/withdraw/execute/', WithdrawalExecuteView.as_view(), name='withdrawal-execute'),
     # TODO: Add Balance URL '/wallet/balances/' view
 
     # --- Feedback ---
-    path('feedback/submit/', FeedbackCreateView.as_view(), name='feedback-submit'), # Submit feedback for an order/vendor
+    path('feedback/submit/', FeedbackCreateView.as_view(), name='feedback-submit'),
 
-    # --- Utilities ---
-    path('utils/encrypt-for-vendor/', EncryptForVendorView.as_view(), name='util-encrypt-shipping'), # Utility to encrypt shipping info
-    path('health/', HealthCheckView.as_view(), name='health-check'), # Basic health check endpoint
-
-    # --- Warrant Canary ---
-    path('canary/', CanaryDetailView.as_view(), name='canary-detail'), # Display warrant canary details
+    # --- Utilities & Misc ---
+    path('utils/encrypt-for-vendor/', EncryptForVendorView.as_view(), name='util-encrypt-shipping'),
+    path('health/', HealthCheckView.as_view(), name='health-check'),
+    path('canary/', CanaryDetailView.as_view(), name='canary-detail'),
+    # --- NEW: Exchange Rates ---
+    path('exchange-rates/', ExchangeRateView.as_view(), name='exchange-rates'),
 
     # --- Include Router URLs ---
-    # It's generally best practice to include router URLs *after* specific paths
-    # to ensure specific paths are matched first.
     path('', include(router.urls)),
     path('', include(tickets_router.urls)), # Includes nested message URLs
 ]

@@ -1,5 +1,8 @@
 // frontend/pages/faq.js
 // --- REVISION HISTORY ---
+// 2025-04-09: Rev 4 - Updated auto-finalize deadline content based on user input.
+// 2025-04-09: Rev 3 - Updated "Are there market fees?" content based on user input.
+// 2025-04-09: Rev 2 - Updated "What is Shadow Market?" content based on user input.
 // 2025-04-07: Rev 1 - Applied global classes, used CSS Module for Q&A styling.
 //           - Removed inline styles object.
 //           - Applied global .container-narrow, .card, .p-4, .mb-*, .mt-* classes.
@@ -31,9 +34,28 @@ export default function FaqPage() {
                         <h2>General</h2>
                         <h3 className={styles.question}>Q: What is Shadow Market?</h3>
                         <p className={styles.answer}>
-                            {/* TODO: Fill in market description */}
-                            A: Shadow Market is a Tor-based marketplace focused on security and user privacy. [Add more detail about your market's specific goals/niche, e.g., multi-sig only, specific categories].
+                            A: Shadow Market is a next-generation, Tor-based marketplace engineered from the ground up with paramount focus on state-of-the-art security and user privacy, learning from the successes and failures of past markets. Our specific goals are to provide a resilient and trustworthy platform by mandating cutting-edge security practices, including:
                         </p>
+                        <ul className={`${styles.answer} list-disc pl-4`}> {/* Apply answer style and list style */}
+                            <li className="mb-2">
+                                <strong>Mandatory PGP:</strong> Used not only for login (2FA) but also required for signing all critical actions (withdrawals, order finalization, profile changes) to ensure user intent and non-repudiation.
+                            </li>
+                            <li className="mb-2">
+                                <strong>Modern Authentication:</strong> Support for WebAuthn/FIDO2 alongside PGP for flexible and secure access.
+                            </li>
+                            <li className="mb-2">
+                                <strong>Robust Multi-Signature Escrow:</strong> Utilizing 2-of-3 multi-sig as standard for all transactions, employing Bitcoin Taproot and native Monero multi-sig for enhanced privacy and security of funds. Direct payments are discouraged or disabled.
+                            </li>
+                            <li className="mb-2">
+                                <strong>Immutable Ledger:</strong> An internal, double-entry accounting system meticulously tracks all platform value, subject to constant reconciliation and integrity checks.
+                            </li>
+                            <li className="mb-2">
+                                <strong>Operational Security:</strong> Built with hardened infrastructure principles, leveraging tools like HashiCorp Vault for secrets management, and designed exclusively for the Tor network to maximize user anonymity.
+                            </li>
+                            <li className="mb-2">
+                                <strong>Familiar Structure, Enhanced Security:</strong> While offering categories and core functionality inspired by legendary markets, every feature is implemented with modern security paradigms to resist historical attack vectors and protect users.
+                            </li>
+                        </ul>
 
                         <h3 className={styles.question}>Q: Is this market secure?</h3>
                         <p className={styles.answer}>
@@ -42,8 +64,7 @@ export default function FaqPage() {
 
                          <h3 className={styles.question}>Q: Are there market fees?</h3>
                          <p className={styles.answer}>
-                            {/* TODO: Fill in actual fee percentages */}
-                             A: Yes, standard market fees apply to finalized orders to cover operational costs and development. Current fees are [X]% for standard escrow and [Y]% for multi-sig escrow, deducted from the vendor payout during escrow release. Specific fees might vary per category or vendor level; check the Rules page for definitive details.
+                            A: Yes, a standard market fee applies to all finalized orders to cover operational costs, security infrastructure, and continuous development. Since Shadow Market exclusively uses multi-signature escrow for all transactions to maximize user fund security, the current fee is a flat 2.5%, deducted from the vendor payout automatically during the escrow release process. While this is the standard rate, specific promotional adjustments or variations based on vendor tier might occasionally apply; always check the official <Link href="/rules">Rules page</Link> for the most current and definitive details.
                          </p>
                     </section>
 
@@ -80,10 +101,11 @@ export default function FaqPage() {
                          </p>
 
                          <h3 className={styles.question}>Q: What is the auto-finalize deadline?</h3>
+                         {/* --- UPDATED CONTENT --- */}
                          <p className={styles.answer}>
-                            {/* TODO: Fill in actual auto-finalize duration */}
-                             A: If you do not finalize or open a dispute within a set period after the vendor marks the order as shipped (typically [X] days - check the <Link href="/rules">Market Rules</Link>), the order may be automatically finalized by the system. It is your responsibility to track your orders and take action within the allowed timeframe.
+                             A: If you do not finalize or open a dispute within a set period after the vendor marks the order as shipped (typically 14 days - check the <Link href="/rules">Market Rules</Link>), the order may be automatically finalized by the system. It is your responsibility to track your orders and take action within the allowed timeframe.
                          </p>
+                         {/* --- END UPDATED CONTENT --- */}
                     </section>
 
                      {/* Disputes Section */}
@@ -106,7 +128,7 @@ export default function FaqPage() {
                           <h3 className={styles.question}>Q: How do I become a vendor?</h3>
                           <p className={styles.answer}>
                             {/* TODO: Fill in vendor application process */}
-                            A: [Explain your vendor application/approval process here - e.g., Minimum account age/history, application via support ticket, requirements for PGP/description, bond payment details]. Check the specific requirements detailed on the [Link to Vendor Application Info if available] page or in the Market Rules.
+                            A: [TODO: Explain your vendor application/approval process here - e.g., Minimum account age/history, application via support ticket, requirements for PGP/description, bond payment details]. Check the specific requirements detailed on the [TODO: Link to Vendor Application Info if available] page or in the Market Rules.
                           </p>
 
                            <h3 className={styles.question}>Q: What is the vendor bond?</h3>
@@ -122,5 +144,3 @@ export default function FaqPage() {
         </Layout>
     );
 }
-
-// TODO: Create Faq.module.css for .question and .answer styles.

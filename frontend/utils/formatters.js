@@ -1,5 +1,8 @@
 // frontend/utils/formatters.js
 // --- REVISION HISTORY ---
+// 2025-04-09: Rev 4 - Implemented truncateHash, formatBytes. Added commented-out formatTimeAgo structure.
+// 2025-04-09: Rev 3 - Added truncateText implementation.
+// 2025-04-09: Rev 2 - Added comments for TODO formatters.
 // 2025-04-07: Rev 1 - Added formatPrice (using Decimal.js), formatCurrency. Refined formatDate.
 //           - Implemented precise currency formatting using Decimal.js.
 //           - Added helper to combine formatted price with currency symbol.
@@ -10,15 +13,17 @@
 
 import React from 'react'; // Import React, needed if functions return JSX like renderStars
 import { Decimal } from 'decimal.js';
-import { CURRENCY_SYMBOLS } from './constants'; // Import currency symbols
+import { CURRENCY_SYMBOLS, DEFAULT_PAGE_SIZE } from './constants'; // Import currency symbols and page size constant
+// TODO: Uncomment the line below if/when date-fns is installed
+// import { formatDistanceToNowStrict } from 'date-fns';
 
 /**
  * Formats a date string or Date object into a locale-aware string.
  * @param {string | Date | null | undefined} dateInput - The date string or Date object.
- * @param {Intl.DateTimeFormatOptions} options - Optional formatting options for toLocaleString/toLocaleDateString.
+ * @param {Intl.DateTimeFormatOptions} [options={}] - Optional formatting options for toLocaleString/toLocaleDateString.
  * @returns {string} Formatted date string or 'N/A'.
  */
-export const formatDate = (dateInput, options) => {
+export const formatDate = (dateInput, options = {}) => { // Make options default to empty object
     if (!dateInput) return 'N/A';
 
     const defaultOptions = {
@@ -36,7 +41,18 @@ export const formatDate = (dateInput, options) => {
         const date = new Date(dateInput);
         // Check if the date is valid after parsing
         if (isNaN(date.getTime())) {
-            throw new Error('Invalid date input');
+            // Try common alternative if direct parse fails (e.g., simple YYYY-MM-DD)
+             const parts = String(dateInput).split('-');
+             if (parts.length === 3) {
+                 const potentiallyValidDate = new Date(parts[0], parts[1] - 1, parts[2]);
+                 if (!isNaN(potentiallyValidDate.getTime())) {
+                     date.setTime(potentiallyValidDate.getTime());
+                 } else {
+                    throw new Error('Invalid date input');
+                 }
+             } else {
+                 throw new Error('Invalid date input');
+             }
         }
         // Use toLocaleString if time options are present, otherwise toLocaleDateString
         if (formatOptions.hour || formatOptions.minute || formatOptions.second) {
@@ -56,7 +72,7 @@ export const formatDate = (dateInput, options) => {
  * Uses Decimal.js for precision.
  * @param {number | string | Decimal | null | undefined} amount - The numeric amount to format.
  * @param {string} currencyCode - The currency code (e.g., 'BTC', 'XMR', 'USD').
- * @returns {string | null} Formatted price string or null if input is invalid.
+ * @returns {string | null} Formatted price string or null if input is invalid/null/undefined.
  */
 export const formatPrice = (amount, currencyCode) => {
     if (amount === null || amount === undefined || amount === '') return null;
@@ -86,8 +102,13 @@ export const formatPrice = (amount, currencyCode) => {
                 decimalPlaces = 2;
                 break;
             default:
-                // Default for unknown or non-crypto currencies
+                // Default for unknown or non-crypto currencies (assume 2dp)
                 decimalPlaces = 2;
+        }
+
+        // Ensure we don't display negative zero
+        if (value.isZero() && value.isNegative()) {
+            return new Decimal(0).toFixed(decimalPlaces);
         }
 
         return value.toFixed(decimalPlaces);
@@ -102,19 +123,21 @@ export const formatPrice = (amount, currencyCode) => {
  * Formats a numeric amount as currency, prepending the correct symbol.
  * @param {number | string | Decimal | null | undefined} amount - The numeric amount.
  * @param {string} currencyCode - The currency code (e.g., 'BTC', 'XMR', 'USD').
- * @returns {string} Formatted currency string (e.g., '₿ 0.12345678', '$ 19.99') or 'N/A'.
+ * @param {object} [options={}] - Optional flags.
+ * @param {boolean} [options.showNA=true] - Whether to return 'N/A' for null/invalid amounts (default true). Set to false to return empty string ''.
+ * @returns {string} Formatted currency string (e.g., '₿ 0.12345678', '$ 19.99'), 'N/A', or ''.
  */
-export const formatCurrency = (amount, currencyCode) => {
+export const formatCurrency = (amount, currencyCode, options = { showNA: true }) => {
     const formattedAmount = formatPrice(amount, currencyCode);
 
     if (formattedAmount === null) {
-        // Optionally check if amount was 0, return formatted zero if needed
+        // Handle zero explicitly if needed, otherwise respect showNA option
         if (amount === 0 || amount === '0') {
              const zeroFormatted = formatPrice(0, currencyCode);
              const symbol = CURRENCY_SYMBOLS[currencyCode?.toUpperCase()] || currencyCode || '';
              return `${symbol} ${zeroFormatted}`;
         }
-        return 'N/A'; // Return N/A if amount is null/undefined/invalid
+        return options.showNA ? 'N/A' : ''; // Return N/A or empty string based on option
     }
 
     const symbol = CURRENCY_SYMBOLS[currencyCode?.toUpperCase()] || currencyCode || ''; // Use code if symbol missing
@@ -141,24 +164,92 @@ export const renderStars = (rating) => {
     const halfStar = rounded % 1 !== 0;
     const emptyStars = RATING_MAX - fullStars - (halfStar ? 1 : 0);
 
-    // Ensure we don't exceed max stars due to rounding edge cases
+    // Ensure we don't exceed max stars due to rounding edge cases (should be rare with clamp)
     const totalStars = fullStars + (halfStar ? 1 : 0) + emptyStars;
-    if (totalStars !== RATING_MAX) {
-        console.warn("Star calculation issue for rating:", rating);
-        // Adjust empty stars calculation if needed, though clamp should prevent this
+    if (totalStars !== RATING_MAX && totalStars >= 0) { // Ensure emptyStars doesn't go negative
+        console.warn("Star calculation resulted in incorrect total:", totalStars, "for rating:", rating);
+        // Adjust calculation if necessary, though clamping should prevent most issues
     }
 
     return (
         <span title={`${ratingValue.toFixed(2)} / ${RATING_MAX.toFixed(0)}`}>
             {'★'.repeat(fullStars)}
-            {halfStar ? '½' : ''} {/* Consider using a better half-star character or icon */}
-            {'☆'.repeat(emptyStars)}
+            {halfStar ? '½' : ''} {/* TODO: Consider using a better half-star character or icon library */}
+            {'☆'.repeat(Math.max(0, emptyStars))} {/* Ensure emptyStars isn't negative */}
         </span>
     );
 };
 
-// TODO: Add other formatters as needed:
-// - truncateText(text, maxLength)
-// - truncateHash(hash, charsToShow = 6)
-// - formatBytes(bytes, decimals = 2)
-// - formatTimeAgo(dateInput) // Requires library like date-fns or dayjs
+/**
+ * Truncates a string to a specified maximum length and adds an ellipsis.
+ * @param {string | null | undefined} text - The text to truncate.
+ * @param {number} [maxLength=100] - The maximum length before truncating.
+ * @returns {string} The truncated string or the original string if shorter.
+ */
+export const truncateText = (text, maxLength = 100) => {
+    if (!text) return '';
+    if (text.length <= maxLength) return text;
+    return text.substring(0, maxLength) + '...';
+};
+
+/**
+ * Truncates a hash or long string, showing start and end characters.
+ * @param {string | null | undefined} hash - The hash string.
+ * @param {number} [startChars=6] - Number of characters to show at the start.
+ * @param {number} [endChars=4] - Number of characters to show at the end.
+ * @returns {string} Truncated hash or original string if too short.
+ */
+export const truncateHash = (hash, startChars = 6, endChars = 4) => {
+    if (!hash || typeof hash !== 'string') return hash || ''; // Return original if not a string or null/undefined
+    const totalLength = startChars + endChars;
+    if (hash.length <= totalLength) return hash; // Don't truncate if it's already short enough
+    return `${hash.substring(0, startChars)}...${hash.substring(hash.length - endChars)}`;
+};
+
+/**
+ * Formats a number of bytes into a human-readable string (KB, MB, GB, etc.).
+ * @param {number | null | undefined} bytes - The number of bytes.
+ * @param {number} [decimals=2] - The number of decimal places for the result.
+ * @returns {string} Human-readable file size string (e.g., '1.23 MB').
+ */
+export const formatBytes = (bytes, decimals = 2) => {
+    if (bytes === null || bytes === undefined || isNaN(bytes)) return 'N/A'; // Handle null/undefined/NaN
+    if (bytes === 0) return '0 Bytes';
+
+    const k = 1024;
+    const dm = decimals < 0 ? 0 : decimals;
+    const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB', 'PB', 'EB', 'ZB', 'YB'];
+
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+
+    // Ensure index is within bounds and handle potential edge cases like Infinity
+    const index = Math.min(i, sizes.length - 1);
+
+    return `${parseFloat((bytes / Math.pow(k, index)).toFixed(dm))} ${sizes[index]}`;
+};
+
+/**
+ * Formats a date to show relative time distance (e.g., "2 hours ago").
+ * NOTE: Requires installing and importing a library like 'date-fns' or 'dayjs'.
+ * Example using date-fns (uncomment import and install 'date-fns'):
+ * npm install date-fns
+ * // or
+ * yarn add date-fns
+ * @param {string | Date | null | undefined} dateInput - The date string or Date object.
+ * @returns {string} Relative time string or 'N/A'.
+ */
+/*
+export const formatTimeAgo = (dateInput) => {
+    if (!dateInput) return 'N/A';
+    try {
+        const date = new Date(dateInput);
+        if (isNaN(date.getTime())) throw new Error('Invalid date');
+        // Example: using formatDistanceToNowStrict from date-fns
+        return formatDistanceToNowStrict(date, { addSuffix: true });
+    } catch (e) {
+        console.error("Error formatting time ago:", e);
+        return 'Invalid Date';
+    }
+};
+*/
+// --- END TODO ---

@@ -19,21 +19,25 @@ from django.utils.html import escape
 try:
     # Models
     from store.models import (
-        Order, User, GlobalSettings, AuditLog, SupportTicket, Product,
-        ORDER_STATUS_CHOICES, CURRENCY_CHOICES
+        Order, User, GlobalSettings, AuditLog, SupportTicket, Product, VendorApplication, # Added VendorApplication
+        ORDER_STATUS_CHOICES, CURRENCY_CHOICES,
+        VENDOR_APP_STATUS_PENDING_REVIEW, VENDOR_APP_STATUS_APPROVED, VENDOR_APP_STATUS_REJECTED, # Added App Statuses
     )
     # Forms
     from .forms import (
         GlobalSettingsForm, BanUserForm, ResolveDisputeForm,
         VendorActionReasonForm, MarkBondPaidForm
+        # Add ReviewVendorApplicationForm if needed for specific fields beyond reason
     )
     # Services
-    from store.services import escrow_service, pgp_service
+    from store.services import escrow_service, pgp_service, bitcoin_service # Added bitcoin_service (potentially needed for bond return later)
     # Permissions
     from store.permissions import PGP_AUTH_SESSION_KEY
     # --- Ledger Service Import ---
     from ledger import services as ledger_service
     from ledger.services import InsufficientFundsError
+    # --- Notification Service Import ---
+    from notifications import services as notification_service # Assuming notification service exists
     # --- Helper Import ---
     try:
         # Get market user helper - Prefer this import
@@ -53,13 +57,16 @@ try:
                 try:
                     # Replace 'market_system_user' with the actual username or criteria
                     # This lookup logic should ideally live elsewhere (e.g., settings or a dedicated service)
-                    _market_user_cache_local = User.objects.get(username=settings.MARKET_SYSTEM_USERNAME)
+                    market_username = getattr(settings, 'MARKET_SYSTEM_USERNAME', None)
+                    if not market_username:
+                         raise AttributeError("settings.MARKET_SYSTEM_USERNAME not defined?")
+                    _market_user_cache_local = User.objects.get(username=market_username)
                     logger_helper.info(f"Local get_market_user fallback: Found {_market_user_cache_local.username}")
                 except ObjectDoesNotExist:
                     logger_helper.error("Local get_market_user fallback: Market system user not found!")
                     _market_user_cache_local = None # Explicitly set to None on failure
-                except AttributeError:
-                     logger_helper.error("Local get_market_user fallback: settings.MARKET_SYSTEM_USERNAME not defined?")
+                except AttributeError as e:
+                     logger_helper.error(f"Local get_market_user fallback: Error accessing settings: {e}")
                      _market_user_cache_local = None
             return _market_user_cache_local
 
@@ -83,6 +90,7 @@ def is_staff(user):
 
 def is_owner(user):
     """Check if a user is staff and belongs to the 'Owner' group."""
+    # TODO: Use a constant or setting for the 'Owner' group name
     return is_staff(user) and hasattr(user, 'groups') and user.groups.filter(name='Owner').exists()
 
 def check_pgp_auth_session(request):
@@ -102,11 +110,10 @@ def check_pgp_auth_session(request):
 
     try:
         # Determine timeout based on user role (Owner gets longer timeout)
-        timeout_minutes = (
-            settings.OWNER_PGP_AUTH_SESSION_TIMEOUT_MINUTES
-            if is_owner(user)
-            else settings.DEFAULT_PGP_AUTH_SESSION_TIMEOUT_MINUTES
-        )
+        default_timeout = getattr(settings, 'DEFAULT_PGP_AUTH_SESSION_TIMEOUT_MINUTES', 30) # Default 30 mins
+        owner_timeout = getattr(settings, 'OWNER_PGP_AUTH_SESSION_TIMEOUT_MINUTES', 10) # Shorter for owner? Or longer? Example uses shorter. Adjust as needed.
+        timeout_minutes = owner_timeout if is_owner(user) else default_timeout
+
         pgp_auth_time = datetime.fromisoformat(pgp_auth_timestamp_str)
 
         # Check if the session has expired
@@ -124,10 +131,10 @@ def check_pgp_auth_session(request):
         session.pop(PGP_AUTH_SESSION_KEY, None)
         return False
 
-def log_admin_action(request, actor, action, target_user=None, target_order=None, details=""):
+def log_admin_action(request, actor, action, target_user=None, target_order=None, target_application=None, details=""):
     """Helper function to create an AuditLog entry for admin actions."""
     # Check if User and AuditLog models were imported successfully
-    if 'User' in locals() and 'AuditLog' in locals() and isinstance(actor, User):
+    if 'User' in globals() and 'AuditLog' in globals() and isinstance(actor, User):
         try:
             ip_address = request.META.get('REMOTE_ADDR')
             AuditLog.objects.create(
@@ -135,12 +142,13 @@ def log_admin_action(request, actor, action, target_user=None, target_order=None
                 action=action,
                 target_user=target_user,
                 target_order=target_order,
-                details=details,
+                target_application=target_application, # Added target_application
+                details=details[:500], # Limit details length
                 ip_address=ip_address
             )
         except Exception as e:
             logger.error(f"Failed to log admin action: {e}")
-    elif 'AuditLog' not in locals():
+    elif 'AuditLog' not in globals():
         logger.error("AuditLog model not available for logging admin action.")
     elif not isinstance(actor, User):
          logger.error(f"Invalid actor type for logging admin action: {type(actor)}")
@@ -158,14 +166,16 @@ def admin_dashboard(request):
     if not check_pgp_auth_session(request):
         messages.warning(request, "PGP authentication required for performing actions.")
 
-    pending_disputes = Order.objects.filter(status='disputed').count()
-    open_tickets = SupportTicket.objects.filter(status='open').count()
+    pending_disputes = Order.objects.filter(status='disputed').count() # Use constant later
+    open_tickets = SupportTicket.objects.filter(status='open').count() # Use constant later
     recent_orders = Order.objects.order_by('-created_at')[:10]
+    pending_vendor_apps = VendorApplication.objects.filter(status=VENDOR_APP_STATUS_PENDING_REVIEW).count() # Added
 
     context = {
         'pending_disputes': pending_disputes,
         'open_tickets': open_tickets,
         'recent_orders': recent_orders,
+        'pending_vendor_apps': pending_vendor_apps, # Added
     }
     return render(request, 'adminpanel/admin_dashboard.html', context)
 
@@ -212,13 +222,17 @@ def user_detail(request, user_id):
 
     user_obj = get_object_or_404(User, id=user_id)
 
+    # Fetch related vendor application if exists
+    vendor_application = VendorApplication.objects.filter(user=user_obj).order_by('-created_at').first()
+
     # Prepare forms needed on the detail page
     context = {
         'target_user': user_obj,
+        'vendor_application': vendor_application, # Pass application to context
         'ban_form': BanUserForm(),
-        'approve_reject_form': VendorActionReasonForm(), # For approve/reject actions
-        'mark_bond_paid_form': MarkBondPaidForm(),
-        'bond_action_form': VendorActionReasonForm(), # For forfeit action
+        'approve_reject_form': VendorActionReasonForm(), # For approve/reject actions on USER (not app)
+        # 'mark_bond_paid_form': MarkBondPaidForm(), # Removed, bond payment is automatic
+        'bond_action_form': VendorActionReasonForm(), # For forfeit action on USER
     }
     return render(request, 'adminpanel/user_detail.html', context)
 
@@ -302,10 +316,10 @@ def order_list(request):
     if status_filter:
         # Ensure status_filter is a valid choice if necessary
         if status_filter in [choice[0] for choice in ORDER_STATUS_CHOICES]:
-             orders = orders.filter(status=status_filter)
+            orders = orders.filter(status=status_filter)
         else:
-             messages.warning(request, f"Invalid status filter: {escape(status_filter)}")
-             status_filter = '' # Clear invalid filter
+            messages.warning(request, f"Invalid status filter: {escape(status_filter)}")
+            status_filter = '' # Clear invalid filter
 
     context = {
         'orders': orders,
@@ -343,7 +357,9 @@ def order_detail(request, order_id):
     form_error_message = None
 
     # Handle Dispute Resolution POST request
-    if order.status == 'disputed' and request.method == 'POST' and 'resolve_dispute_submit' in request.POST:
+    # Use constant for status check
+    disputed_status = getattr(Order.StatusChoices, 'DISPUTED', 'disputed') # Default if const missing
+    if order.status == disputed_status and request.method == 'POST' and 'resolve_dispute_submit' in request.POST:
         resolve_form = ResolveDisputeForm(request.POST)
         if resolve_form.is_valid():
             notes = resolve_form.cleaned_data['resolution_notes']
@@ -377,14 +393,177 @@ def order_detail(request, order_id):
 
         # If there was an error or form was invalid, pass the form back to the template
         if form_error_message:
-             context['resolve_form'] = resolve_form
-             context['resolve_form_error'] = form_error_message
+            context['resolve_form'] = resolve_form
+            context['resolve_form_error'] = form_error_message
 
     # Prepare form for GET request if the order is currently disputed
-    elif order.status == 'disputed':
+    elif order.status == disputed_status:
         context['resolve_form'] = ResolveDisputeForm()
 
     return render(request, 'adminpanel/order_detail.html', context)
+
+# --- NEW VENDOR APPLICATION VIEWS ---
+
+@login_required
+def vendor_application_list(request):
+    """Displays a list of vendor applications needing review."""
+    if not is_staff(request.user):
+        messages.error(request, "Access Denied.")
+        return redirect('/')
+
+    # PGP auth not strictly required to view, but recommend if actions are possible from list
+    if not check_pgp_auth_session(request):
+        messages.warning(request, "PGP authentication recommended for potential actions.")
+
+    # Filter applications needing review
+    applications = VendorApplication.objects.filter(
+        status=VENDOR_APP_STATUS_PENDING_REVIEW
+    ).select_related('user').order_by('created_at')
+
+    context = {
+        'applications': applications,
+        'page_title': "Pending Vendor Applications",
+    }
+    return render(request, 'adminpanel/vendor_application_list.html', context)
+# backend/adminpanel/views.py (Continuation - Part 2)
+
+@login_required
+def review_vendor_application(request, application_id):
+    """
+    Displays details of a specific vendor application and allows staff
+    to approve or reject it. Requires Staff + PGP Auth for actions.
+    """
+    if not is_staff(request.user):
+        messages.error(request, "Access Denied.")
+        return redirect('/') # Or 'adminpanel:admin_dashboard'
+
+    application = get_object_or_404(
+        VendorApplication.objects.select_related('user'),
+        pk=application_id
+    )
+
+    is_pgp_authenticated = check_pgp_auth_session(request)
+    log_prefix = f"[ReviewVendorApp:{application.id}|User:{application.user.username}]"
+
+    # Handle POST actions (Approve/Reject)
+    if request.method == 'POST':
+        if not is_pgp_authenticated:
+            messages.error(request, "PGP authentication required to approve or reject applications.")
+            # Redirect back to the detail view
+            return redirect('adminpanel:review_vendor_application', application_id=application.id)
+
+        # Check if application is still pending review before processing action
+        if application.status != VENDOR_APP_STATUS_PENDING_REVIEW:
+             messages.warning(request, f"Application is no longer pending review (Current status: {application.get_status_display()}). Action aborted.")
+             return redirect('adminpanel:vendor_application_list') # Redirect to list
+
+        action_type = None
+        if 'approve_submit' in request.POST:
+            action_type = 'approve'
+        elif 'reject_submit' in request.POST:
+            action_type = 'reject'
+
+        if not action_type:
+            messages.error(request, "Invalid action submitted.")
+            return redirect('adminpanel:review_vendor_application', application_id=application.id)
+
+        # Use the same form for both, but reason is mandatory for rejection
+        form = VendorActionReasonForm(request.POST)
+        reason_is_required = (action_type == 'reject')
+
+        if form.is_valid():
+            reason = form.cleaned_data.get('reason', '')
+            if reason_is_required and not reason:
+                 # Add form error if reason was required but not provided
+                 form.add_error('reason', 'A reason is required to reject the application.')
+                 # Fall through to re-render form with error
+            else:
+                # --- Proceed with Action (within transaction) ---
+                try:
+                    with transaction.atomic():
+                        target_user = application.user # Get the related user
+
+                        if action_type == 'approve':
+                            # --- Approve Logic ---
+                            application.status = VENDOR_APP_STATUS_APPROVED
+                            application.reviewed_by = request.user
+                            application.reviewed_at = timezone.now()
+                            application.rejection_reason = None # Clear any previous reason
+                            application.save()
+
+                            # Update user status
+                            target_user.is_vendor = True
+                            target_user.approved_vendor_since = timezone.now()
+                            target_user.save(update_fields=['is_vendor', 'approved_vendor_since'])
+
+                            # Logging and Notifications
+                            log_details = f"Approved Vendor Application {application.id}. Notes: {reason or 'N/A'}"
+                            log_admin_action(request, request.user, 'vendor_app_approve', target_application=application, target_user=target_user, details=log_details)
+                            messages.success(request, f"Vendor application for '{escape(target_user.username)}' approved successfully.")
+                            security_logger.info(f"VENDOR APP APPROVED: AppID:{application.id}, User:{target_user.username}, By:{request.user.username}")
+                            try:
+                                notification_service.create_notification(
+                                    user_id=target_user.id, level='success',
+                                    message="Congratulations! Your vendor application has been approved."
+                                )
+                            except Exception as notify_e:
+                                logger.error(f"{log_prefix} Failed sending approval notification: {notify_e}")
+
+                        elif action_type == 'reject':
+                            # --- Reject Logic ---
+                            application.status = VENDOR_APP_STATUS_REJECTED
+                            application.reviewed_by = request.user
+                            application.reviewed_at = timezone.now()
+                            application.rejection_reason = reason # Store the reason
+                            application.save()
+
+                            # Ensure user is NOT a vendor (in case of reversal/mistake)
+                            if target_user.is_vendor:
+                                target_user.is_vendor = False
+                                target_user.approved_vendor_since = None
+                                target_user.save(update_fields=['is_vendor', 'approved_vendor_since'])
+                                logger.warning(f"{log_prefix} User was marked as vendor during rejection. Status corrected.")
+
+                            # --- Bond Handling on Rejection ---
+                            # For now, log that bond is NOT automatically returned/forfeited.
+                            # Implement separate admin action for bond return/forfeit if needed later.
+                            bond_info = f"{application.bond_amount_crypto} {application.bond_currency_chosen}" if application.bond_amount_crypto else "N/A"
+                            logger.warning(f"{log_prefix} Application rejected. Bond ({bond_info}) is NOT automatically returned or forfeited via this action.")
+
+                            # Logging and Notifications
+                            log_details = f"Rejected Vendor Application {application.id}. Reason: {reason}"
+                            log_admin_action(request, request.user, 'vendor_app_reject', target_application=application, target_user=target_user, details=log_details)
+                            messages.warning(request, f"Vendor application for '{escape(target_user.username)}' has been rejected.")
+                            security_logger.warning(f"VENDOR APP REJECTED: AppID:{application.id}, User:{target_user.username}, By:{request.user.username}. Reason: {reason}")
+                            try:
+                                notification_service.create_notification(
+                                    user_id=target_user.id, level='error',
+                                    message=f"Your vendor application has been rejected. Reason: {reason}"
+                                )
+                            except Exception as notify_e:
+                                logger.error(f"{log_prefix} Failed sending rejection notification: {notify_e}")
+
+                    # Redirect after successful transaction
+                    return redirect('adminpanel:vendor_application_list')
+
+                except Exception as e:
+                    logger.exception(f"{log_prefix} Error processing application action '{action_type}': {e}")
+                    messages.error(request, "An unexpected server error occurred while processing the application.")
+                    # Fall through to re-render form
+
+        # If form is invalid (e.g., missing reason for rejection), re-render the detail page
+        messages.error(request, "Invalid input. Please provide a reason if rejecting.")
+        # Fall through to render GET response with the invalid form
+
+    # GET Request or failed POST: Render detail page
+    context = {
+        'application': application,
+        'approve_form': VendorActionReasonForm(prefix='approve'), # Use prefixes if needed
+        'reject_form': form if request.method == 'POST' and not form.is_valid() else VendorActionReasonForm(prefix='reject'), # Show submitted form with errors or fresh form
+        'page_title': f"Review Vendor Application #{application.id}",
+        'is_pgp_authenticated': is_pgp_authenticated,
+    }
+    return render(request, 'adminpanel/vendor_application_detail.html', context)
 
 
 # --- Owner Panel Views (Require 'Owner' Group Membership) ---
@@ -406,19 +585,21 @@ def owner_dashboard(request):
     settings_obj = GlobalSettings.load()
     # Pre-populate form with current settings
     initial_data = {
-        k: v for k, v in settings_obj.__dict__.items() if k in GlobalSettingsForm.Meta.fields
-    }
+        k: v for k, v in settings_obj.__dict__.items() if hasattr(GlobalSettingsForm.Meta, 'fields') and k in GlobalSettingsForm.Meta.fields
+    } if settings_obj else {} # Handle case where settings_obj is None
     settings_form = GlobalSettingsForm(initial=initial_data)
 
     # Gather stats
     total_users = User.objects.count()
     total_vendors = User.objects.filter(is_vendor=True).count()
     total_orders = Order.objects.count()
+    pending_vendor_apps = VendorApplication.objects.filter(status=VENDOR_APP_STATUS_PENDING_REVIEW).count()
 
     context = {
         'total_users': total_users,
         'total_vendors': total_vendors,
         'total_orders': total_orders,
+        'pending_vendor_apps': pending_vendor_apps, # Added stat
         'settings_form': settings_form,
         'current_settings': settings_obj,
     }
@@ -441,6 +622,12 @@ def update_global_settings(request):
         return redirect('adminpanel:owner_dashboard')
 
     settings_obj = GlobalSettings.load()
+    if settings_obj is None:
+        # Handle case where settings haven't been created yet
+        logger.error("GlobalSettings object not found during update attempt.")
+        messages.error(request, "Global settings record not found. Cannot update.")
+        return redirect('adminpanel:owner_dashboard')
+
     form = GlobalSettingsForm(request.POST, instance=settings_obj)
 
     canary_changed = 'canary_content' in form.changed_data
@@ -477,8 +664,8 @@ def update_global_settings(request):
                     logger.info(f"Owner {request.user.username} successfully verified Warrant Canary PGP signature.")
 
             except ValueError as ve: # Specific error for missing key
-                 logger.error(f"Cannot verify canary signature: {ve}")
-                 form.add_error('canary_signature_input', f"Error: {ve}")
+                logger.error(f"Cannot verify canary signature: {ve}")
+                form.add_error('canary_signature_input', f"Error: {ve}")
             except Exception as e:
                 logger.exception(f"Unexpected error during canary signature verification: {e}")
                 form.add_error('canary_signature_input', "An server error occurred during signature verification.")
@@ -537,6 +724,7 @@ def update_global_settings(request):
         'total_users': User.objects.count(),
         'total_vendors': User.objects.filter(is_vendor=True).count(),
         'total_orders': Order.objects.count(),
+        'pending_vendor_apps': VendorApplication.objects.filter(status=VENDOR_APP_STATUS_PENDING_REVIEW).count(),
     }
     messages.error(request, "Settings update failed. Please review the errors below.")
     return render(request, 'adminpanel/owner_dashboard.html', context)
@@ -554,6 +742,10 @@ def emergency_actions(request):
         return redirect('adminpanel:owner_dashboard')
 
     current_settings = GlobalSettings.load()
+    if current_settings is None:
+        logger.error("GlobalSettings object not found for emergency actions.")
+        messages.error(request, "Global settings record not found. Cannot perform actions.")
+        return redirect('adminpanel:owner_dashboard')
     context = {'current_settings': current_settings}
 
     if request.method == 'POST':
@@ -568,12 +760,20 @@ def emergency_actions(request):
             return render(request, 'adminpanel/emergency_actions.html', context)
 
         # --- Verify PGP Signature for the Action ---
-        is_action_verified = pgp_service.verify_action_signature(
-            user=request.user,
-            action_name=action,
-            nonce=nonce,
-            signature=signature
-        )
+        is_action_verified = False # Default to false
+        try:
+             is_action_verified = pgp_service.verify_action_signature(
+                 user=request.user,
+                 action_key=action, # Use action name directly as key
+                 nonce=nonce,
+                 signed_message=signature # Use 'signed_message' to match PGP service convention
+             )
+        except Exception as pgp_err:
+             logger.error(f"Error during PGP verification for emergency action '{action}': {pgp_err}", exc_info=True)
+             messages.error(request, "An error occurred during PGP signature verification.")
+             context['verification_error'] = True
+             return render(request, 'adminpanel/emergency_actions.html', context)
+
 
         if not is_action_verified:
             messages.error(request, "Emergency action FAILED: PGP signature verification failed.")
@@ -591,6 +791,11 @@ def emergency_actions(request):
 
         # Reload settings just before modification within the verified block
         settings_obj = GlobalSettings.load()
+        if settings_obj is None:
+             logger.error("GlobalSettings re-load failed before applying emergency action.")
+             messages.error(request, "Global settings record could not be reloaded. Action aborted.")
+             return redirect('adminpanel:owner_dashboard')
+
 
         if action == 'freeze_funds':
             if not settings_obj.freeze_funds:
@@ -632,11 +837,16 @@ def emergency_actions(request):
         # Prepare context needed for the challenge message (e.g., current status)
         challenge_context = {'current_freeze_status': current_settings.freeze_funds}
 
-        message_to_sign, action_nonce = pgp_service.generate_action_challenge(
-            user=request.user,
-            action_name=action_to_confirm,
-            context=challenge_context
-        )
+        try:
+             message_to_sign, action_nonce = pgp_service.generate_action_challenge(
+                 user=request.user,
+                 action_key=action_to_confirm, # Use action name directly as key
+                 context=challenge_context
+             )
+        except Exception as pgp_gen_err:
+             logger.error(f"Failed to generate PGP challenge for {request.user.username}, action {action_to_confirm}: {pgp_gen_err}", exc_info=True)
+             message_to_sign = None # Ensure it's None on error
+
 
         if not message_to_sign:
             messages.error(request, "Failed to generate the PGP confirmation message. Cannot proceed.")
@@ -652,10 +862,13 @@ def emergency_actions(request):
             messages.info(request, f"Please sign the following message with your PGP key to confirm the '{action_to_confirm}' action.")
 
     return render(request, 'adminpanel/emergency_actions.html', context)
-
+# backend/adminpanel/views.py (Continuation - Part 3 - Final)
 
 # --- Vendor Management Actions (Require Staff + PGP Auth) ---
 
+# TODO: Review/Replace this view. Vendor approval should primarily happen via ReviewVendorApplicationView now.
+# This view might be repurposed for manually making an existing user a vendor *without* the standard application process,
+# but the workflow needs clarification. It currently doesn't interact with VendorApplication model.
 @login_required
 def approve_vendor(request, user_id):
     """Approves a user's vendor application. Requires Staff + PGP."""
@@ -699,6 +912,9 @@ def approve_vendor(request, user_id):
     }
     return render(request, 'adminpanel/vendor_approve_confirm.html', context)
 
+# TODO: Review/Replace this view. Vendor rejection should primarily happen via ReviewVendorApplicationView now.
+# This view might be repurposed for removing vendor status from an *already approved* vendor.
+# It currently doesn't interact with VendorApplication model properly for rejection during application phase.
 @login_required
 def reject_vendor(request, user_id):
     """Rejects/Removes vendor status from a user. Requires Staff + PGP."""
@@ -722,19 +938,19 @@ def reject_vendor(request, user_id):
         if form.is_valid():
             reason = form.cleaned_data.get('reason', 'No reason provided.')
 
-            # Reset vendor-related fields
+            # Reset vendor-related fields on User model
             target_user.is_vendor = False
             target_user.approved_vendor_since = None
             # Also clear bond status if rejecting vendor status
-            target_user.vendor_bond_paid = False
+            target_user.vendor_bond_paid = False # This flag seems redundant with VendorApplication now
             # Define fields to update explicitly
             update_fields = ['is_vendor', 'approved_vendor_since', 'vendor_bond_paid']
-            # Clear all potential bond amount fields
-            for curr_code in [c[0] for c in CURRENCY_CHOICES]:
-                 field_name = f'vendor_bond_amount_{curr_code.lower()}'
-                 if hasattr(target_user, field_name):
-                      setattr(target_user, field_name, None)
-                      update_fields.append(field_name)
+            # Clear all potential bond amount fields (This feels wrong now, bond info is on Application)
+            for curr_code in [c[0] for c in CURRENCY_CHOICES] if 'CURRENCY_CHOICES' in locals() else ['xmr', 'btc', 'eth']:
+                field_name = f'vendor_bond_amount_{curr_code.lower()}'
+                if hasattr(target_user, field_name):
+                    setattr(target_user, field_name, None)
+                    update_fields.append(field_name)
 
             # Remove duplicates just in case
             update_fields = list(set(update_fields))
@@ -756,7 +972,9 @@ def reject_vendor(request, user_id):
     context = {'target_user': target_user, 'form': form}
     return render(request, 'adminpanel/vendor_reject_confirm.html', context)
 
-
+# TODO: Review/Update this view. Bond payment detection is now automatic via Celery task.
+# This manual override might still be needed for edge cases, but it should update the
+# VendorApplication status to PENDING_REVIEW and store details there, not just on the User model.
 @login_required
 @transaction.atomic # Ensure user update and log are atomic
 def mark_bond_paid(request, user_id):
@@ -771,67 +989,91 @@ def mark_bond_paid(request, user_id):
 
     target_user = get_object_or_404(User, id=user_id)
 
-    # Ensure the user is an approved vendor first
-    if not target_user.is_vendor:
-        messages.error(request, "User must be an approved vendor to mark bond as paid.")
-        return redirect('adminpanel:user_detail', user_id=user_id)
-        # Check if bond is already marked as paid
-    if target_user.vendor_bond_paid:
-        messages.warning(request, f"Vendor bond for '{escape(target_user.username)}' is already marked as paid.")
+    # Find related Application
+    application = VendorApplication.objects.filter(user=target_user, status=VENDOR_APP_STATUS_PENDING_BOND).first()
+    if not application:
+        messages.error(request, "No vendor application found in 'Pending Bond' status for this user.")
         return redirect('adminpanel:user_detail', user_id=user_id)
 
+    # Check if bond is already marked as paid on Application
+    if application.bond_paid_txid: # Check if already paid
+       messages.warning(request, f"Vendor bond for Application #{application.id} ('{escape(target_user.username)}') appears to be already paid (TXID: {application.bond_paid_txid}).")
+       return redirect('adminpanel:user_detail', user_id=user_id)
+
     if request.method == 'POST':
-        form = MarkBondPaidForm(request.POST)
+        form = MarkBondPaidForm(request.POST) # Form likely needs updating too
         if form.is_valid():
             currency = form.cleaned_data['bond_currency']
             amount = form.cleaned_data['bond_amount']
-            txid = form.cleaned_data.get('external_txid', '') # Optional field
-            notes = form.cleaned_data.get('notes', '') # Optional field
+            txid = form.cleaned_data.get('external_txid', '')
+            notes = form.cleaned_data.get('notes', 'Manual override by admin.')
 
             # Ensure amount is positive
             if not amount or amount <= Decimal('0.0'):
                  messages.error(request, "Bond amount must be a positive value.")
-                 context = {'target_user': target_user, 'form': form}
-                 return render(request, 'adminpanel/vendor_mark_bond_paid.html', context)
+                 context = {'target_user': target_user, 'application': application, 'form': form}
+                 return render(request, 'adminpanel/vendor_mark_bond_paid.html', context) # Needs template update
 
-            # Update the user record
-            target_user.vendor_bond_paid = True
-            bond_amount_field = f'vendor_bond_amount_{currency.lower()}'
-            # Make sure the field exists on the model before setting
-            if hasattr(target_user, bond_amount_field):
-                 setattr(target_user, bond_amount_field, amount)
-                 update_fields = ['vendor_bond_paid', bond_amount_field]
-                 target_user.save(update_fields=update_fields)
+            # --- UPDATE APPLICATION STATUS ---
+            if currency != Currency.BTC:
+                messages.error(request, "Manual bond marking currently only supports BTC.")
+                context = {'target_user': target_user, 'application': application, 'form': form}
+                return render(request, 'adminpanel/vendor_mark_bond_paid.html', context)
 
-                 log_details = f"Bond marked paid: {amount} {currency}. TXID:{txid or 'N/A'}. Notes:{notes}"
-                 log_admin_action(request, request.user, 'vendor_bond_paid_mark', target_user=target_user, details=log_details)
-                 messages.success(request, f"Vendor bond marked as paid for '{escape(target_user.username)}'.")
-                 security_logger.info(f"Vendor Bond Paid (Marked Manually): {target_user.username} by {request.user.username}. Amount: {amount} {currency}")
-                 return redirect('adminpanel:user_detail', user_id=user_id)
-            else:
-                 # This case should ideally not happen if CURRENCY_CHOICES and model fields align
-                 messages.error(request, f"Internal Error: Invalid bond currency field for {currency}.")
-                 logger.error(f"Attempted to set non-existent bond field {bond_amount_field} for user {target_user.username}")
-                 # Don't redirect, show error with form
-                 context = {'target_user': target_user, 'form': form}
-                 return render(request, 'adminpanel/vendor_mark_bond_paid.html', context)
+            try:
+                amount_atomic = bitcoin_service.btc_to_satoshis(amount)
+            except Exception as conv_e:
+                messages.error(request, f"Invalid BTC amount format: {amount}")
+                logger.error(f"Error converting manual bond amount {amount} BTC to sats: {conv_e}")
+                context = {'target_user': target_user, 'application': application, 'form': form}
+                return render(request, 'adminpanel/vendor_mark_bond_paid.html', context)
+
+            # Update the application record
+            application.status = VENDOR_APP_STATUS_PENDING_REVIEW
+            application.bond_paid_atomic = amount_atomic
+            application.bond_paid_txid = txid or f"MANUAL_{secrets.token_hex(8)}" # Generate placeholder if missing
+            application.bond_paid_confirmations = 999 # Indicate manual confirmation
+            application.paid_at = timezone.now()
+            application.notes = (application.notes or "") + f"\nBond manually marked paid by {request.user.username}. {notes}"
+            application.save()
+
+            log_details = f"AppID:{application.id} Bond marked paid (Manual): {amount} {currency}. TXID:{txid or 'N/A'}. Notes:{notes}"
+            log_admin_action(request, request.user, 'vendor_bond_paid_mark', target_application=application, target_user=target_user, details=log_details)
+            messages.success(request, f"Vendor bond manually marked as paid for Application #{application.id} ('{escape(target_user.username)}'). Status set to Pending Review.")
+            security_logger.info(f"Vendor Bond Paid (Marked Manually): AppID:{application.id} User:{target_user.username} by {request.user.username}. Amount: {amount} {currency}")
+
+            # Notify Admins?
+            try:
+                 if notification_service:
+                     notification_service.create_notification(
+                         # recipient_group='Admin',
+                         level='info',
+                         message=f"Vendor Application #{application.id} ('{target_user.username}') bond was manually marked paid by {request.user.username} and requires review."
+                     )
+                     logger.info(f"Sent admin review notification for manually paid bond App:{application.id}")
+            except Exception as notify_e:
+                  logger.error(f"Failed sending admin notification for manual bond mark App:{application.id}: {notify_e}")
+
+            return redirect('adminpanel:review_vendor_application', application_id=application.id) # Redirect to review view
 
         else: # Form is invalid
             messages.error(request, "Invalid data provided. Please check the form.")
-            context = {'target_user': target_user, 'form': form}
-            return render(request, 'adminpanel/vendor_mark_bond_paid.html', context)
+            context = {'target_user': target_user, 'application': application, 'form': form}
+            return render(request, 'adminpanel/vendor_mark_bond_paid.html', context) # Needs template update
 
     # GET request: Show the form to mark bond paid
     form = MarkBondPaidForm()
-    # Pre-fill currency based on global settings if desired? Example:
-    # settings = GlobalSettings.load()
-    # default_currency = settings.default_bond_currency # Assuming such a setting exists
-    # form.fields['bond_currency'].initial = default_currency
-    context = {'target_user': target_user, 'form': form}
-    return render(request, 'adminpanel/vendor_mark_bond_paid.html', context)
+    # Pre-fill currency to BTC
+    form.fields['bond_currency'].initial = Currency.BTC
+    form.fields['bond_currency'].disabled = True # Disable selection
+    context = {'target_user': target_user, 'application': application, 'form': form}
+    return render(request, 'adminpanel/vendor_mark_bond_paid.html', context) # Needs template update
 
 
 # --- Updated forfeit_bond View (with Ledger Integration, Forfeit Only) ---
+# TODO: Review this view. Bond amount/currency should ideally come from the application
+# OR from User fields populated *upon approval*. How is bond tracked *after* approval if needed for forfeiture?
+# This currently fetches from User model fields which might be inconsistent with Application.
 @login_required
 @transaction.atomic # Ensure ledger update + user update are atomic
 def forfeit_bond(request, user_id):
@@ -845,50 +1087,61 @@ def forfeit_bond(request, user_id):
         return redirect('adminpanel:user_detail', user_id=user_id)
 
     # --- Service Availability Check ---
-    # Ensure ledger_service was imported successfully and get_market_user is available
-    if 'ledger_service' not in locals() or ledger_service is None:
+    if ledger_service is None:
         logger.critical("Ledger service not available in forfeit_bond.")
         messages.error(request, "Ledger service unavailable. Cannot process bond action.")
         return redirect('adminpanel:user_detail', user_id=user_id)
-    if 'get_market_user' not in locals() or get_market_user is None:
-         logger.critical("get_market_user helper not available in forfeit_bond.")
-         messages.error(request, "Market user helper unavailable. Cannot process bond forfeiture.")
-         return redirect('adminpanel:user_detail', user_id=user_id)
+    market_user = get_market_user() # Use the imported/fallback helper
+    if market_user is None:
+       logger.critical("Market User helper not available or failed in forfeit_bond.")
+       messages.error(request, "Market user helper unavailable. Cannot process bond forfeiture.")
+       return redirect('adminpanel:user_detail', user_id=user_id)
 
 
     # --- Target User and Bond Status Validation ---
     target_user = get_object_or_404(User, id=user_id)
-    if not target_user.is_vendor:
-        messages.error(request, "User is not a vendor.")
-        return redirect('adminpanel:user_detail', user_id=user_id)
-    # Check if bond was actually marked paid and has an amount stored
-    if not target_user.vendor_bond_paid:
-        messages.warning(request, "Vendor bond was not marked as paid. Cannot forfeit.")
-        return redirect('adminpanel:user_detail', user_id=user_id)
+    # Forfeiture should likely apply only to *approved* vendors whose bond needs seizing
+    # Or maybe also to rejected applications where policy dictates forfeiture? Clarify requirement.
+    # Let's assume for now it applies if user *was* a vendor OR has a relevant paid application.
 
-    # --- Determine Stored Bond Amount/Currency ---
+    # Try finding bond info from the latest relevant application first
+    application = VendorApplication.objects.filter(user=target_user).order_by('-created_at').first()
     bond_currency = None
     bond_amount = None
-    # Use CURRENCY_CHOICES from models if available, else define fallback
-    currency_codes = [c[0] for c in CURRENCY_CHOICES] if 'CURRENCY_CHOICES' in locals() else ['xmr', 'btc', 'eth'] # Fallback if import failed
-    for curr_code in currency_codes:
-        amount_field = f'vendor_bond_amount_{curr_code.lower()}'
-        amount_val = getattr(target_user, amount_field, None)
-        # Check for valid decimal amount greater than zero
-        if amount_val is not None and isinstance(amount_val, Decimal) and amount_val > Decimal('0.0'):
-            bond_currency = curr_code
-            bond_amount = amount_val
-            break # Found the currency/amount
+    bond_amount_atomic = None
 
-    # --- Handle Inconsistent State (Paid Flag without Amount) ---
-    if not bond_currency or not bond_amount:
-        logger.error(f"Inconsistent bond state for User {target_user.username} (ID: {target_user.id}): "
-                     f"vendor_bond_paid is True, but no valid bond amount found.")
-        # Correct the flag to reflect reality
-        target_user.vendor_bond_paid = False
-        target_user.save(update_fields=['vendor_bond_paid'])
-        messages.error(request, f"Bond amount/currency data is missing for user '{escape(target_user.username)}' "
-                                f"despite the paid flag being set. Resetting flag. Cannot forfeit.")
+    if application and application.bond_paid_atomic and application.bond_paid_atomic > 0 and application.bond_currency_chosen == Currency.BTC:
+        bond_currency = Currency.BTC
+        bond_amount_atomic = application.bond_paid_atomic
+        try:
+             # Convert atomic to standard Decimal for ledger
+             factor = ATOMIC_FACTOR.get(bond_currency)
+             if factor: bond_amount = Decimal(str(bond_amount_atomic)) / factor
+        except Exception: bond_amount = None # Handle conversion error
+        logger.info(f"Found bond info on Application {application.id}: {bond_amount_atomic} atomic {bond_currency}")
+    else:
+        # Fallback to potentially outdated User model fields (less reliable)
+        logger.warning(f"No valid bond info found on latest application for user {target_user.username}. Falling back to User model fields (potentially outdated).")
+        # This fallback logic is kept from original but is problematic with the new workflow.
+        currency_codes = [c[0] for c in CURRENCY_CHOICES] if 'CURRENCY_CHOICES' in locals() else ['xmr', 'btc', 'eth']
+        for curr_code in currency_codes:
+            amount_field = f'vendor_bond_amount_{curr_code.lower()}'
+            amount_val = getattr(target_user, amount_field, None)
+            if amount_val is not None and isinstance(amount_val, Decimal) and amount_val > Decimal('0.0'):
+                bond_currency = curr_code
+                bond_amount = amount_val
+                factor = ATOMIC_FACTOR.get(bond_currency)
+                if factor: bond_amount_atomic = int((bond_amount * factor).to_integral_value()) # Estimate atomic
+                logger.warning(f"Using bond info from User model: {bond_amount} {bond_currency}")
+                break
+
+    # --- Handle Missing Bond Info ---
+    if not bond_currency or not bond_amount or bond_amount_atomic is None:
+        logger.error(f"Could not determine valid bond amount/currency to forfeit for User {target_user.username} (ID: {target_user.id}). Checked Application and User model.")
+        messages.error(request, f"Could not find valid bond information for user '{escape(target_user.username)}'. Cannot forfeit.")
+        # Optionally clear related flags if inconsistent state detected
+        # if target_user.vendor_bond_paid:
+        #    target_user.vendor_bond_paid = False; target_user.save(...)
         return redirect('adminpanel:user_detail', user_id=user_id)
 
     # --- Handle POST Request (Form Submission) ---
@@ -896,42 +1149,51 @@ def forfeit_bond(request, user_id):
         form = VendorActionReasonForm(request.POST)
         if form.is_valid():
             reason = form.cleaned_data.get('reason', 'No reason provided.')
-            # Double-check action_type from hidden input matches 'forfeit'
             action_type = request.POST.get('action_type')
             if action_type != 'forfeit':
-                messages.error(request, "Invalid action type submitted. Expected 'forfeit'.")
-                security_logger.warning(f"Invalid action_type '{action_type}' received in forfeit_bond POST for user {target_user.username}")
-                return redirect('adminpanel:user_detail', user_id=user_id)
+                 messages.error(request, "Invalid action type submitted. Expected 'forfeit'.")
+                 security_logger.warning(f"Invalid action_type '{action_type}' received in forfeit_bond POST for user {target_user.username}")
+                 return redirect('adminpanel:user_detail', user_id=user_id)
 
             try:
                 # --- Perform Ledger Action (Credit Market User) ---
-                market_user = get_market_user()
-                if not market_user:
-                    # Raise validation error to be caught below, triggering rollback
-                    raise DjangoValidationError("Market system user could not be found. Cannot credit forfeited bond.")
-
                 ledger_service.credit_funds(
                     user=market_user,
                     currency=bond_currency,
-                    amount=bond_amount,
-                    transaction_type='VENDOR_BOND_FORFEIT', # Ensure this type exists in ledger app
-                    notes=f"Bond forfeit from vendor {target_user.username} (ID: {target_user.id}). "
-                          f"Admin: {request.user.username}. Reason: {reason}"
+                    amount=bond_amount, # Use standard Decimal amount for ledger
+                    transaction_type='VENDOR_BOND_FORFEIT', # Ensure this type exists
+                    notes=(f"Bond forfeit from vendor {target_user.username} (ID: {target_user.id}). "
+                           f"Admin: {request.user.username}. Reason: {reason}")
+                    # Consider adding application ID to notes if available: f"AppID: {application.id if application else 'N/A'}"
                 )
 
-                # --- Clear User Bond Flags ONLY AFTER Successful Ledger Credit ---
-                bond_amount_field = f'vendor_bond_amount_{bond_currency.lower()}'
+                # --- Clear Bond Info (on Application and/or User) ---
+                bond_cleared_on = []
+                # Clear Application bond info if it exists and matches
+                if application and application.bond_currency_chosen == bond_currency and application.bond_paid_atomic == bond_amount_atomic:
+                    application.bond_paid_atomic = 0
+                    # Keep TXID? application.bond_paid_txid = None
+                    # Clear status if relevant? No, forfeiture can happen regardless of app status
+                    application.notes = (application.notes or "") + f"\nBond forfeited by admin {request.user.username} on {timezone.now().date()}. Reason: {reason}"
+                    application.save(update_fields=['bond_paid_atomic', 'notes', 'updated_at'])
+                    bond_cleared_on.append(f"App({application.id})")
+
+                # Clear potentially outdated User model fields regardless
+                # (These fields should eventually be deprecated/removed)
+                user_update_fields = ['vendor_bond_paid'] # Always clear flag
                 target_user.vendor_bond_paid = False
-                # Ensure field exists before trying to set it to None
+                bond_amount_field = f'vendor_bond_amount_{bond_currency.lower()}'
                 if hasattr(target_user, bond_amount_field):
-                     setattr(target_user, bond_amount_field, None)
-                     update_fields = ['vendor_bond_paid', bond_amount_field]
-                     target_user.save(update_fields=update_fields)
+                    if getattr(target_user, bond_amount_field, None) == bond_amount: # Only clear if matches
+                        setattr(target_user, bond_amount_field, None)
+                        user_update_fields.append(bond_amount_field)
+                        bond_cleared_on.append("User")
+                    else:
+                         logger.warning(f"Bond amount on User model ({getattr(target_user, bond_amount_field, None)}) didn't match forfeited amount ({bond_amount}). Not clearing User amount field.")
                 else:
-                      # This indicates a mismatch between CURRENCY_CHOICES loop and model fields
-                      logger.error(f"Attempted to clear non-existent bond field {bond_amount_field} after forfeiture for user {target_user.username}")
-                      # Still clear the paid flag
-                      target_user.save(update_fields=['vendor_bond_paid'])
+                    logger.warning(f"User model missing field {bond_amount_field} during forfeiture cleanup.")
+
+                target_user.save(update_fields=list(set(user_update_fields)))
 
 
                 # --- Logging and Success Message ---
@@ -940,35 +1202,32 @@ def forfeit_bond(request, user_id):
                 sec_log_msg = (f"Vendor Bond Forfeited (Ledger Updated): Vendor: {target_user.username}, "
                                f"Admin: {request.user.username}, Amount: {bond_amount} {bond_currency}. Reason: {reason}")
 
-                log_admin_action(request, request.user, log_action_name, target_user=target_user, details=f"Reason: {reason}")
+                log_admin_action(request, request.user, log_action_name, target_user=target_user, target_application=application, details=f"Reason: {reason}")
                 messages.success(request, success_msg)
                 security_logger.warning(sec_log_msg)
                 return redirect('adminpanel:user_detail', user_id=user_id)
 
             # --- Specific Error Handling (within atomic block) ---
-            except InsufficientFundsError as e: # Should not occur on credit, but catch defensively
+            except InsufficientFundsError as e: # Should not occur on credit
                 messages.error(request, f"Ledger error during bond forfeit: {e}")
                 logger.error(f"Ledger InsufficientFundsError during bond forfeit U:{target_user.username}: {e}", exc_info=True)
-                # Atomic block will rollback
-                return redirect('adminpanel:user_detail', user_id=user_id) # Redirect back to detail page
+                return redirect('adminpanel:user_detail', user_id=user_id)
             except (DjangoValidationError, IntegrityError, ObjectDoesNotExist) as e: # Catch validation, DB, or missing market user errors
                 messages.error(request, f"Processing error during bond forfeit: {e}")
                 logger.error(f"Processing error during bond forfeit U:{target_user.username}: {e}", exc_info=True)
-                # Atomic block will rollback
                 return redirect('adminpanel:user_detail', user_id=user_id)
             # --- Catch Unexpected Errors ---
             except Exception as e:
                 messages.error(request, "An unexpected server error occurred during bond forfeiture.")
                 logger.exception(f"Unexpected error during bond forfeit for U:{target_user.username}")
-                 # Atomic block will rollback
                 return redirect('adminpanel:user_detail', user_id=user_id)
         else: # Form is invalid
              # Re-render the confirmation page with the form errors
-             template = 'adminpanel/vendor_bond_forfeit_confirm.html'
+             template = 'adminpanel/vendor_bond_forfeit_confirm.html' # Needs template update
              context = {
                  'target_user': target_user,
                  'form': form, # Pass form with errors
-                 'action_type': 'forfeit', # Keep action type consistent
+                 'action_type': 'forfeit',
                  'bond_currency': bond_currency,
                  'bond_amount': bond_amount,
              }
@@ -978,7 +1237,7 @@ def forfeit_bond(request, user_id):
     # --- Handle GET Request (Show Confirmation Page) ---
     else:
         form = VendorActionReasonForm()
-        template = 'adminpanel/vendor_bond_forfeit_confirm.html'
+        template = 'adminpanel/vendor_bond_forfeit_confirm.html' # Needs template update
         context = {
             'target_user': target_user,
             'form': form,

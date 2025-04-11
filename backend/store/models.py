@@ -2,14 +2,25 @@
 """
 Django models for the core store application.
 Includes models for Users (custom), Categories, Products, Orders, Payments,
-Feedback, Support Tickets, Global Settings, Audit Logs, and WebAuthn Credentials.
+Feedback, Support Tickets, Global Settings, Audit Logs, WebAuthn Credentials,
+Vendor Applications, and Disputes. # <-- Added Dispute to description
 Focuses on structure, relationships, basic validation, and indexing for performance.
 Uses Decimal for financial values and UUIDs where appropriate.
 Integrates PGP key requirements and basic multi-sig fields.
 """
-# <<< ENTERPRISE GRADE REVISION: v1.0.6 - Verified Order Save Fix >>>
+# <<< ENTERPRISE GRADE REVISION: v1.3.0 - Added simple_escrow_deposit_address >>>
 # Revision Notes:
-# - v1.0.6: (Current - 2025-04-05)
+# - v1.3.0 (2025-04-09)
+#   - ADDED: simple_escrow_deposit_address field to Order model for BASIC escrow.
+#   - ADDED: Validation in Order.clean() to ensure consistency between escrow_type and relevant address/multisig fields.
+#   - ADDED: Index for simple_escrow_deposit_address.
+# - v1.2.0: (2025-04-09)
+#   - ADDED: Dispute model to track order disputes, required by bitcoin_escrow_service.resolve_dispute.
+# - v1.1.0: (2025-04-09)
+#   - ADDED: FiatCurrency choices enum.
+#   - ADDED: Exchange rate fields (btc_usd_rate, etc.) and rates_last_updated to GlobalSettings.
+#   - ADDED: VendorApplication model to handle vendor sign-up process and bond payment.
+# - v1.0.6: (2025-04-05)
 #   - VERIFIED: Confirmed that the fix in v1.0.5 (removing unconditional total price calculation
 #     in Order.save()) correctly addresses the primary test setup errors related to
 #     `total_price_native_selected` assertion failures in test fixtures. No functional changes needed.
@@ -30,8 +41,8 @@ Integrates PGP key requirements and basic multi-sig fields.
 
 # Standard Library Imports
 import logging
-import uuid
-from decimal import Decimal
+import uuid # Ensure UUID is imported
+from decimal import Decimal # Ensure Decimal is imported
 from typing import Optional, List, Dict, Sequence # Keep necessary type hints
 import datetime # Added for revision date
 
@@ -42,6 +53,7 @@ from django.core.exceptions import ValidationError
 from django.core.validators import MinValueValidator, MaxValueValidator, RegexValidator
 from django.db import models, transaction # Added transaction for commentary context
 from django.utils import timezone
+from django.utils.translation import gettext_lazy as _ # Added for VendorApplication, Dispute
 # from django.utils.text import slugify # Uncomment if using auto-slug generation in save methods
 
 # Third-Party Imports
@@ -82,6 +94,12 @@ class Currency(models.TextChoices):
     BTC = 'BTC', 'Bitcoin'
     ETH = 'ETH', 'Ethereum'
 
+class FiatCurrency(models.TextChoices):
+    """Supported fiat currencies for display/reference."""
+    USD = 'USD', 'United States Dollar'
+    EUR = 'EUR', 'Euro'
+    # Add others as needed (GBP, CAD, JPY, etc.)
+
 # NOTE: This top-level enum is potentially deprecated in favor of Order.StatusChoices below.
 # It is kept for now to avoid breaking potential imports elsewhere in the codebase.
 # Consider refactoring other code to use Order.StatusChoices directly.
@@ -119,7 +137,10 @@ class AuditLogAction(models.TextChoices):
     USER_UNBAN = 'user_unban', 'User Unbanned'
     VENDOR_APPROVE = 'vendor_approve', 'Vendor Approved'
     VENDOR_REJECT = 'vendor_reject', 'Vendor Rejected'
+    VENDOR_APP_APPROVE = 'vendor_app_approve', 'Vendor Application Approved' # New
+    VENDOR_APP_REJECT = 'vendor_app_reject', 'Vendor Application Rejected' # New
     ORDER_UPDATE_STATUS = 'order_update_status', 'Order Status Updated'
+    DISPUTE_OPEN = 'dispute_open', 'Dispute Opened' # New
     DISPUTE_RESOLVE = 'dispute_resolve', 'Dispute Resolved'
     SETTINGS_CHANGE = 'settings_change', 'Global Settings Changed'
     FUNDS_FREEZE = 'funds_freeze', 'Funds Frozen'
@@ -149,17 +170,19 @@ class GlobalSettings(SingletonModel):
     site_name = models.CharField(max_length=100, default="Shadow Market")
     maintenance_mode = models.BooleanField(default=False, help_text="If True, puts the site into read-only mode for most users.")
     allow_new_registrations = models.BooleanField(default=True, help_text="Controls if new users can register.")
-    allow_new_vendors = models.BooleanField(default=True, help_text="Controls if users can apply to become vendors.")
+    allow_new_vendors = models.BooleanField(default=True, help_text="Controls if users can apply to become vendors (via the new application process).") # Updated help text
+    default_vendor_bond_usd = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal('1500.00'), validators=[MinValueValidator(0)], help_text="Default required vendor application bond amount in USD.")
 
     # Market Fees (Copied from removed definition)
     market_fee_percentage_xmr = models.DecimalField(max_digits=5, decimal_places=2, default=Decimal('4.0'), validators=[MinValueValidator(0), MaxValueValidator(100)], help_text="Market commission percentage for XMR sales (e.g., 4.0 means 4%).")
     market_fee_percentage_btc = models.DecimalField(max_digits=5, decimal_places=2, default=Decimal('4.0'), validators=[MinValueValidator(0), MaxValueValidator(100)], help_text="Market commission percentage for BTC sales.")
     market_fee_percentage_eth = models.DecimalField(max_digits=5, decimal_places=2, default=Decimal('4.5'), validators=[MinValueValidator(0), MaxValueValidator(100)], help_text="Market commission percentage for ETH sales.")
 
-    # Vendor Bonds (Copied from removed definition)
-    vendor_bond_xmr = models.DecimalField(max_digits=18, decimal_places=12, default=Decimal('5.0'), validators=[MinValueValidator(0)], help_text="Required vendor bond amount in XMR.")
-    vendor_bond_btc = models.DecimalField(max_digits=14, decimal_places=8, default=Decimal('0.05'), validators=[MinValueValidator(0)], help_text="Required vendor bond amount in BTC.")
-    vendor_bond_eth = models.DecimalField(max_digits=24, decimal_places=18, default=Decimal('1.0'), validators=[MinValueValidator(0)], help_text="Required vendor bond amount in ETH.")
+    # Vendor Bonds (LEGACY - Copied from removed definition - May be deprecated by VendorApplication)
+    # Consider removing these if vendor_bond_usd + VendorApplication is the sole mechanism now.
+    vendor_bond_xmr = models.DecimalField(max_digits=18, decimal_places=12, default=Decimal('5.0'), validators=[MinValueValidator(0)], help_text="LEGACY: Required vendor bond amount in XMR.")
+    vendor_bond_btc = models.DecimalField(max_digits=14, decimal_places=8, default=Decimal('0.05'), validators=[MinValueValidator(0)], help_text="LEGACY: Required vendor bond amount in BTC.")
+    vendor_bond_eth = models.DecimalField(max_digits=24, decimal_places=18, default=Decimal('1.0'), validators=[MinValueValidator(0)], help_text="LEGACY: Required vendor bond amount in ETH.")
 
     # Payment/Order Timing (Copied from removed definition)
     confirmations_needed_xmr = models.PositiveSmallIntegerField(default=10, validators=[MinValueValidator(1)], help_text="Required confirmations for XMR payments.")
@@ -180,6 +203,14 @@ class GlobalSettings(SingletonModel):
     canary_pgp_signature = models.TextField(blank=True, help_text="Detached PGP signature verifying the authenticity of (canary_content + canary_last_updated date string).")
     canary_signing_key_fingerprint = models.CharField(max_length=40, blank=True, null=True, validators=[RegexValidator(regex=r'^[0-9A-Fa-f]{40}$', message='Enter a valid 40-character PGP key fingerprint.')], help_text="The 40-character PGP key fingerprint of the key used to sign the canary.")
     canary_signing_key_url = models.URLField(max_length=512, blank=True, null=True, help_text="URL where the signing PGP public key can be reliably obtained.")
+
+    # --- NEW: Exchange Rate Fields ---
+    btc_usd_rate = models.DecimalField(max_digits=18, decimal_places=8, null=True, blank=True, help_text="Latest BTC to USD exchange rate.")
+    eth_usd_rate = models.DecimalField(max_digits=18, decimal_places=8, null=True, blank=True, help_text="Latest ETH to USD exchange rate.")
+    xmr_usd_rate = models.DecimalField(max_digits=18, decimal_places=8, null=True, blank=True, help_text="Latest XMR to USD exchange rate.")
+    usd_eur_rate = models.DecimalField(max_digits=18, decimal_places=8, null=True, blank=True, help_text="Latest USD to EUR exchange rate (optional, can be derived).")
+    rates_last_updated = models.DateTimeField(null=True, blank=True, help_text="Timestamp when exchange rates were last fetched and updated.")
+    # --- End Exchange Rate Fields ---
 
     # Timestamp inherited from SingletonModel or add manually if needed
     updated_at = models.DateTimeField(auto_now=True)
@@ -299,10 +330,10 @@ class User(AbstractBaseUser, PermissionsMixin):
 
     # Vendor Specific Fields
     vendor_level = models.PositiveSmallIntegerField(default=1, help_text="Legacy/Simple Vendor trust level (may be derived from reputation metrics).")
-    vendor_bond_paid = models.BooleanField(default=False, help_text="Indicates if the vendor bond has been paid and accepted.")
-    vendor_bond_amount_xmr = models.DecimalField(max_digits=18, decimal_places=12, null=True, blank=True, validators=[MinValueValidator(Decimal('0.0'))], help_text="Bond paid in XMR.")
-    vendor_bond_amount_btc = models.DecimalField(max_digits=14, decimal_places=8, null=True, blank=True, validators=[MinValueValidator(Decimal('0.0'))], help_text="Bond paid in BTC.")
-    vendor_bond_amount_eth = models.DecimalField(max_digits=24, decimal_places=18, null=True, blank=True, validators=[MinValueValidator(Decimal('0.0'))], help_text="Bond paid in ETH.")
+    vendor_bond_paid = models.BooleanField(default=False, help_text="Indicates if the vendor bond has been paid and accepted (LEGACY - check VendorApplication status).") # Updated help text
+    vendor_bond_amount_xmr = models.DecimalField(max_digits=18, decimal_places=12, null=True, blank=True, validators=[MinValueValidator(Decimal('0.0'))], help_text="LEGACY: Bond paid in XMR.")
+    vendor_bond_amount_btc = models.DecimalField(max_digits=14, decimal_places=8, null=True, blank=True, validators=[MinValueValidator(Decimal('0.0'))], help_text="LEGACY: Bond paid in BTC.")
+    vendor_bond_amount_eth = models.DecimalField(max_digits=24, decimal_places=18, null=True, blank=True, validators=[MinValueValidator(Decimal('0.0'))], help_text="LEGACY: Bond paid in ETH.")
     approved_vendor_since = models.DateTimeField(null=True, blank=True, help_text="Timestamp when the user was approved as a vendor.")
 
     # --- Denormalized Vendor Reputation Metrics ---
@@ -352,12 +383,12 @@ class User(AbstractBaseUser, PermissionsMixin):
         # Validate multi-sig contribution fields if provided
         if self.btc_multisig_pubkey:
             if not isinstance(self.btc_multisig_pubkey, str) or len(self.btc_multisig_pubkey) != 66 or not self.btc_multisig_pubkey.lower().startswith(('02', '03')):
-                raise ValidationError({'btc_multisig_pubkey': "Invalid compressed Bitcoin public key format (must be 66 hex chars starting with 02 or 03)."})
+                 raise ValidationError({'btc_multisig_pubkey': "Invalid compressed Bitcoin public key format (must be 66 hex chars starting with 02 or 03)."})
             try: bytes.fromhex(self.btc_multisig_pubkey)
             except ValueError: raise ValidationError({'btc_multisig_pubkey': "Bitcoin public key must be a valid hex string."})
         if self.xmr_multisig_info:
             if not isinstance(self.xmr_multisig_info, str) or len(self.xmr_multisig_info) < 100: # Arbitrary minimum length check
-                raise ValidationError({'xmr_multisig_info': "Monero multisig info appears too short or invalid."})
+                 raise ValidationError({'xmr_multisig_info': "Monero multisig info appears too short or invalid."})
             try: bytes.fromhex(self.xmr_multisig_info)
             except ValueError: raise ValidationError({'xmr_multisig_info': "Monero multisig info must be a valid hex string."})
 
@@ -494,7 +525,7 @@ class Product(models.Model):
         valid_currency_codes = Currency.values
         for code in accepted_currencies_list:
             if code not in valid_currency_codes:
-                raise ValidationError({'accepted_currencies': f"Invalid currency code '{code}' found."})
+                 raise ValidationError({'accepted_currencies': f"Invalid currency code '{code}' found."})
 
         has_at_least_one_price = False
         for currency_code in accepted_currencies_list:
@@ -507,7 +538,7 @@ class Product(models.Model):
                 # Check if price field exists but is None while currency is accepted
                 price_field_name = f'price_{currency_code.lower()}'
                 if getattr(self, price_field_name, 'missing') is None:
-                    logger.warning(f"Product {self.id or 'NEW'}: Currency {currency_code} is accepted but its price field ({price_field_name}) is None.")
+                     logger.warning(f"Product {self.id or 'NEW'}: Currency {currency_code} is accepted but its price field ({price_field_name}) is None.")
 
 
         # Check for consistency: if price field is set, currency must be accepted
@@ -525,13 +556,13 @@ class Product(models.Model):
         # Validate shipping options structure
         if self.shipping_options:
             if not isinstance(self.shipping_options, list):
-                raise ValidationError({'shipping_options': "Shipping options must be a list (JSON array)."})
+                 raise ValidationError({'shipping_options': "Shipping options must be a list (JSON array)."})
             for i, option in enumerate(self.shipping_options):
-                if not isinstance(option, dict):
-                        raise ValidationError({'shipping_options': f"Option at index {i} is not a valid JSON object."})
-                if 'name' not in option or not isinstance(option['name'], str) or not option['name'].strip():
-                        raise ValidationError({'shipping_options': f"Option at index {i} must have a non-empty 'name' string."})
-                # Optionally validate price keys exist and are numeric strings/numbers
+                 if not isinstance(option, dict):
+                       raise ValidationError({'shipping_options': f"Option at index {i} is not a valid JSON object."})
+                 if 'name' not in option or not isinstance(option['name'], str) or not option['name'].strip():
+                       raise ValidationError({'shipping_options': f"Option at index {i} must have a non-empty 'name' string."})
+                 # Optionally validate price keys exist and are numeric strings/numbers
 
 # --- Crypto Payment Tracking ---
 class CryptoPayment(models.Model):
@@ -583,13 +614,14 @@ class CryptoPayment(models.Model):
         if self.received_amount_native < 0: raise ValidationError({'received_amount_native': "Received amount cannot be negative."})
         # Logic checks (might belong in service layer depending on desired enforcement)
         if self.confirmations_received >= self.confirmations_needed and not self.is_confirmed:
-                 if self.received_amount_native >= self.expected_amount_native:
-                     logger.warning(f"Payment {self.id}: Confs received >= needed and amount sufficient, but is_confirmed=False. Should be confirmed.")
-                 else:
-                     logger.info(f"Payment {self.id}: Confs received >= needed but amount insufficient ({self.received_amount_native} < {self.expected_amount_native}), is_confirmed=False (Correct).")
+                      if self.received_amount_native >= self.expected_amount_native:
+                           logger.warning(f"Payment {self.id}: Confs received >= needed and amount sufficient, but is_confirmed=False. Should be confirmed.")
+                      else:
+                           logger.info(f"Payment {self.id}: Confs received >= needed but amount insufficient ({self.received_amount_native} < {self.expected_amount_native}), is_confirmed=False (Correct).")
         if self.is_confirmed and self.received_amount_native < self.expected_amount_native:
-                 logger.warning(f"Payment {self.id}: is_confirmed=True but received amount ({self.received_amount_native}) is less than expected ({self.expected_amount_native}). Potential issue.")
-
+                      logger.warning(f"Payment {self.id}: is_confirmed=True but received amount ({self.received_amount_native}) is less than expected ({self.expected_amount_native}). Potential issue.")
+                      # backend/store/models.py
+# (Continued from previous response...)
 
 # --- Order ---
 class Order(models.Model):
@@ -638,6 +670,16 @@ class Order(models.Model):
     # Escrow Details
     escrow_type = models.CharField(max_length=10, choices=EscrowType.choices, default=EscrowType.MULTISIG, db_index=True, help_text="The type of escrow mechanism used for this order.")
 
+    # --- NEW: Simple Escrow Field ---
+    simple_escrow_deposit_address = models.CharField(
+        max_length=255, # Max length for various address types
+        null=True, blank=True,
+        unique=True, # Ensure unique address per simple escrow order
+        db_index=True,
+        help_text="[Basic Escrow Only] Unique market-controlled deposit address generated for this order."
+    )
+    # --- End Simple Escrow Field ---
+
     # Multi-Sig Escrow Fields
     xmr_multisig_wallet_name = models.CharField(max_length=100, null=True, blank=True, unique=True, help_text="[Multisig Only] Unique identifier/name for the Monero multisig setup.")
     btc_redeem_script = models.TextField(null=True, blank=True, help_text="[Multisig Only] Hex-encoded Bitcoin P2WSH redeem script.")
@@ -669,12 +711,9 @@ class Order(models.Model):
     paid_at = models.DateTimeField(null=True, blank=True, help_text="Timestamp when payment was confirmed.")
     shipped_at = models.DateTimeField(null=True, blank=True, help_text="Timestamp when order was marked shipped.")
     finalized_at = models.DateTimeField(null=True, blank=True, help_text="Timestamp when order was finalized (funds released).")
-    disputed_at = models.DateTimeField(null=True, blank=True, help_text="Timestamp when dispute was opened.")
-    dispute_resolved_at = models.DateTimeField(null=True, blank=True, help_text="Timestamp when dispute was resolved.")
-    # Optional: Fields to store who resolved dispute, resolution notes etc.
-    dispute_resolved_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name='resolved_disputes', limit_choices_to={'is_staff': True})
-    dispute_resolution_notes = models.TextField(blank=True, null=True)
-    dispute_buyer_percent = models.PositiveSmallIntegerField(null=True, blank=True, validators=[MaxValueValidator(100)])
+    disputed_at = models.DateTimeField(null=True, blank=True, help_text="Timestamp when dispute was opened.") # Timestamp for when order moved TO disputed state
+    # Note: dispute_resolved_at field moved to the Dispute model
+    # Optional: Fields to store who resolved dispute, resolution notes etc. moved to Dispute model
 
     class Meta:
         verbose_name = "Order"
@@ -691,6 +730,7 @@ class Order(models.Model):
             models.Index(fields=['selected_currency', 'status']),
             models.Index(fields=['escrow_type', 'status']),
             models.Index(fields=['release_tx_broadcast_hash']),
+            models.Index(fields=['simple_escrow_deposit_address']), # Added index
         ]
 
     def __str__(self):
@@ -720,15 +760,44 @@ class Order(models.Model):
                  # This shouldn't happen if FK constraints are enforced, but handle defensively
                  raise ValidationError({'product': f"Selected product (ID: {self.product_id}) does not exist."})
 
-        # Check consistency of escrow type and multisig fields
+        # --- NEW: Validate consistency between escrow_type and fields ---
         is_multisig = self.escrow_type == EscrowType.MULTISIG
+        is_basic = self.escrow_type == EscrowType.BASIC
+
         multisig_fields_present = any([
             self.xmr_multisig_wallet_name, self.btc_redeem_script, self.btc_escrow_address,
             self.eth_multisig_owner_buyer, self.eth_multisig_owner_vendor,
-            self.eth_multisig_owner_market, self.eth_escrow_contract_address
+            self.eth_multisig_owner_market, self.eth_escrow_contract_address,
+            self.release_signature_buyer, self.release_signature_vendor # Added signature fields
         ])
-        if not is_multisig and multisig_fields_present:
-             raise ValidationError("Multisig-specific fields (e.g., btc_redeem_script, xmr_multisig_wallet_name) should only be populated if Escrow Type is 'Multi-Signature'.")
+
+        if is_basic:
+            if multisig_fields_present:
+                raise ValidationError("Multi-signature specific fields (e.g., btc_redeem_script, xmr_multisig_wallet_name, release_signatures) must be empty for Basic Escrow.")
+            if not self.simple_escrow_deposit_address:
+                 # Allow saving initially without address, but maybe log a warning or enforce later?
+                 logger.warning(f"Order {self.id or 'NEW'} is Basic Escrow but 'simple_escrow_deposit_address' is not yet set.")
+            # Validate the simple address format if set
+            if self.simple_escrow_deposit_address and self.selected_currency:
+                 try:
+                     if self.selected_currency == Currency.XMR: validate_monero_address(self.simple_escrow_deposit_address)
+                     elif self.selected_currency == Currency.BTC: validate_bitcoin_address(self.simple_escrow_deposit_address)
+                     elif self.selected_currency == Currency.ETH: validate_ethereum_address(self.simple_escrow_deposit_address)
+                 except ValidationError as e: raise ValidationError({'simple_escrow_deposit_address': e.message}) from e
+
+        elif is_multisig:
+            if self.simple_escrow_deposit_address:
+                raise ValidationError("'simple_escrow_deposit_address' must be empty for Multi-Signature Escrow.")
+            # Depending on currency, specific multisig fields might be required here
+            # Example (needs refinement based on actual required fields per currency):
+            # if self.selected_currency == Currency.BTC and not self.btc_escrow_address:
+            #     logger.warning(f"Order {self.id or 'NEW'} is Multisig BTC but btc_escrow_address is missing.")
+            # elif self.selected_currency == Currency.XMR and not self.xmr_multisig_wallet_name:
+            #      logger.warning(f"Order {self.id or 'NEW'} is Multisig XMR but xmr_multisig_wallet_name is missing.")
+        else:
+             # Should not happen if choices are enforced
+             raise ValidationError(f"Invalid escrow_type: {self.escrow_type}")
+        # --- End NEW Validation ---
 
         # Validate calculated total price consistency only if relevant fields are present
         # Note: This calculation runs *before* save sets the final total, so it checks against the *previous* value if editing.
@@ -814,9 +883,9 @@ class Feedback(models.Model):
                 if not self.reviewer_id: self.reviewer = order_instance.buyer # Set instance, not just ID
                 if not self.recipient_id: self.recipient = order_instance.vendor # Set instance, not just ID
             except Order.DoesNotExist:
-                logger.error(f"Feedback save failed: Cannot populate reviewer/recipient as Order ID {self.order_id} not found.")
-                # Depending on requirements, either raise or allow save if reviewer/recipient were somehow set manually
-                # raise ValidationError("Cannot save feedback: Associated order not found.")
+                 logger.error(f"Feedback save failed: Cannot populate reviewer/recipient as Order ID {self.order_id} not found.")
+                 # Depending on requirements, either raise or allow save if reviewer/recipient were somehow set manually
+                 # raise ValidationError("Cannot save feedback: Associated order not found.")
         elif not self.order_id and (not self.reviewer_id or not self.recipient_id):
                  # Feedback must be linked to an order OR have reviewer/recipient set directly
                  raise ValidationError("Feedback must be associated with an order OR have both reviewer and recipient explicitly set.")
@@ -856,10 +925,93 @@ class Feedback(models.Model):
                 Order.StatusChoices.DISPUTE_RESOLVED
             ]
             if order_instance.status not in allowed_statuses_for_feedback:
-                logger.info(f"Validation check: Feedback attempted for order {self.order_id} status '{order_instance.status}'. Allowed: {allowed_statuses_for_feedback}")
-                # Uncomment the line below to strictly enforce this rule
-                # raise ValidationError(f"Feedback can only be submitted for orders that are Finalized or have a Dispute Resolved (current status: {order_instance.get_status_display()}).")
+                 logger.info(f"Validation check: Feedback attempted for order {self.order_id} status '{order_instance.status}'. Allowed: {allowed_statuses_for_feedback}")
+                 # Uncomment the line below to strictly enforce this rule
+                 # raise ValidationError(f"Feedback can only be submitted for orders that are Finalized or have a Dispute Resolved (current status: {order_instance.get_status_display()}).")
 
+# --- NEW: Dispute Model ---
+class Dispute(models.Model):
+    """ Represents a dispute opened for an order. """
+
+    class StatusChoices(models.TextChoices):
+        OPEN = 'open', _('Open')
+        UNDER_REVIEW = 'under_review', _('Under Review')
+        RESOLVED = 'resolved', _('Resolved')
+        # CLOSED = 'closed', _('Closed') # Maybe resolved implies closed?
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    order = models.OneToOneField(
+        Order,
+        on_delete=models.CASCADE, # If order deleted, dispute goes too
+        related_name='dispute', # Allows accessing dispute via order.dispute
+        help_text=_("The order being disputed.")
+    )
+    requester = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.PROTECT, # Keep user record even if they requested dispute
+        related_name='disputes_opened',
+        help_text=_("The user (usually buyer) who opened the dispute.")
+    )
+    reason = models.TextField(
+        help_text=_("Reason provided by the requester for opening the dispute.")
+    )
+    status = models.CharField(
+        max_length=20,
+        choices=StatusChoices.choices,
+        default=StatusChoices.OPEN,
+        db_index=True,
+        help_text=_("The current status of the dispute.")
+    )
+    resolved_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True, blank=True,
+        on_delete=models.SET_NULL,
+        related_name='disputes_resolved',
+        limit_choices_to={'is_staff': True},
+        help_text=_("The staff member who resolved the dispute.")
+    )
+    resolution_notes = models.TextField(
+        blank=True, null=True,
+        help_text=_("Notes explaining the resolution decision.")
+    )
+    resolved_at = models.DateTimeField(
+        null=True, blank=True,
+        help_text=_("Timestamp when the dispute was resolved.")
+    )
+    # Store the percentage outcome as Decimal for precision
+    buyer_percentage = models.DecimalField(
+        max_digits=5, decimal_places=2, # Allows 0.00 to 100.00
+        null=True, blank=True,
+        validators=[MinValueValidator(Decimal('0.0')), MaxValueValidator(Decimal('100.0'))],
+        help_text=_("Percentage of escrow released to buyer as part of resolution (0-100).")
+    )
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = _('Dispute')
+        verbose_name_plural = _('Disputes')
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['order']), # Implied by OneToOne? Check DB. Kept for clarity.
+            models.Index(fields=['requester', 'status']),
+            models.Index(fields=['status', 'created_at']),
+            models.Index(fields=['resolved_by']),
+        ]
+
+    def __str__(self):
+        order_id_str = getattr(self.order, 'id', 'N/A') if self.order else 'N/A'
+        return f"Dispute for Order {order_id_str} [{self.get_status_display()}]"
+
+    def clean(self):
+        super().clean()
+        # Ensure requester is buyer if order is linked?
+        if self.order_id and self.requester_id:
+            order_buyer_id = Order.objects.filter(pk=self.order_id).values_list('buyer_id', flat=True).first()
+            if order_buyer_id and self.requester_id != order_buyer_id:
+                # Allow staff to open maybe? Or just enforce buyer opens?
+                logger.warning(f"Dispute {self.id} opened by user {self.requester_id}, but order buyer is {order_buyer_id}.")
+                # raise ValidationError("Dispute requester must be the buyer of the associated order.")
 
 # --- Support Ticket / Encrypted Message System ---
 class SupportTicket(models.Model):
@@ -983,5 +1135,114 @@ class WebAuthnCredential(models.Model):
         cred_id_str = str(self.credential_id_b64) if self.credential_id_b64 else ""
         cred_id_short = (cred_id_str[:10] + "...") if len(cred_id_str) > 13 else cred_id_str
         return f"WebAuthn Credential for {user_repr}{nickname_part} (ID: {cred_id_short})"
+
+
+# --- NEW: Vendor Application Model ---
+class VendorApplication(models.Model):
+    """Tracks the process for a user applying to become a vendor and paying the bond."""
+
+    class StatusChoices(models.TextChoices):
+        PENDING_BOND = 'pending_bond', _('Pending Bond Payment')
+        PENDING_REVIEW = 'pending_review', _('Pending Review')
+        APPROVED = 'approved', _('Approved')
+        REJECTED = 'rejected', _('Rejected')
+        CANCELLED = 'cancelled', _('Cancelled') # Optional: If user cancels or it expires
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    user = models.OneToOneField(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='vendor_application',
+        help_text=_("The user applying to become a vendor.")
+    )
+    status = models.CharField(
+        max_length=20,
+        choices=StatusChoices.choices,
+        default=StatusChoices.PENDING_BOND,
+        db_index=True,
+        help_text=_("The current status of the vendor application.")
+    )
+    bond_currency = models.CharField(
+        max_length=10,
+        choices=Currency.choices, # Use existing crypto choices
+        help_text=_("The cryptocurrency chosen for the bond payment.")
+    )
+    bond_amount_usd = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        default=Decimal('1500.00'), # Set default from GlobalSettings?
+        validators=[MinValueValidator(Decimal('0.0'))],
+        help_text=_("Required bond amount in USD equivalent at time of application.")
+    )
+    bond_amount_crypto = models.DecimalField(
+        max_digits=24, # Sufficient for various crypto decimal places
+        decimal_places=18, # Sufficient for ETH wei, adjust if needed
+        validators=[MinValueValidator(Decimal('0.0'))],
+        help_text=_("Required bond amount calculated in the chosen cryptocurrency.")
+    )
+    bond_payment_address = models.CharField(
+        max_length=255,
+        unique=True, # Ensure each application gets a unique address
+        blank=True, null=True, # Address generated after creation
+        db_index=True,
+        help_text=_("The unique cryptocurrency address generated for this bond payment.")
+    )
+    received_amount_crypto_atomic = models.DecimalField(
+        max_digits=36, # To store atomic units (sats, piconero, wei)
+        decimal_places=0,
+        default=Decimal('0'),
+        validators=[MinValueValidator(Decimal('0'))],
+        help_text=_("Total amount received for the bond in the smallest atomic unit of the chosen currency.")
+    )
+    payment_txids = models.JSONField(
+        default=list,
+        blank=True,
+        help_text=_("List of transaction IDs contributing to the bond payment.")
+    )
+    rejection_reason = models.TextField(
+        blank=True,
+        null=True,
+        help_text=_("Reason provided by admin if the application is rejected.")
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    # Optional: Add an expiry field for the payment window?
+
+    class Meta:
+        verbose_name = _('Vendor Application')
+        verbose_name_plural = _('Vendor Applications')
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['user']), # Implied by OneToOne? Check DB. Kept for clarity.
+            models.Index(fields=['status', 'created_at']),
+            models.Index(fields=['bond_currency', 'status']),
+            models.Index(fields=['bond_payment_address']), # Index for quick lookup during payment checks
+        ]
+
+    def __str__(self):
+        user_repr = self.user.username if hasattr(self.user, 'username') else f"User ID {self.user_id}"
+        return f"Vendor Application for {user_repr} [{self.get_status_display()}]"
+
+    def clean(self):
+        super().clean()
+        # Check if user is already a vendor
+        if self.user_id: # Check if user is set
+             # Access user instance safely
+             user_instance = getattr(self, 'user', None) or User.objects.filter(pk=self.user_id).first()
+             if user_instance and user_instance.is_vendor:
+                  raise ValidationError(_("This user is already a vendor."))
+        # Ensure calculated crypto amount is positive if set
+        if self.bond_amount_crypto is not None and self.bond_amount_crypto <= 0:
+             raise ValidationError({'bond_amount_crypto': _("Calculated bond amount must be positive.")})
+        # Ensure received amount is not negative
+        if self.received_amount_crypto_atomic is not None and self.received_amount_crypto_atomic < 0:
+             raise ValidationError({'received_amount_crypto_atomic': _("Received amount cannot be negative.")})
+        # Validate payment address format based on currency (if address is set)
+        if self.bond_payment_address and self.bond_currency:
+            try:
+                if self.bond_currency == Currency.XMR: validate_monero_address(self.bond_payment_address)
+                elif self.bond_currency == Currency.BTC: validate_bitcoin_address(self.bond_payment_address)
+                elif self.bond_currency == Currency.ETH: validate_ethereum_address(self.bond_payment_address)
+            except ValidationError as e: raise ValidationError({'bond_payment_address': e.message}) from e
 
 # --- END OF FILE ---

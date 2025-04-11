@@ -1,0 +1,53 @@
+{% extends 'adminpanel/admin_base.html' %}
+{% load static %} {# Might need static later, good practice to include #}
+
+{% block title %}{{ page_title|default:"Pending Vendor Applications" }}{% endblock %}
+
+{% block content %}
+<h1>{{ page_title|default:"Pending Vendor Applications" }}</h1>
+
+{% if applications %}
+    <p>The following vendor applications have had their bond payment confirmed and are awaiting review.</p>
+    <table>
+        <thead>
+            <tr>
+                <th>Applicant</th>
+                <th>Application Date</th>
+                <th>Bond Paid (BTC)</th> {# Assuming BTC only for now based on project state #}
+                <th>Status</th>
+                <th>Actions</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for app in applications %}
+            <tr>
+                <td><a href="{% url 'adminpanel:user_detail' app.user.id %}">{{ app.user.username }}</a></td>
+                <td>{{ app.created_at|date:"Y-m-d H:i" }}</td>
+                <td>
+                    {% if app.bond_amount_crypto %}
+                        {{ app.bond_amount_crypto }} {{ app.bond_currency_chosen }}
+                    {% else %}
+                        N/A
+                    {% endif %}
+                    {# Optionally display TXID snippet if useful in list view #}
+                    {% if app.bond_paid_txid %}
+                        <br><small>TXID: {{ app.bond_paid_txid|truncatechars:10 }}...</small>
+                    {% endif %}
+                </td>
+                <td><span class="status-{{ app.status }}">{{ app.get_status_display }}</span></td> {# Add CSS for status if needed #}
+                <td>
+                    <a href="{% url 'adminpanel:review_vendor_application' app.id %}" class="button secondary">Review</a>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+{% else %}
+    <p>There are no vendor applications currently pending review.</p>
+{% endif %}
+
+<p style="margin-top: 2rem;">
+    <a href="{% url 'adminpanel:dashboard' %}" class="button secondary">Back to Dashboard</a>
+</p>
+
+{% endblock %}

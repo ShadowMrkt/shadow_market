@@ -1,0 +1,120 @@
+{% extends 'adminpanel/admin_base.html' %}
+{% load static %}
+
+{% block title %}{{ page_title|default:"Review Vendor Application" }}{% endblock %}
+
+{% block content %}
+<h1>{{ page_title|default:"Review Vendor Application" }}</h1>
+
+<div class="application-details" style="margin-bottom: 2rem; padding: 1rem; background: #f9f9f9; border: 1px solid #eee; border-radius: 5px;">
+    <h2>Application Details</h2>
+    <p><strong>Applicant:</strong> <a href="{% url 'adminpanel:user_detail' application.user.id %}">{{ application.user.username }}</a></p>
+    <p><strong>Application ID:</strong> {{ application.id }}</p>
+    <p><strong>Status:</strong> <span class="status-{{ application.status }}">{{ application.get_status_display }}</span></p>
+    <p><strong>Application Date:</strong> {{ application.created_at|date:"Y-m-d H:i" }}</p>
+    <p><strong>Bond Currency:</strong> {{ application.bond_currency_chosen }}</p>
+    <p><strong>Bond Amount Paid (Crypto):</strong> {{ application.bond_amount_crypto }}</p>
+    <p><strong>Bond Paid At:</strong> {{ application.paid_at|date:"Y-m-d H:i" }}</p>
+    <p><strong>Bond Payment TXID:</strong>
+        {% if application.bond_paid_txid %}
+            <code>{{ application.bond_paid_txid }}</code>
+            {# Basic BTC Block Explorer Link Example (adjust URL if needed) #}
+            {% if application.bond_currency_chosen == 'BTC' %}
+             (<a href="https://mempool.space/tx/{{ application.bond_paid_txid }}" target="_blank" rel="noopener noreferrer">View on Explorer</a>)
+            {% endif %}
+        {% else %}
+            N/A
+        {% endif %}
+    </p>
+    <p><strong>Application Text:</strong></p>
+    <div style="background: #fff; border: 1px solid #ccc; padding: 10px; border-radius: 4px; white-space: pre-wrap; word-wrap: break-word; max-height: 300px; overflow-y: auto;">
+        {{ application.application_text|escape|linebreaksbr }}
+    </div>
+    {% if application.notes %}
+        <p><strong>Admin Notes:</strong></p>
+        <div style="background: #fff3cd; border: 1px solid #ffeeba; padding: 10px; border-radius: 4px; white-space: pre-wrap; word-wrap: break-word;">
+            {{ application.notes|escape|linebreaksbr }}
+        </div>
+    {% endif %}
+</div>
+
+<hr style="margin: 2rem 0;">
+
+{% if application.status == 'pending_review' %}
+    {% if is_pgp_authenticated %}
+        <h2>Actions</h2>
+        <div style="display: flex; gap: 2rem; flex-wrap: wrap;">
+
+            {# --- Approval Form --- #}
+            <div style="flex: 1; min-width: 300px;">
+                <h3>Approve Application</h3>
+                <form method="post" action="{% url 'adminpanel:review_vendor_application' application.id %}">
+                    {% csrf_token %}
+                    <p>
+                        <label for="{{ approve_form.reason.id_for_label }}">Approval Notes (Optional):</label>
+                        {{ approve_form.reason }}
+                        {% if approve_form.reason.errors %}
+                            <div class="text-danger">{{ approve_form.reason.errors }}</div>
+                        {% endif %}
+                    </p>
+                    {{ approve_form.non_field_errors }}
+                    <button type="submit" name="approve_submit" class="button primary">Approve Application</button>
+                </form>
+            </div>
+
+            {# --- Rejection Form --- #}
+            <div style="flex: 1; min-width: 300px;">
+                <h3>Reject Application</h3>
+                <form method="post" action="{% url 'adminpanel:review_vendor_application' application.id %}">
+                    {% csrf_token %}
+                    <p>
+                        <label for="{{ reject_form.reason.id_for_label }}">Rejection Reason (Required):</label>
+                        {{ reject_form.reason }}
+                        {% if reject_form.reason.errors %}
+                            <div class="text-danger">{{ reject_form.reason.errors }}</div>
+                        {% endif %}
+                    </p>
+                    {{ reject_form.non_field_errors }}
+                     {% if reject_form.errors %}
+                        <div class="text-danger" style="margin-bottom: 1rem;">Please correct the errors above.</div>
+                    {% endif %}
+                    <button type="submit" name="reject_submit" class="button danger">Reject Application</button>
+                </form>
+                 <p style="margin-top: 1rem; font-size: 0.9em; color: #666;">Note: Rejecting the application here does not automatically return or forfeit the bond. This must be handled separately if required.</p>
+            </div>
+        </div>
+    {% else %}
+        {# --- PGP Auth Required Message --- #}
+        <div class="messages">
+            <li class="warning">
+                <strong>PGP Authentication Required:</strong> You must have an active PGP-authenticated session to approve or reject this application.
+                {# Optional: Add a link to your PGP authentication mechanism if you have one #}
+                {# <a href="{% url 'pgp_auth_url_name' %}?next={{ request.path }}">Re-authenticate</a> #}
+            </li>
+        </div>
+    {% endif %}
+{% else %}
+    {# --- Application Not Pending Review --- #}
+     <div class="messages">
+        <li class="info">
+            This application is no longer pending review (Current Status: {{ application.get_status_display }}). No further actions can be taken here.
+        </li>
+    </div>
+    {% if application.reviewed_by %}
+    <p>Reviewed by: {{ application.reviewed_by.username }} on {{ application.reviewed_at|date:"Y-m-d H:i" }}</p>
+        {% if application.status == 'rejected' and application.rejection_reason %}
+        <p><strong>Rejection Reason Given:</strong></p>
+        <div style="background: #f8d7da; border: 1px solid #f5c6cb; padding: 10px; border-radius: 4px;">
+            {{ application.rejection_reason|escape|linebreaksbr }}
+        </div>
+        {% endif %}
+    {% endif %}
+
+{% endif %}
+
+
+<p style="margin-top: 3rem;">
+    <a href="{% url 'adminpanel:vendor_application_list' %}" class="button secondary">Back to Pending List</a>
+</p>
+
+{% endblock %}

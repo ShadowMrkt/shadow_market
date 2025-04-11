@@ -1,5 +1,7 @@
 // frontend/pages/orders/[orderId].js
 // --- REVISION HISTORY ---
+// 2025-04-09: Rev 3 - Removed console.error calls from error handling blocks.
+// 2025-04-09: Rev 2 - Removed console.log from fetchOrderDetails.
 // 2025-04-07: Rev 1 - Merged duplicate components, refactored to CSS Modules, Decimal.js, constants, cleaned up action/state logic.
 //           - Removed duplicate OrderDetail component. Renamed OrderDetailPage -> OrderDetail.
 //           - Replaced inline styles with CSS Module import (OrderDetail.module.css).
@@ -29,7 +31,7 @@ import Layout from '../../components/Layout';
 import { CURRENCY_SYMBOLS, ORDER_STATUS } from '../../utils/constants'; // TODO: Ensure ORDER_STATUS map exists in constants.js
 import { formatPrice, formatDate } from '../../utils/formatters'; // TODO: Ensure these exist and use Decimal.js for price
 import LoadingSpinner from '../../components/LoadingSpinner';
-import FormError from '../../components/FormError';
+import FormError from '../../components/FormError'; // Keep import for potential use elsewhere
 import { showErrorToast, showSuccessToast, showInfoToast } from '../../utils/notifications';
 import styles from './OrderDetail.module.css'; // Import CSS Module
 
@@ -82,7 +84,7 @@ export default function OrderDetail() {
         // Don't clear previous order data immediately if doing a background refresh (showLoading=false)
 
         try {
-            console.log(`Workspaceing order details for ${orderId}...`);
+            // console.log(`Workspaceing order details for ${orderId}...`); // REV 2: Removed console.log
             const data = await getOrderDetails(orderId);
             setOrder(data);
 
@@ -98,7 +100,7 @@ export default function OrderDetail() {
                  throw new Error("Order not found.");
             }
         } catch (err) {
-            console.error(`Failed to fetch order ${orderId}:`, err);
+            // console.error(`Failed to fetch order ${orderId}:`, err); // REV 3: Removed console.error
             const errorMessage = err.response?.data?.detail || err.message || `Could not load order ${orderId}.`;
             setError(errorMessage);
             showErrorToast(`Error loading order: ${errorMessage}`);
@@ -140,7 +142,8 @@ export default function OrderDetail() {
         setActionLoading(true);
         try {
             const result = await apiCall();
-            setOrder(result); // Optimistically update UI, or rely on re-fetch
+            // Don't necessarily setOrder(result) here if API doesn't return full updated order
+            // Rely on the refetch below
             showSuccessToast(successMessage);
             if (options.clearDisputeForm) {
                 setDisputeReason('');
@@ -149,7 +152,7 @@ export default function OrderDetail() {
             // Re-fetch in background to ensure consistency
             await fetchOrderDetails(false); // Refresh without main loading spinner
         } catch (err) {
-            console.error(`${actionName} failed:`, err);
+            // console.error(`${actionName} failed:`, err); // REV 3: Removed console.error
             const message = err.response?.data?.detail || err.message || `Failed to ${actionName}.`;
             showErrorToast(message);
             // Optionally set a local error state if needed beyond toast
@@ -204,7 +207,7 @@ export default function OrderDetail() {
                 showErrorToast(errorMsg);
             }
         } catch (err) {
-            console.error("Prepare release error:", err);
+            // console.error("Prepare release error:", err); // REV 3: Removed console.error
             const message = err.response?.data?.detail || err.message || "An error occurred while preparing the release transaction.";
             setPrepareTxError(message);
             showErrorToast(message);
@@ -245,7 +248,7 @@ export default function OrderDetail() {
             // Refresh order state
             await fetchOrderDetails(false); // Refresh without main loading spinner
         } catch (err) {
-            console.error("Sign release error:", err);
+            // console.error("Sign release error:", err); // REV 3: Removed console.error
             const message = err.response?.data?.detail || err.message || "An error occurred while submitting the signature.";
             setSignError(message);
             showErrorToast(message);
@@ -270,11 +273,12 @@ export default function OrderDetail() {
     }
     // Show main error if occurred during load or if PGP required but missing
     if (error) {
+        // Use the global error message style directly for page-level errors
         return <Layout><div className={styles.container}><div className="error-message">{error}</div></div></Layout>;
     }
     // Final check if order is still null after loading attempt (e.g., 404)
     if (!order) {
-        return <Layout><div className={styles.container}><p>Order not found or could not be loaded.</p></div></Layout>;
+        return <Layout><div className={styles.container}><p>Order not found or could not be loaded.</p></div></Layout>; // Fallback
     }
 
     // Derived constants for rendering logic
@@ -444,7 +448,8 @@ export default function OrderDetail() {
                                             >
                                                 {isSigning ? <LoadingSpinner size="small" /> : 'Prepare Release Transaction'}
                                             </button>
-                                            {prepareTxError && <FormError message={prepareTxError} className="mt-2" />}
+                                            {/* Use FormError for prepare errors */}
+                                            <FormError message={prepareTxError} className="mt-2" />
                                         </div>
                                     )}
 
@@ -460,7 +465,7 @@ export default function OrderDetail() {
                                                     value={unsignedTxData}
                                                     className={`form-textarea ${styles.codeBlock}`} // Use global + module styles
                                                 />
-                                                <button onClick={handleCopyData} className="button button-secondary mt-2">Copy Data</button>
+                                                <button type="button" onClick={handleCopyData} className="button button-secondary mt-2">Copy Data</button>
                                             </div>
 
                                             <form onSubmit={handleSignRelease}>
@@ -477,7 +482,8 @@ export default function OrderDetail() {
                                                     />
                                                     <small id="signatureHelp" className="form-help-text">Ensure you paste the complete signature data provided by your wallet.</small>
                                                 </div>
-                                                {signError && <FormError message={signError} />}
+                                                {/* Use FormError for signing errors */}
+                                                <FormError message={signError} />
                                                 <button
                                                     type="submit"
                                                     disabled={isSigning || !userSignatureInput || !isPgpAuthenticated}

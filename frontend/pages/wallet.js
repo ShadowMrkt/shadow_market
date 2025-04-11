@@ -1,5 +1,6 @@
 // frontend/pages/wallet.js
 // --- REVISION HISTORY ---
+// 2025-04-09: Rev 2 - Added placeholder isValidAddress function and integrated into handlePrepareWithdrawal validation.
 // 2025-04-07: Rev 1 - Applied global dark theme classes, used CSS Module, used shared formatters.
 //           - Removed inline styles object.
 //           - Applied global classes (.container, .card, .warning-message, .form-*, .button-*).
@@ -27,6 +28,26 @@ import styles from './Wallet.module.css'; // Import CSS Module for custom styles
 
 // Configure Decimal.js precision if needed locally for comparisons (global setting might suffice)
 // Decimal.set({ precision: 18 });
+
+// --- NEW: Placeholder Address Validation Function ---
+/**
+ * Placeholder function for crypto address validation.
+ * TODO: Replace this with actual validation logic (regex or library).
+ * @param {string} address - The address string to validate.
+ * @param {string} currencyCode - The currency code (e.g., 'BTC', 'XMR', 'ETH').
+ * @returns {boolean} True if the address format is potentially valid, false otherwise.
+ */
+const isValidAddress = (address, currencyCode) => {
+    if (!address) return false;
+    console.warn(`isValidAddress: Using placeholder validation for ${currencyCode}. Implement real checks.`);
+    // Example: Basic non-empty check (replace with real logic)
+    // if (currencyCode === 'BTC') return /^(1|3|bc1)[a-zA-Z0-9]{25,34}$/.test(address); // Basic BTC regex example
+    // if (currencyCode === 'ETH') return /^0x[a-fA-F0-9]{40}$/.test(address); // Basic ETH regex example
+    // if (currencyCode === 'XMR') return /^(4|8)[0-9A-Za-z]{94,105}$/.test(address); // Basic XMR regex example
+    return address.length > 10; // Very basic placeholder
+};
+// --- END NEW ---
+
 
 export default function WalletPage() {
     const { user, isPgpAuthenticated, isLoading: authIsLoading } = useAuth();
@@ -95,6 +116,9 @@ export default function WalletPage() {
         }
 
         const availableBalance = balances?.[currency]?.available || '0';
+        const trimmedAddress = address.trim(); // Trim address early
+
+        // --- Client-side Validation ---
         try {
             const requestedAmount = new Decimal(amount);
             const available = new Decimal(availableBalance);
@@ -105,16 +129,22 @@ export default function WalletPage() {
                  // Use shared formatter for display in error
                  setWithdrawalError(`Insufficient available funds. Available: ${formatCurrency(available, currency)}`); return;
             }
-            if (!address.trim()) { setWithdrawalError("Destination address is required."); return; }
-             // TODO: Implement client-side address format validation here (regex or library like 'cryptocurrency-address-validator')
-             // e.g., if (!isValidAddress(address.trim(), currency)) { setWithdrawalError('Invalid address format for ' + currency); return; }
+            if (!trimmedAddress) { setWithdrawalError("Destination address is required."); return; }
+
+            // --- Address Validation Check ---
+            if (!isValidAddress(trimmedAddress, currency)) {
+                setWithdrawalError(`Invalid address format for ${currency}. Please double-check.`);
+                return;
+            }
+            // --- End Address Validation Check ---
 
         } catch (decError) {
              setWithdrawalError("Invalid amount specified (must be a number)."); return;
         }
+        // --- End Client-side Validation ---
 
         setIsPreparing(true);
-        const prepData = { currency, amount: amount.toString(), address: address.trim() };
+        const prepData = { currency, amount: amount.toString(), address: trimmedAddress }; // Use trimmed address
 
         try {
             // SECURITY: Backend generates unique message including details + nonce
@@ -257,12 +287,12 @@ export default function WalletPage() {
                                  onAmountChange={(e) => setAmount(e.target.value)}
                                  address={address}
                                  onAddressChange={(e) => setAddress(e.target.value)}
+                                 onSubmit={handlePrepareWithdrawal} // Pass the handler
+                                 isLoading={isPreparing}
+                                 disabled={!isPgpAuthenticated} // Disable if not PGP authenticated
                                  balances={balances} // Pass balances for display/validation
-                                 disabled={isPreparing}
                              />
-                              <button type="submit" disabled={isPreparing} className={`button button-primary mt-3 ${ isPreparing ? 'disabled' : '' }`}>
-                                  {isPreparing ? <LoadingSpinner size="1em"/> : 'Prepare Withdrawal'}
-                              </button>
+                              {/* Button is now inside WithdrawalInputForm */}
                          </form>
                      )}
 
@@ -285,6 +315,7 @@ export default function WalletPage() {
                                  challengeText={pgpMessageToSign}
                                  signatureValue={withdrawalSignature}
                                  onSignatureChange={(e) => setWithdrawalSignature(e.target.value)}
+                                 username={user?.username} // Pass username for context
                                  disabled={isExecuting}
                                  challengeLabel="Message to Sign:"
                                  signatureLabel="Paste Signed Confirmation Message:"
@@ -304,7 +335,3 @@ export default function WalletPage() {
         </Layout>
     );
 }
-
-// TODO: Create Wallet.module.css for .sectionTitle, .balanceGrid, .balanceCard, .balance*, .hr, .balanceLocked, .stepIndicator, .pgpInstructions, .actionButtons.
-// TODO: Verify/Implement WithdrawalInputForm and PgpChallengeSigner components and their props.
-// TODO: Implement client-side address format validation.

@@ -122,11 +122,11 @@ try:
         }
     if 'handlers' not in LOGGING: LOGGING['handlers'] = {} # noqa: F405
     if 'console' not in LOGGING['handlers']: # noqa: F405
-         LOGGING['handlers']['console'] = { # noqa: F405
+          LOGGING['handlers']['console'] = { # noqa: F405
              "class": "logging.StreamHandler",
              "formatter": "simple",
              # "level": "DEBUG", # Will be set below
-         }
+          }
 
     # >>> FIX v1.0.2: Ensure console handler level is DEBUG <<<
     if 'console' in LOGGING['handlers']: # noqa: F405
@@ -164,6 +164,37 @@ except KeyError as e:
     warnings.warn(f"Could not configure development logging overrides. Missing key in LOGGING dict from base.py: {e}")
 except NameError:
     warnings.warn("Could not configure development logging overrides. 'LOGGING' dictionary not found (expected from base.py).")
+
+
+# === Market Wallet RPC Settings ===
+# Load from environment variables, providing defaults suitable for local dev.
+# NEVER commit real credentials here. Use environment variables or Vault.
+
+MARKET_BTC_RPC_USER = os.environ.get('MARKET_BTC_RPC_USER', 'dev_btc_user') # Default user for dev
+MARKET_BTC_RPC_PASSWORD = os.environ.get('MARKET_BTC_RPC_PASSWORD', 'dev_btc_pass') # Default pass for dev
+MARKET_BTC_RPC_HOST = os.environ.get('MARKET_BTC_RPC_HOST', '127.0.0.1') # Assumes wallet runs on localhost
+MARKET_BTC_RPC_PORT = os.environ.get('MARKET_BTC_RPC_PORT', '8332') # Default BTC mainnet RPC port
+
+MARKET_XMR_WALLET_RPC_USER = os.environ.get('MARKET_XMR_WALLET_RPC_USER', 'dev_xmr_user') # Default user for dev
+MARKET_XMR_WALLET_RPC_PASSWORD = os.environ.get('MARKET_XMR_WALLET_RPC_PASSWORD', 'dev_xmr_pass') # Default pass for dev
+MARKET_XMR_WALLET_RPC_HOST = os.environ.get('MARKET_XMR_WALLET_RPC_HOST', '127.0.0.1') # Assumes wallet runs on localhost
+MARKET_XMR_WALLET_RPC_PORT = os.environ.get('MARKET_XMR_WALLET_RPC_PORT', '18083') # Default XMR wallet RPC port
+
+MARKET_RPC_TIMEOUT = int(os.environ.get('MARKET_RPC_TIMEOUT', '30')) # Timeout in seconds
+
+# Construct the full URLs (optional here, could be done in the service)
+# Check if required components are present before constructing
+if MARKET_BTC_RPC_USER and MARKET_BTC_RPC_PASSWORD and MARKET_BTC_RPC_HOST and MARKET_BTC_RPC_PORT:
+    MARKET_BTC_WALLET_RPC_URL = f"http://{MARKET_BTC_RPC_USER}:{MARKET_BTC_RPC_PASSWORD}@{MARKET_BTC_RPC_HOST}:{MARKET_BTC_RPC_PORT}/"
+else:
+    MARKET_BTC_WALLET_RPC_URL = None
+    warnings.warn("MARKET_BTC_WALLET_RPC_URL could not be constructed. Check related environment variables/defaults.")
+
+if MARKET_XMR_WALLET_RPC_USER and MARKET_XMR_WALLET_RPC_PASSWORD and MARKET_XMR_WALLET_RPC_HOST and MARKET_XMR_WALLET_RPC_PORT:
+    MARKET_XMR_WALLET_RPC_URL = f"http://{MARKET_XMR_WALLET_RPC_USER}:{MARKET_XMR_WALLET_RPC_PASSWORD}@{MARKET_XMR_WALLET_RPC_HOST}:{MARKET_XMR_WALLET_RPC_PORT}/json_rpc"
+else:
+    MARKET_XMR_WALLET_RPC_URL = None
+    warnings.warn("MARKET_XMR_WALLET_RPC_URL could not be constructed. Check related environment variables/defaults.")
 
 
 # --- Django Debug Toolbar Configuration ---
@@ -290,7 +321,7 @@ print("*" * 60, file=sys.stderr)
 print("*" + " " * 58 + "*", file=sys.stderr)
 print("**** CAUTION: RUNNING IN DEVELOPMENT MODE (dev.py) ****", file=sys.stderr)
 print("**** DEBUG=True. Security settings relaxed for LOCAL  ****", file=sys.stderr)
-print("**** HTTP testing ONLY. Review warnings above.      ****", file=sys.stderr)
+print("**** HTTP testing ONLY. Review warnings above.       ****", file=sys.stderr)
 print("**** ****", file=sys.stderr)
 print("**** DO NOT use this configuration for staging,      ****", file=sys.stderr)
 print("**** production, or any environment with real data.  ****", file=sys.stderr)

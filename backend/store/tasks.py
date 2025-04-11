@@ -1,6 +1,21 @@
 # backend/store/tasks.py
 # --- Revision History ---
-# [Rev 1.0 - 2025-04-07]
+# [Rev 1.2 - 2025-04-10] Gemini
+#   - IMPLEMENTED: Detailed logic within `_perform_deposit_check` to handle:
+#     - Vendor Bond Payments: Fetches app, checks status/amount/confs, updates status to PENDING_REVIEW, logs details, notifies admin. Uses atomic units. Handles idempotency.
+#     - Order Payments: Fetches order/payment, checks status/amount/confs, updates order/payment status, credits ledger, notifies users. Uses atomic units. Handles idempotency.
+#   - ADDED: Assumed `VendorApplication` has `payment_txids` (List/JSON field), `received_amount_crypto_atomic`, `bond_paid_txid`, `bond_paid_confirmations`, `paid_at` fields.
+#   - UPDATED: Removed `amount_field` param from `_perform_deposit_check` calls; uses 'amount_atomic' from payment_info directly.
+#   - UPDATED: Dependency checks to include VendorApplication.
+#   - UPDATED: Logging for clarity.
+#   - ADDED: ATOMIC_FACTOR constant dictionary.
+# [Rev 1.1 - 2025-04-09] The Void
+#   - ADDED: `update_exchange_rates_task` to periodically fetch and store rates in GlobalSettings.
+#   - MODIFIED: Added placeholder logic and comments in `_perform_deposit_check` to handle
+#     potential VendorApplication bond payments (requires corresponding crypto service updates).
+#   - ADDED: Imports for VendorApplication, exchange_rate_service, notifications.services (optional).
+#   - UPDATED: Celery Beat schedule example comment.
+# [Rev 1.0 - 2025-04-07] The Void
 #   - Added Distributed Locking: Implemented Redis-based distributed locks for deposit check tasks
 #     (`_perform_deposit_check`) to prevent race conditions between concurrent workers processing
 #     the same currency. Requires `django-redis-lock` library.
@@ -20,41 +35,37 @@ Celery tasks for the store application.
 
 Includes tasks for:
 - Auto-finalizing shipped orders past their deadline.
-- Checking for new cryptocurrency deposits (XMR, BTC, ETH) and crediting user ledgers.
+- Checking for new cryptocurrency deposits (XMR, BTC, ETH) and processing Order payments or Vendor Bond payments.
 - Periodically updating vendor reputation metrics.
+- Periodically updating exchange rates.
 """
 
 import logging
 from datetime import timedelta
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal, InvalidOperation # Ensure Decimal is imported
 from functools import wraps
 from typing import Optional, Dict, Any, List
 
 from celery import shared_task, Task
-from celery.exceptions import Ignore # <<< CHANGE [Rev 1.0] Added Ignore for lock handling
+from celery.exceptions import Ignore
 from django.conf import settings
 from django.core.exceptions import ValidationError as DjangoValidationError
-from django.db import transaction, IntegrityError, DatabaseError # <<< CHANGE [Rev 1.0] Added DatabaseError for retry
+from django.db import transaction, IntegrityError, DatabaseError
 from django.utils import timezone
 
 # --- Third-Party Imports ---
-# Attempt to import redis_lock, provide guidance if missing
 try:
     import redis_lock
 except ImportError:
-    redis_lock = None # <<< CHANGE [Rev 1.0] Handle missing redis_lock gracefully initially
+    redis_lock = None
 
-# <<< CHANGE [Rev 1.0] Import common potentially transient errors for retries
-# Adjust these based on the actual exceptions raised by your crypto/DB libraries
 try:
-    import requests # Assuming services might use requests
+    import requests
     CONNECTION_ERRORS = (requests.exceptions.ConnectionError, requests.exceptions.Timeout)
 except ImportError:
-    CONNECTION_ERRORS = () # No requests library
+    CONNECTION_ERRORS = ()
 
-# Database errors that might be transient (adjust based on your DB engine)
-TRANSIENT_DB_ERRORS = (DatabaseError,) # Example, might need refinement (e.g., OperationalError for psycopg2)
-# <<< END CHANGE [Rev 1.0]
+TRANSIENT_DB_ERRORS = (DatabaseError,) # Add other relevant DB errors if needed
 
 # --- Constants ---
 CURRENCY_XMR = 'XMR'
@@ -63,10 +74,15 @@ CURRENCY_ETH = 'ETH'
 DEFAULT_SUPPORTED_CURRENCIES = [CURRENCY_XMR, CURRENCY_BTC, CURRENCY_ETH]
 
 LEDGER_TRANSACTION_TYPE_DEPOSIT = 'DEPOSIT'
+LEDGER_TRANSACTION_TYPE_ESCROW_FUND = 'ESCROW_FUND' # Example for order payment credit
 
 # Settings Keys
 SETTING_KEY_LAST_CHECKED_BLOCK_PATTERN = "last_checked_{currency}_height"
 SETTING_KEY_SUPPORTED_CURRENCIES = "SUPPORTED_CURRENCIES"
+# Example setting for confirmations needed per currency
+SETTING_BTC_CONFS_NEEDED = 'BITCOIN_CONFIRMATIONS_NEEDED'
+SETTING_XMR_CONFS_NEEDED = 'MONERO_CONFIRMATIONS_NEEDED'
+SETTING_ETH_CONFS_NEEDED = 'ETHEREUM_CONFIRMATIONS_NEEDED'
 
 # Task Configuration Defaults
 TASK_DEFAULT_TIME_LIMIT = 600   # 10 minutes
@@ -75,15 +91,26 @@ TASK_DEPOSIT_CHECK_TIME_LIMIT = 300 # 5 minutes
 TASK_DEPOSIT_CHECK_SOFT_TIME_LIMIT = 290
 TASK_REPUTATION_TIME_LIMIT = 1800 # 30 minutes
 TASK_REPUTATION_SOFT_TIME_LIMIT = 1780
+TASK_EXCHANGE_RATE_TIME_LIMIT = 120 # 2 minutes
+TASK_EXCHANGE_RATE_SOFT_TIME_LIMIT = 110
 TASK_RETRY_DELAY = 60 # Default delay in seconds for retries
 TASK_MAX_RETRIES = 3 # Default max retries
 
-# <<< CHANGE [Rev 1.0] Constants for Distributed Locking
+# Constants for Distributed Locking
 LOCK_ACQUIRE_TIMEOUT = 10 # Seconds to wait for lock acquisition
 LOCK_EXPIRY_BUFFER = 60 # Seconds buffer for lock expiry beyond soft time limit
 DEPOSIT_LOCK_EXPIRY = TASK_DEPOSIT_CHECK_SOFT_TIME_LIMIT + LOCK_EXPIRY_BUFFER
 DEPOSIT_LOCK_KEY_PATTERN = "lock_check_{currency}_deposits"
-# <<< END CHANGE [Rev 1.0]
+RATES_LOCK_EXPIRY = TASK_EXCHANGE_RATE_SOFT_TIME_LIMIT + LOCK_EXPIRY_BUFFER
+RATES_LOCK_KEY = "lock_update_exchange_rates"
+
+# Atomic Unit Factors (Crucial for comparing amounts)
+# Ensure these match the smallest unit handled by your crypto services/ledger
+ATOMIC_FACTOR = {
+    'BTC': Decimal('100000000'),          # Satoshis per BTC
+    'ETH': Decimal('1000000000000000000'), # Wei per ETH
+    'XMR': Decimal('1000000000000'),       # Piconeros per XMR
+}
 
 
 # --- Logging Setup ---
@@ -92,46 +119,70 @@ security_logger = logging.getLogger('django.security')
 
 # --- Import Application Modules ---
 try:
-    from store.models import CryptoPayment, Order, User, GlobalSettings
+    from store.models import (
+        CryptoPayment, Order, User, GlobalSettings, VendorApplication, Currency,
+        ORDER_STATUS_PENDING_PAYMENT, ORDER_STATUS_PAYMENT_CONFIRMED, # Order statuses
+        VENDOR_APP_STATUS_PENDING_BOND, VENDOR_APP_STATUS_PENDING_REVIEW, # App statuses
+        # Import other statuses if needed
+    )
     from ledger.models import LedgerTransaction
     from store.services import (
         monero_service, bitcoin_service, ethereum_service,
-        escrow_service, reputation_service
+        escrow_service, reputation_service, exchange_rate_service
     )
     from ledger import services as ledger_service
     from ledger.services import InsufficientFundsError
+    # Import notification service
+    from notifications import services as notification_service
 
     _required_services = {
         "monero_service": monero_service, "bitcoin_service": bitcoin_service,
         "ethereum_service": ethereum_service, "escrow_service": escrow_service,
         "reputation_service": reputation_service, "ledger_service": ledger_service,
+        "exchange_rate_service": exchange_rate_service,
+        "notification_service": notification_service, # Now required for app notifications
     }
     for name, service in _required_services.items():
         if service is None:
             raise ImportError(f"Service '{name}' is None or not imported correctly.")
 
+    MODELS_SERVICES_LOADED = True
 except ImportError as e:
     logger.critical(
         f"CRITICAL IMPORT ERROR in store/tasks.py: {e}. "
         f"Tasks depending on these imports will fail.",
         exc_info=True
     )
-    # Consider raising the error to prevent worker start if imports are critical
-    # raise e
+    MODELS_SERVICES_LOADED = False
+    # Define dummies if needed for syntax checks, but tasks won't run
+    class VendorApplication: StatusChoices = type('obj', (), {'PENDING_BOND': 'pb', 'PENDING_REVIEW': 'pr'})()
+    class Order: StatusChoices = type('obj', (), {'PENDING_PAYMENT': 'pp', 'PAYMENT_CONFIRMED': 'pc'})()
+    class CryptoPayment: pass
+    class GlobalSettings: @staticmethod def load(): return None
+    class Currency: BTC='BTC'; XMR='XMR'; ETH='ETH'
+    class LedgerTransaction: pass
+    VENDOR_APP_STATUS_PENDING_BOND = 'pb'; VENDOR_APP_STATUS_PENDING_REVIEW = 'pr'
+    ORDER_STATUS_PENDING_PAYMENT = 'pp'; ORDER_STATUS_PAYMENT_CONFIRMED = 'pc'
+    bitcoin_service = None; monero_service = None; ethereum_service = None
+    escrow_service = None; reputation_service = None; exchange_rate_service = None
+    ledger_service = None; notification_service = None
+    InsufficientFundsError = Exception
 
 
 # --- Helper Functions ---
 
 def get_last_checked_block(currency_code: str) -> int:
     """ Safely retrieves the last checked block height for a currency. """
+    if not MODELS_SERVICES_LOADED: return 0 # Cannot proceed if imports failed
     setting_name = SETTING_KEY_LAST_CHECKED_BLOCK_PATTERN.format(
         currency=currency_code.lower()
     )
     try:
-        # Using .first() is slightly more robust than get(pk=1) if pk isn't guaranteed
-        gs = GlobalSettings.objects.first()
+        # NOTE: Assumes GlobalSettings model has corresponding fields like 'last_checked_btc_height' etc.
+        gs = GlobalSettings.load() # Use load() method assumed on model
         if not gs:
-             raise GlobalSettings.DoesNotExist # Raise standard exception for consistent handling
+            raise GlobalSettings.DoesNotExist
+
         height = getattr(gs, setting_name, 0)
         return int(height) if height is not None else 0
     except GlobalSettings.DoesNotExist:
@@ -149,6 +200,7 @@ def get_last_checked_block(currency_code: str) -> int:
 
 def set_last_checked_block(currency_code: str, height: Optional[int]):
     """ Atomically sets the last checked block height, ensuring it only increases. """
+    if not MODELS_SERVICES_LOADED: return # Cannot proceed if imports failed
     if height is None:
         logger.warning(f"Attempted to set last checked block for {currency_code} with None height. Skipping.")
         return
@@ -167,11 +219,12 @@ def set_last_checked_block(currency_code: str, height: Optional[int]):
 
     try:
         with transaction.atomic():
-            # Lock the row to prevent race conditions during the update itself
-            # Using .first() again for consistency
-            gs = GlobalSettings.objects.select_for_update().first()
+            gs = GlobalSettings.objects.select_for_update().first() # Use first() assuming singleton
             if not gs:
-                 raise GlobalSettings.DoesNotExist
+                # Option: Create if not exists?
+                # gs = GlobalSettings.objects.create(...)
+                logger.error(f"GlobalSettings record not found. Cannot set last checked block for {currency_code}.")
+                return # Fail if cannot create or find
 
             if not hasattr(gs, setting_name):
                 logger.error(f"GlobalSettings model instance is missing the field '{setting_name}'. Cannot set last checked block for {currency_code}.")
@@ -186,8 +239,6 @@ def set_last_checked_block(currency_code: str, height: Optional[int]):
             else:
                 logger.info(f"No update needed for {currency_code} block height (New: {height} <= Current: {current_height})")
 
-    except GlobalSettings.DoesNotExist:
-        logger.error(f"GlobalSettings record not found. Cannot set last checked block for {currency_code}.")
     except Exception as e:
         logger.exception(f"Error setting last checked block {currency_code} to {height}: {e}")
 
@@ -201,20 +252,24 @@ def check_dependencies(*services_to_check):
             task_instance = args[0] if args and isinstance(args[0], Task) else None
             task_id = task_instance.request.id if task_instance and hasattr(task_instance, 'request') else 'N/A'
 
+            # Check overall import status first
+            if not MODELS_SERVICES_LOADED:
+                error_msg = f"Task {func.__name__} ({task_id}) aborted: Critical imports failed during module load. Check logs."
+                logger.critical(error_msg)
+                return "Task Aborted: Critical imports failed."
+
             missing = []
             for service_name in services_to_check:
-                # <<< CHANGE [Rev 1.0] Special check for redis_lock
                 if service_name == 'redis_lock' and redis_lock is None:
-                     missing.append("redis_lock (python library 'django-redis-lock' likely not installed)")
-                     continue
-                # <<< END CHANGE [Rev 1.0]
+                    missing.append("redis_lock (python library 'django-redis-lock' likely not installed)")
+                    continue
+                # Check if service exists and is not None in the global scope of this module
                 if service_name not in globals() or globals()[service_name] is None:
                     missing.append(service_name)
 
             if missing:
                 error_msg = f"Task {func.__name__} ({task_id}) aborted: Missing critical dependencies: {', '.join(missing)}."
                 logger.critical(error_msg)
-                # Add monitoring/alerting here if needed
                 return f"Task Aborted: Missing dependencies ({', '.join(missing)})"
             return func(*args, **kwargs)
         return wrapper
@@ -223,19 +278,17 @@ def check_dependencies(*services_to_check):
 
 # --- Celery Tasks ---
 
-# <<< CHANGE [Rev 1.0] Added autoretry_for
 @shared_task(
     name="auto_finalize_paid_orders",
     time_limit=TASK_DEFAULT_TIME_LIMIT,
     soft_time_limit=TASK_DEFAULT_SOFT_TIME_LIMIT,
     bind=True,
-    autoretry_for=(*CONNECTION_ERRORS, *TRANSIENT_DB_ERRORS), # Retry on network/DB issues
+    autoretry_for=(*CONNECTION_ERRORS, *TRANSIENT_DB_ERRORS),
     retry_kwargs={'max_retries': TASK_MAX_RETRIES},
     retry_backoff=True,
-    retry_backoff_max=TASK_RETRY_DELAY * 5, # Max delay between retries
+    retry_backoff_max=TASK_RETRY_DELAY * 5,
     retry_jitter=True
 )
-# <<< END CHANGE [Rev 1.0]
 @check_dependencies('Order', 'escrow_service')
 def auto_finalize_paid_orders(self: Task):
     """
@@ -247,16 +300,26 @@ def auto_finalize_paid_orders(self: Task):
     logger.info(f"{log_prefix} Starting task.")
     now = timezone.now()
 
-    excluded_statuses = ['disputed', 'finalized', 'cancelled_timeout', 'refunded']
+    # Use constants if available from models
+    try:
+        shipped_status = Order.StatusChoices.SHIPPED
+        excluded_statuses = [
+            Order.StatusChoices.DISPUTED, Order.StatusChoices.FINALIZED,
+            Order.StatusChoices.CANCELLED_TIMEOUT, Order.StatusChoices.CANCELLED_BUYER,
+            Order.StatusChoices.CANCELLED_VENDOR, Order.StatusChoices.CANCELLED_UNDERPAID,
+            Order.StatusChoices.REFUNDED,
+        ]
+    except AttributeError:
+        logger.critical(f"{log_prefix} Order StatusChoices constants not found!")
+        return "Task Failed: Missing model constants."
 
-    # Consider adding select_related('buyer', 'vendor', 'escrow_details') if service needs them
     eligible_orders = Order.objects.filter(
-        status='shipped',
+        status=shipped_status,
         auto_finalize_deadline__isnull=False,
         auto_finalize_deadline__lte=now
     ).exclude(status__in=excluded_statuses)
 
-    order_count = 0 # Count actual items iterated over
+    order_count = 0
     processed_success_count = 0
     broadcast_success_count = 0
     failed_initiation_count = 0
@@ -264,82 +327,83 @@ def auto_finalize_paid_orders(self: Task):
     needs_review_sig_count = 0
     unexpected_error_count = 0
 
-    # Use iterator for memory efficiency with potentially large querysets
     for order in eligible_orders.iterator():
         order_count += 1
         logger.info(f"{log_prefix} Processing Order {order.id}...")
         try:
             order_finalized_in_run = False
 
-            # --- Step 1: Initiate Release (if needed) ---
-            if not order.release_initiated:
-                logger.info(f"{log_prefix} Initiating release for Order {order.id}...")
-                # Pass user=None for automated process
-                # Assuming finalize_order handles its own atomicity/state changes
-                init_success = escrow_service.finalize_order(order, user=None, is_auto_finalize=True)
-                if not init_success:
-                    logger.error(f"{log_prefix} Failed to prepare/initiate release for Order {order.id}. Requires review.")
-                    failed_initiation_count += 1
-                    continue # Move to the next order
-                order.refresh_from_db() # Reload state after potential modification
+            # Assuming escrow_service.finalize_order handles the logic of
+            # preparing, signing (if needed by market), and broadcasting atomically
+            # or flags the order for later broadcast if signatures are missing.
+            if not order.release_initiated: # Check if already started
+                 logger.info(f"{log_prefix} Initiating release for Order {order.id}...")
+                 # Call service, expect it to handle preparing tx, adding market sig if needed
+                 finalize_result = escrow_service.finalize_order(order, user=None, is_auto_finalize=True)
+                 # Service should return True on success (even if broadcast pending sigs), False on state error, raise on system error
+                 if not finalize_result:
+                     logger.error(f"{log_prefix} Failed to initiate/prepare release for Order {order.id}. Check status or previous logs.")
+                     failed_initiation_count += 1
+                     continue
+                 order.refresh_from_db() # Get latest state after service call
 
-            # --- Step 2: Check Signatures and Broadcast (if ready) ---
-            # Use hasattr for safety if fields might not always exist (adapt field names)
-            buyer_sig_present = hasattr(order, 'release_signature_buyer') and bool(order.release_signature_buyer)
-            vendor_sig_present = hasattr(order, 'release_signature_vendor') and bool(order.release_signature_vendor)
+            # Now check if it's ready for broadcast (might have been finalized by service)
+            # Need a reliable way to check if TX is ready and not yet broadcast
+            if order.status == Order.StatusChoices.FINALIZED and not order.release_txid: # Example check
+                logger.warning(f"{log_prefix} Order {order.id} is FINALIZED but missing release_txid. Requires review.")
+                # This state should ideally be handled by the service or broadcast task
+                failed_broadcast_count += 1 # Or a different counter?
+            elif order.release_initiated and not order.release_txid: # Check if ready for broadcast
+                 # Check signature status if applicable (depends on escrow_service design)
+                 # Assuming escrow_service handles checking/broadcasting if ready
+                 logger.info(f"{log_prefix} Order {order.id} release initiated, checking broadcast status...")
+                 broadcast_successful = escrow_service.broadcast_release_transaction(order) # Service attempts broadcast if ready
+                 if broadcast_successful:
+                     logger.info(f"{log_prefix} Successfully broadcast release for Order {order.id}.")
+                     broadcast_success_count += 1
+                     order_finalized_in_run = True
+                 else:
+                     # Service logs why broadcast failed (e.g., missing sigs, RPC error)
+                     logger.warning(f"{log_prefix} Broadcast attempt failed or not ready for Order {order.id}. Service logs should have details.")
+                     # Count based on whether it *should* have been ready
+                     # This part needs refinement based on escrow_service capabilities
+                     if order.status != Order.StatusChoices.FINALIZED: # Assuming FINALIZED means TX sent/confirmed
+                        needs_review_sig_count += 1 # Assume missing sigs if not FINALIZED
+                     else:
+                        failed_broadcast_count +=1 # Assume broadcast failure if FINALIZED but no TXID
 
-            if buyer_sig_present and vendor_sig_present:
-                logger.info(f"{log_prefix} Order {order.id} has signatures, attempting broadcast...")
-                # escrow_service.broadcast_release_transaction should be idempotent
-                # and handle finalization status + ledger updates.
-                broadcast_successful = escrow_service.broadcast_release_transaction(order)
-                if broadcast_successful:
-                    logger.info(f"{log_prefix} Successfully finalized (broadcast initiated/confirmed) for Order {order.id}.")
-                    broadcast_success_count += 1
-                    order_finalized_in_run = True
-                else:
-                    logger.error(f"{log_prefix} Broadcast attempt failed for signed Order {order.id}. Requires review.")
-                    failed_broadcast_count += 1
-            elif order.release_initiated: # Only log as needs review if initiation happened but sigs missing
-                logger.warning(f"{log_prefix} Order {order.id} past deadline but missing required signatures "
-                               f"(Buyer: {buyer_sig_present}, Vendor: {vendor_sig_present}). Requires review.")
-                needs_review_sig_count += 1
+            elif order.status == Order.StatusChoices.FINALIZED and order.release_txid:
+                logger.info(f"{log_prefix} Order {order.id} already finalized and broadcast.")
+                # Don't count as success *in this run*, but it's okay.
+            else:
+                logger.warning(f"{log_prefix} Order {order.id} in unexpected state for auto-finalize. Status: {order.status}, Release Initiated: {order.release_initiated}, TXID: {order.release_txid}")
+                unexpected_error_count +=1 # Count as unexpected state
 
             if order_finalized_in_run:
                 processed_success_count += 1
 
-        except (ConnectionError, DatabaseError) as transient_err: # <<< CHANGE [Rev 1.0] Catch specific retryable errors
+        except (*CONNECTION_ERRORS, *TRANSIENT_DB_ERRORS) as transient_err:
              logger.warning(f"{log_prefix} Transient error processing Order {order.id}: {transient_err}. Task will retry if attempts remain.")
-             # Re-raise to trigger Celery's autoretry mechanism
-             raise transient_err # <<< END CHANGE [Rev 1.0]
+             raise transient_err
         except Exception as e:
             logger.exception(f"{log_prefix} Unexpected error processing Order {order.id}: {e}")
             unexpected_error_count += 1
-            # Continue processing other orders, but log this critical failure
 
-    # --- Task Summary ---
     summary_parts = [
         f"Auto-finalize task ({task_id}) finished.",
         f"Checked: {order_count}.",
-        f"Successfully Finalized/Broadcast: {broadcast_success_count}.",
+        f"Successfully Broadcast/Finalized: {broadcast_success_count}.", # Renamed counter
     ]
-    # <<< CHANGE [Rev 1.0] More detailed failure summary
-    if failed_initiation_count > 0:
-        summary_parts.append(f"Failed Initiations: {failed_initiation_count}.")
-    if failed_broadcast_count > 0:
-        summary_parts.append(f"Failed Broadcasts: {failed_broadcast_count}.")
-    if needs_review_sig_count > 0:
-         summary_parts.append(f"Needs Review (Missing Sigs): {needs_review_sig_count}.")
-    if unexpected_error_count > 0:
-        summary_parts.append(f"Unexpected Errors (per order): {unexpected_error_count}.")
+    if failed_initiation_count > 0: summary_parts.append(f"Failed Initiations: {failed_initiation_count}.")
+    if failed_broadcast_count > 0: summary_parts.append(f"Failed Broadcasts: {failed_broadcast_count}.")
+    if needs_review_sig_count > 0: summary_parts.append(f"Needs Review (Not Ready): {needs_review_sig_count}.")
+    if unexpected_error_count > 0: summary_parts.append(f"Unexpected Errors/States: {unexpected_error_count}.")
 
     summary = " ".join(summary_parts)
     if failed_initiation_count > 0 or failed_broadcast_count > 0 or needs_review_sig_count > 0 or unexpected_error_count > 0:
          logger.warning(f"{log_prefix} {summary} - ATTENTION NEEDED FOR FAILURES/REVIEWS.")
-         # Consider adding alerting hook here (e.g., Sentry, PagerDuty)
     else:
          logger.info(f"{log_prefix} {summary}")
-    # <<< END CHANGE [Rev 1.0]
     return summary
 
 
@@ -351,6 +415,8 @@ def auto_finalize_paid_orders(self: Task):
 )
 def check_all_deposits(self: Task):
     """ Meta-task triggering individual deposit checks for supported currencies. """
+    if not MODELS_SERVICES_LOADED: return "Task Failed: Critical imports failed."
+
     task_id = self.request.id
     log_prefix = f"[CheckAllDeposits:{task_id}]"
     logger.info(f"{log_prefix} Triggering deposit checks...")
@@ -362,15 +428,16 @@ def check_all_deposits(self: Task):
 
     for currency in currencies_to_check:
         currency_lower = currency.lower()
+        # Standardize task naming convention
         specific_task_name = f"store.tasks.check_{currency_lower}_deposits"
         try:
-            # Use .si() for immutable signature (no args needed here)
-            task_signature = shared_task(name=specific_task_name).si()
-            async_result = task_signature.apply_async()
+            # Get task signature by name
+            task_signature = shared_task(name=specific_task_name)
+            # Queue the task instance
+            async_result = task_signature.delay() # Use delay() for simplicity
             results[currency] = f"Task Queued (ID: {async_result.id})"
             logger.info(f"{log_prefix} Queued task '{specific_task_name}' with ID: {async_result.id}")
         except Exception as e:
-            # Catch potential errors during task queuing (e.g., broker connection issues)
             error_msg = f"Failed to queue task '{specific_task_name}'"
             logger.exception(f"{log_prefix} {error_msg}: {e}")
             results[currency] = f"Task Queueing Failed ({type(e).__name__})"
@@ -384,247 +451,411 @@ def check_all_deposits(self: Task):
 def _perform_deposit_check(
     task_instance: Task,
     currency_code: str,
-    scan_service_func: callable,
-    amount_field: str
+    scan_service_func: callable # e.g., bitcoin_service.scan_for_new_deposits
 ):
-    """ Internal helper to perform deposit check logic with distributed locking. """
+    """
+    Internal helper to perform deposit check logic with distributed locking.
+    Processes both Order and Vendor Bond deposits based on payment_type.
+    """
     task_id = task_instance.request.id
     log_prefix = f"[Check{currency_code.upper()}Deposits:{task_id}]"
 
-    # <<< CHANGE [Rev 1.0] Implement Distributed Lock
+    if not MODELS_SERVICES_LOADED:
+        logger.critical(f"{log_prefix} Aborting: Models/Services not loaded.")
+        return # Abort gracefully
+
     if redis_lock is None:
         logger.critical(f"{log_prefix} Aborting task: 'django-redis-lock' library not available.")
-        # Optional: Raise an exception to mark task as failed permanently if lock is mandatory
-        # raise ImportError("django-redis-lock is required for deposit checking")
-        return # Or simply abort
+        return # Abort gracefully
 
     lock_key = DEPOSIT_LOCK_KEY_PATTERN.format(currency=currency_code.lower())
-    lock = None # Initialize lock variable
+    lock = None
 
     try:
         logger.info(f"{log_prefix} Attempting to acquire lock: {lock_key}")
-        # Use `id=task_id` for better lock ownership tracking in Redis if needed
-        # `expire` sets the lock's TTL in Redis
-        # `auto_renewal=True` can keep the lock alive if the task runs longer than expected (use cautiously)
         lock = redis_lock.Lock(
-            _redis=None, # Uses the default Redis connection from settings
-            name=lock_key,
-            expire=DEPOSIT_LOCK_EXPIRY,
-            id=task_id,
-            auto_renewal=False # Keep renewal off unless strictly necessary and understood
+            _redis=None, name=lock_key, expire=DEPOSIT_LOCK_EXPIRY, id=task_id, auto_renewal=False
         )
 
-        if not lock.acquire(blocking=False): # Use non-blocking initially
-             # If non-blocking fails, try blocking for a short period
-            logger.warning(f"{log_prefix} Lock '{lock_key}' already held. Waiting up to {LOCK_ACQUIRE_TIMEOUT}s...")
-            if not lock.acquire(blocking=True, timeout=LOCK_ACQUIRE_TIMEOUT):
-                 logger.warning(f"{log_prefix} Could not acquire lock '{lock_key}' after waiting. "
-                                f"Another task instance is likely running. Skipping this run.")
-                 # Use Celery's Ignore exception to prevent task from being marked as failed/retried
-                 # when skipping due to lock contention.
+        if not lock.acquire(blocking=False):
+             logger.warning(f"{log_prefix} Lock '{lock_key}' already held. Waiting up to {LOCK_ACQUIRE_TIMEOUT}s...")
+             if not lock.acquire(blocking=True, timeout=LOCK_ACQUIRE_TIMEOUT):
+                 logger.warning(f"{log_prefix} Could not acquire lock '{lock_key}' after waiting. Skipping this run.")
                  raise Ignore()
 
         logger.info(f"{log_prefix} Successfully acquired lock: {lock_key}")
 
         # --- Core Deposit Check Logic (inside the lock) ---
         logger.info(f"{log_prefix} Starting deposit check logic.")
-        last_height = get_last_checked_block(currency_code)
-        logger.info(f"{log_prefix} Last checked block height: {last_height}")
-        new_max_height_processed = last_height
-        processed_count = 0
-        skipped_existing_count = 0
-        skipped_invalid_data_count = 0
-        failed_credit_count = 0
+        # Note: last_height checking removed here; scan_service_func expected to handle internally or scan recent TXs
+        new_max_height_processed = 0 # Track max height seen in this run for logging
+        processed_orders = 0
+        processed_bonds = 0
+        skipped_existing = 0
+        skipped_invalid = 0
+        failed_processing = 0
 
         try:
-            # --- Scan for New Deposits ---
-            # This service call might raise transient errors caught by autoretry_for
-            new_payments: List[Dict[str, Any]] = scan_service_func(last_checked_block=last_height)
-            logger.info(f"{log_prefix} Found {len(new_payments)} potential new deposits.")
+            # --- Scan for New Deposits using the provided service function ---
+            # This function MUST return a list of dicts with:
+            # 'payment_type': 'order' | 'vendor_bond'
+            # 'related_id': Order.pk or VendorApplication.pk
+            # 'amount_atomic': int (smallest unit, e.g., sats, wei, piconeros)
+            # 'txid': str
+            # 'address': str (receiving address)
+            # 'confirmations': int
+            new_payments: List[Dict[str, Any]] = scan_service_func()
+            logger.info(f"{log_prefix} Scan function returned {len(new_payments)} potential deposits.")
 
             for payment_info in new_payments:
-                # --- Validation ---
-                user = payment_info.get('user')
                 txid = payment_info.get('txid')
-                amount_str = payment_info.get(amount_field)
-                height = payment_info.get('block_height')
-                related_order = payment_info.get('order')
-                payment_id = payment_info.get('payment_id')
                 address = payment_info.get('address')
+                amount_atomic_val = payment_info.get('amount_atomic')
+                payment_type = payment_info.get('payment_type')
+                related_id = payment_info.get('related_id')
+                confirmations = payment_info.get('confirmations', 0) # Default to 0 confs
 
-                if not all([user, txid, amount_str]):
+                # --- Basic Validation ---
+                if not all([txid, address, amount_atomic_val is not None, payment_type, related_id is not None]):
                     logger.warning(f"{log_prefix} Incomplete payment info skipped: {payment_info}")
-                    skipped_invalid_data_count += 1
-                    continue
-                if not isinstance(user, User):
-                    logger.warning(f"{log_prefix} Invalid user object type ({type(user)}) skipped: {payment_info}")
-                    skipped_invalid_data_count += 1
+                    skipped_invalid += 1
                     continue
 
                 try:
-                    amount = Decimal(str(amount_str))
-                    if amount <= Decimal('0.0'):
-                        logger.info(f"{log_prefix} Skipping zero/negative amount: {payment_info}")
-                        skipped_invalid_data_count += 1
+                    amount_atomic = int(amount_atomic_val) # Ensure integer atomic amount
+                    if amount_atomic <= 0:
+                        logger.info(f"{log_prefix} Skipping zero/negative atomic amount: {payment_info}")
+                        skipped_invalid += 1
                         continue
-                except (InvalidOperation, ValueError, TypeError):
-                    logger.warning(f"{log_prefix} Invalid amount format ('{amount_str}') skipped: {payment_info}")
-                    skipped_invalid_data_count += 1
+                except (ValueError, TypeError):
+                    logger.warning(f"{log_prefix} Invalid atomic amount format ('{amount_atomic_val}') skipped: {payment_info}")
+                    skipped_invalid += 1
                     continue
 
-                # --- Idempotency Check ---
-                try:
-                    # This DB query should be quick
-                    if LedgerTransaction.objects.filter(
-                        external_txid=txid,
-                        transaction_type=LEDGER_TRANSACTION_TYPE_DEPOSIT,
-                        user=user,
-                        currency=currency_code
-                    ).exists():
-                        logger.info(f"{log_prefix} Deposit TXID {txid} for User {user.username} already credited. Skipping.")
-                        skipped_existing_count += 1
-                        if height is not None and height > new_max_height_processed:
-                            new_max_height_processed = height
-                        continue
-                except DatabaseError as db_err: # Catch potential transient DB errors here too
-                    logger.exception(f"{log_prefix} DB error checking existing ledger entry for TXID {txid}. Skipping credit. Error: {db_err}")
-                    failed_credit_count += 1
-                    # Re-raise to potentially trigger retry for the whole task if needed
-                    # Or just log and continue to next payment? Decide based on severity.
-                    # For now, log as failure and continue.
-                    continue
-                except Exception as db_err: # Catch unexpected errors
-                     logger.exception(f"{log_prefix} Unexpected error checking existing ledger entry for TXID {txid}. Skipping credit. Error: {db_err}")
-                     failed_credit_count += 1
-                     continue
-
-
-                # --- Credit User via Ledger Service ---
-                try:
-                    notes_parts = [f"Confirmed {currency_code} Deposit"]
-                    if payment_id: notes_parts.append(f"PayID: {payment_id}")
-                    if address: notes_parts.append(f"Addr: {address}")
-                    if height is not None: notes_parts.append(f"Block: {height}")
-                    notes = " ".join(notes_parts)
-
-                    # Ledger service handles its own atomicity
-                    ledger_service.credit_funds(
-                        user=user, currency=currency_code, amount=amount,
-                        transaction_type=LEDGER_TRANSACTION_TYPE_DEPOSIT,
-                        external_txid=txid, related_order=related_order, notes=notes
-                    )
-
-                    security_logger.info(
-                        f"DEPOSIT Credited: Task:{task_id}, User:{user.username}, "
-                        f"Amount:{amount:.8f}, Cur:{currency_code}, TXID:{txid}"
-                    )
-                    processed_count += 1
-
-                    # Optional: Update related CryptoPayment record (consider service call)
-                    # ... (existing commented-out code) ...
-
-                except InsufficientFundsError as ife: # Should NOT happen for credit
-                    logger.critical(f"{log_prefix} CRITICAL: Ledger credit failed (InsufficientFundsError) for DEPOSIT! "
-                                    f"User:{user.username}, Amount:{amount:.8f}, TXID:{txid}. Error: {ife}", exc_info=True)
-                    failed_credit_count += 1
-                except (DjangoValidationError, IntegrityError) as ve: # DB/Validation errors
-                    logger.critical(f"{log_prefix} CRITICAL: Ledger credit failed (Validation/Integrity). "
-                                    f"User:{user.username}, Amount:{amount:.8f}, TXID:{txid}. Error: {ve}", exc_info=True)
-                    failed_credit_count += 1
-                except DatabaseError as dbe: # Potential transient DB error during credit
-                     logger.critical(f"{log_prefix} CRITICAL: Ledger credit failed (DatabaseError). "
-                                    f"User:{user.username}, Amount:{amount:.8f}, TXID:{txid}. Error: {dbe}", exc_info=True)
-                     failed_credit_count += 1
-                     # Re-raise to potentially trigger task retry? Or just mark failed? For now, mark failed.
-                except Exception as e: # Other unexpected errors
-                    logger.critical(f"{log_prefix} CRITICAL: Unexpected failure during ledger credit. "
-                                    f"User:{user.username}, Amount:{amount:.8f}, TXID:{txid}. Error: {e}", exc_info=True)
-                    failed_credit_count += 1
-
-                # --- Update Max Processed Height ---
+                # Track max block height seen from scanner (optional, depends on scanner impl)
+                height = payment_info.get('block_height')
                 if height is not None and height > new_max_height_processed:
-                    new_max_height_processed = height
+                   new_max_height_processed = height
 
-            # --- Update Last Checked Height in DB (after loop, inside lock) ---
-            # Only update if the scan completed and we didn't encounter critical errors
-            # preventing progress (though individual credit failures are logged above).
-            if new_max_height_processed >= last_height:
-                set_last_checked_block(currency_code, new_max_height_processed)
-            else:
-                logger.warning(
-                    f"{log_prefix} Not updating last checked block. "
-                    f"Max processed height ({new_max_height_processed}) "
-                    f"is not >= last checked ({last_height})."
-                )
+                # --- Process based on Payment Type ---
+                if payment_type == 'vendor_bond':
+                    # --- Handle Vendor Application Bond Payment ---
+                    app_id = related_id
+                    app_log_prefix = f"{log_prefix}[App:{app_id}|TX:{txid[:8]}]"
+                    try:
+                        with transaction.atomic():
+                            try:
+                                app = VendorApplication.objects.select_for_update().get(
+                                    pk=app_id,
+                                    # Optional: check address if scanner doesn't guarantee it matches
+                                    # bond_payment_address=address
+                                )
+                            except VendorApplication.DoesNotExist:
+                                logger.info(f"{app_log_prefix} VendorApplication not found. Skipping.")
+                                continue # Skip if app doesn't exist
 
-        except Ignore: # Propagate Ignore exception if raised intentionally (e.g., by nested call)
-             raise
+                            # Idempotency Check
+                            # Assuming payment_txids is a ListField or similar on VendorApplication model
+                            # Add this field if it doesn't exist
+                            if txid in getattr(app, 'payment_txids', []):
+                                logger.info(f"{app_log_prefix} TXID already processed for this application. Skipping.")
+                                skipped_existing += 1
+                                continue
+
+                            if app.status != VENDOR_APP_STATUS_PENDING_BOND:
+                                logger.info(f"{app_log_prefix} Application not in PENDING_BOND status ({app.status}). Skipping.")
+                                # Log the payment attempt anyway?
+                                # app.notes += f"\nIgnored payment {amount_atomic}s ({txid}) received while status={app.status} on {timezone.now()}."
+                                # app.save()
+                                continue
+
+                            # Get Required Bond Amount (atomic units)
+                            required_atomic: Optional[int] = None
+                            try:
+                                if app.bond_amount_crypto and app.bond_currency_chosen == currency_code:
+                                     factor = ATOMIC_FACTOR.get(currency_code)
+                                     if factor:
+                                         required_atomic = int((app.bond_amount_crypto * factor).to_integral_value())
+                            except Exception as conv_err:
+                                 logger.error(f"{app_log_prefix} Error converting stored bond amount {app.bond_amount_crypto} to atomic: {conv_err}")
+
+                            if required_atomic is None: # Fallback if not stored or conversion failed
+                                 logger.warning(f"{app_log_prefix} Required bond amount not found/convertible on App model. Cannot verify payment.")
+                                 # Fail processing this payment if required amount unknown
+                                 failed_processing += 1
+                                 continue
+
+                            if required_atomic <= 0:
+                                 logger.error(f"{app_log_prefix} Invalid required bond amount {required_atomic} calculated. Cannot verify payment.")
+                                 failed_processing += 1
+                                 continue
+
+                            # Check Confirmations
+                            min_confs_needed = getattr(settings, SETTING_BTC_CONFS_NEEDED, 1) # Using BTC setting for bonds
+                            if confirmations < min_confs_needed:
+                                logger.info(f"{app_log_prefix} Deposit has {confirmations}/{min_confs_needed} confirmations. Waiting.")
+                                # Store partial info? Or wait for scanner to report again when confirmed? Assume wait.
+                                continue # Not confirmed enough
+
+                            # --- Sufficient Payment Received ---
+                            if amount_atomic >= required_atomic:
+                                if amount_atomic > required_atomic:
+                                    overpaid = amount_atomic - required_atomic
+                                    logger.warning(f"{app_log_prefix} Overpayment detected by {overpaid} atomic units.")
+                                    # Store actual amount paid
+
+                                app.status = VENDOR_APP_STATUS_PENDING_REVIEW
+                                app.bond_paid_atomic = amount_atomic # Store what was actually paid
+                                app.bond_paid_txid = txid
+                                app.bond_paid_confirmations = confirmations
+                                app.paid_at = timezone.now()
+                                # Add TXID to list for idempotency
+                                if hasattr(app, 'payment_txids') and isinstance(app.payment_txids, list):
+                                    app.payment_txids.append(txid)
+                                else: # Initialize if needed (depends on model field definition)
+                                    app.payment_txids = [txid]
+
+                                app.save() # Saves all changes
+                                processed_bonds += 1
+                                logger.info(f"{app_log_prefix} Bond payment sufficient ({amount_atomic}/{required_atomic}). Status updated to PENDING_REVIEW.")
+                                security_logger.info(f"VENDOR BOND PAID: AppID:{app.id}, User:{app.user.username}, Amount:{amount_atomic}sats, TXID:{txid}")
+                                log_audit_event(None, app.user, 'vendor_app_bond_paid', target_application=app, details=f"TX:{txid} Amt:{amount_atomic}sats")
+
+                                # Notify Admin
+                                try:
+                                    if notification_service:
+                                        notification_service.create_notification(
+                                             # recipient_group='Admin', # Example target
+                                             level='info',
+                                             message=f"Vendor Application #{app.id} from '{app.user.username}' paid bond ({amount_atomic/1e8:.8f} BTC) and requires review."
+                                         )
+                                        logger.info(f"{app_log_prefix} Sent admin review notification.")
+                                except Exception as notify_err:
+                                     logger.error(f"{app_log_prefix} Failed to send admin notification: {notify_err}", exc_info=True)
+
+                            else: # Underpayment
+                                underpaid = required_atomic - amount_atomic
+                                logger.warning(f"{app_log_prefix} Underpayment detected by {underpaid} atomic units ({amount_atomic}/{required_atomic}).")
+                                # Log the TXID if needed for idempotency, but don't change status
+                                if hasattr(app, 'payment_txids') and isinstance(app.payment_txids, list):
+                                    app.payment_txids.append(txid)
+                                else:
+                                    app.payment_txids = [txid]
+                                # Add note?
+                                # app.notes = (app.notes or "") + f"\nUnderpayment {amount_atomic}s ({txid}) on {timezone.now()}."
+                                app.save(update_fields=['payment_txids', 'notes', 'updated_at']) # Adjust fields as needed
+
+                    except (DatabaseError, IntegrityError, DjangoValidationError) as db_err:
+                        logger.exception(f"{app_log_prefix} DB/Validation error updating VendorApplication: {db_err}")
+                        failed_processing += 1
+                    except Exception as e:
+                        logger.exception(f"{app_log_prefix} Unexpected error processing vendor bond: {e}")
+                        failed_processing += 1
+
+                elif payment_type == 'order':
+                    # --- Handle Order Payment ---
+                    order_id = related_id
+                    order_log_prefix = f"{log_prefix}[Order:{order_id}|TX:{txid[:8]}]"
+                    try:
+                        with transaction.atomic():
+                            try:
+                                order = Order.objects.select_related('payment', 'vendor', 'buyer').select_for_update().get(
+                                    pk=order_id
+                                    # Optional: check address if scanner doesn't guarantee it matches
+                                    # payment__payment_address=address
+                                )
+                                payment = order.payment # Assumes FK/OneToOne from Order
+                                if not payment:
+                                    logger.error(f"{order_log_prefix} No CryptoPayment record found for Order. Skipping.")
+                                    continue
+                            except Order.DoesNotExist:
+                                logger.info(f"{order_log_prefix} Order not found. Skipping.")
+                                continue
+
+                            # Idempotency Check (Ledger)
+                            if LedgerTransaction.objects.filter(
+                                external_txid=txid,
+                                transaction_type__in=[LEDGER_TRANSACTION_TYPE_DEPOSIT, LEDGER_TRANSACTION_TYPE_ESCROW_FUND], # Check both types?
+                                user=order.buyer,
+                                currency=currency_code
+                            ).exists():
+                                logger.info(f"{order_log_prefix} TXID already processed in ledger for this buyer/currency. Skipping.")
+                                skipped_existing += 1
+                                continue
+
+                            # Check Order/Payment Status
+                            if order.status != ORDER_STATUS_PENDING_PAYMENT or payment.status not in ['pending', 'unconfirmed']:
+                                logger.info(f"{order_log_prefix} Order/Payment not in pending state ({order.status}/{payment.status}). Skipping.")
+                                # Log anyway? Mark TXID on payment?
+                                # payment.processed_txids.append(txid)?
+                                # payment.save()
+                                continue
+
+                            # Get Required Amount (atomic units)
+                            required_atomic: Optional[int] = None
+                            try:
+                                if payment.expected_amount_native and payment.currency == currency_code:
+                                     factor = ATOMIC_FACTOR.get(currency_code)
+                                     if factor:
+                                         required_atomic = int((payment.expected_amount_native * factor).to_integral_value())
+                            except Exception as conv_err:
+                                 logger.error(f"{order_log_prefix} Error converting stored order amount {payment.expected_amount_native} to atomic: {conv_err}")
+
+                            if required_atomic is None or required_atomic <= 0:
+                                logger.error(f"{order_log_prefix} Could not determine valid required atomic amount for order payment. Skipping.")
+                                failed_processing += 1
+                                continue
+
+                            # Check Confirmations
+                            min_confs_needed = payment.confirmations_needed or getattr(settings, f"{currency_code.upper()}_CONFIRMATIONS_NEEDED", 1)
+                            if confirmations < min_confs_needed:
+                                logger.info(f"{order_log_prefix} Deposit has {confirmations}/{min_confs_needed} confirmations. Waiting.")
+                                # Update payment confirmations?
+                                # payment.received_confirmations = confirmations
+                                # payment.status = 'unconfirmed'
+                                # payment.save()
+                                continue # Not confirmed enough
+
+                            # --- Sufficient Payment Received ---
+                            if amount_atomic >= required_atomic:
+                                if amount_atomic > required_atomic:
+                                    overpaid = amount_atomic - required_atomic
+                                    logger.warning(f"{order_log_prefix} Overpayment detected by {overpaid} atomic units.")
+                                    # Store actual amount paid
+
+                                # Update Payment record
+                                payment.status = 'confirmed' # Or your confirmed status
+                                payment.received_amount_native = Decimal(str(amount_atomic)) / ATOMIC_FACTOR.get(currency_code, Decimal('1')) # Store standard units? Or keep atomic? Store atomic.
+                                payment.received_amount_atomic = amount_atomic
+                                payment.received_confirmations = confirmations
+                                payment.paid_txid = txid
+                                payment.paid_at = timezone.now()
+                                payment.save()
+
+                                # Update Order status
+                                order.status = ORDER_STATUS_PAYMENT_CONFIRMED
+                                order.save(update_fields=['status', 'updated_at'])
+
+                                # Credit Ledger (using standard units)
+                                amount_standard = Decimal(str(amount_atomic)) / ATOMIC_FACTOR.get(currency_code, Decimal('1'))
+                                ledger_service.credit_funds(
+                                     user=order.buyer, currency=currency_code, amount=amount_standard,
+                                     transaction_type=LEDGER_TRANSACTION_TYPE_DEPOSIT, # Or specific type like ESCROW_FUND?
+                                     external_txid=txid, related_order_id=order.id,
+                                     notes=f"Confirmed Order {order.id} Deposit"
+                                )
+
+                                processed_orders += 1
+                                logger.info(f"{order_log_prefix} Order payment sufficient ({amount_atomic}/{required_atomic}). Status updated to {ORDER_STATUS_PAYMENT_CONFIRMED}. Ledger credited.")
+                                security_logger.info(f"ORDER PAYMENT CONFIRMED: OrderID:{order.id}, Buyer:{order.buyer.username}, Amount:{amount_standard} {currency_code} ({amount_atomic} atomic), TXID:{txid}")
+                                log_audit_event(None, order.buyer, 'order_payment_confirm', target_order=order, details=f"TX:{txid} Amt:{amount_standard} {currency_code}")
+
+                                # Notify Buyer and Vendor
+                                try:
+                                    if notification_service:
+                                        notification_service.create_notification(
+                                             user_id=order.vendor.id, level='info',
+                                             message=f"Payment received for Order #{order.id} ({order.product.name[:30]}...). Please prepare for shipping."
+                                         )
+                                        notification_service.create_notification(
+                                             user_id=order.buyer.id, level='success',
+                                             message=f"Your payment for Order #{order.id} ({order.product.name[:30]}...) has been confirmed."
+                                         )
+                                        logger.info(f"{order_log_prefix} Sent payment confirmation notifications.")
+                                except Exception as notify_err:
+                                    logger.error(f"{order_log_prefix} Failed sending payment notifications: {notify_err}", exc_info=True)
+
+                            else: # Underpayment
+                                underpaid = required_atomic - amount_atomic
+                                logger.warning(f"{order_log_prefix} Underpayment detected by {underpaid} atomic units ({amount_atomic}/{required_atomic}).")
+                                # Update payment record but don't change status?
+                                # payment.received_amount_atomic = amount_atomic
+                                # payment.notes += f"\nUnderpaid {amount_atomic} units ({txid})"
+                                # payment.save()
+                                # Notify buyer?
+
+                    except (DatabaseError, IntegrityError, DjangoValidationError) as db_err:
+                        logger.exception(f"{order_log_prefix} DB/Validation error processing order payment: {db_err}")
+                        failed_processing += 1
+                    except InsufficientFundsError as ife: # Should not happen for credit
+                         logger.critical(f"{order_log_prefix} CRITICAL: Ledger credit failed (InsufficientFundsError) for ORDER DEPOSIT! TXID:{txid}. Error: {ife}", exc_info=True)
+                         failed_processing += 1
+                    except Exception as e:
+                        logger.exception(f"{order_log_prefix} Unexpected error processing order payment: {e}")
+                        failed_processing += 1
+
+                else:
+                    logger.warning(f"{log_prefix} Unknown payment type '{payment_type}' skipped: {payment_info}")
+                    skipped_invalid += 1
+                    continue
+
+            # --- Update Last Checked Height (Moved outside the loop) ---
+            # Consider if height tracking is reliable/needed if scan_service handles it internally
+            # If new_max_height_processed > 0: # Check if any height was seen
+            #    set_last_checked_block(currency_code, new_max_height_processed)
+
+        except Ignore:
+            raise # Propagate Ignore from lock acquisition
         except Exception as e:
-            # Catch errors during the main scan or processing loop (e.g., service call failure)
-            # This will be caught by Celery's autoretry if applicable, or mark task as failed
             logger.exception(f"{log_prefix} Error during deposit check execution: {e}")
-            # Do *not* update last_checked_block on general task failure within the lock
-            raise # Re-raise to allow Celery retry/failure handling
+            raise # Re-raise for Celery handling
 
         finally:
             # --- Log Summary ---
             summary = (
                 f"{currency_code.upper()} deposit check ({task_id}) finished. "
-                f"Successfully Credited: {processed_count}, "
-                f"Skipped (Already Credited): {skipped_existing_count}, "
-                f"Skipped (Invalid Data): {skipped_invalid_data_count}, "
-                f"Failed Credits: {failed_credit_count}. "
-                f"Highest Block Processed: {new_max_height_processed}"
+                f"Processed Orders: {processed_orders}, "
+                f"Processed Bonds: {processed_bonds}, "
+                f"Skipped (Existing): {skipped_existing}, "
+                f"Skipped (Invalid): {skipped_invalid}, "
+                f"Failed Processing: {failed_processing}. "
+                #f"Highest Block Processed: {new_max_height_processed}" # Uncomment if height tracking is used
             )
             logger.info(f"{log_prefix} {summary}")
-            if failed_credit_count > 0:
-                 logger.critical(f"{log_prefix} ATTENTION: {failed_credit_count} critical ledger credit failures occurred.")
-                 # Add alerting hook here
+            if failed_processing > 0:
+                 logger.critical(f"{log_prefix} ATTENTION: {failed_processing} critical processing failures occurred.")
 
-    except Ignore: # Catch Ignore exception raised due to lock contention
+    except Ignore:
          logger.info(f"{log_prefix} Task ignored due to lock contention or explicit request.")
-         # Task run is skipped gracefully
     except Exception as e:
-         # Catch errors acquiring/releasing lock or unexpected issues
          logger.exception(f"{log_prefix} Unhandled exception in deposit check task wrapper: {e}")
-         # Re-raise ensures Celery knows the task ultimately failed if not Ignored
          raise
     finally:
-        # --- Release Lock ---
         if lock and lock.locked():
             try:
                 lock.release()
                 logger.info(f"{log_prefix} Released lock: {lock_key}")
             except Exception as release_err:
-                # Log error if release fails, though lock will eventually expire in Redis
                 logger.error(f"{log_prefix} Failed to release lock '{lock_key}': {release_err}", exc_info=True)
-    # <<< END CHANGE [Rev 1.0]
 
 
-# <<< CHANGE [Rev 1.0] Added autoretry_for and adjusted checks
 @shared_task(
-    name="check_xmr_deposits",
+    name="store.tasks.check_xmr_deposits", # Ensure name matches trigger task
     ignore_result=True,
     time_limit=TASK_DEPOSIT_CHECK_TIME_LIMIT,
     soft_time_limit=TASK_DEPOSIT_CHECK_SOFT_TIME_LIMIT,
     bind=True,
-    autoretry_for=(*CONNECTION_ERRORS, *TRANSIENT_DB_ERRORS), # Retry on network/DB issues from service/helpers
+    autoretry_for=(*CONNECTION_ERRORS, *TRANSIENT_DB_ERRORS),
     retry_kwargs={'max_retries': TASK_MAX_RETRIES},
     retry_backoff=True,
     retry_backoff_max=TASK_RETRY_DELAY * 5,
     retry_jitter=True
 )
-@check_dependencies('User', 'LedgerTransaction', 'ledger_service', 'monero_service', 'GlobalSettings', 'redis_lock')
+@check_dependencies(
+    'User', 'LedgerTransaction', 'ledger_service', 'monero_service',
+    'GlobalSettings', 'VendorApplication', 'Order', 'CryptoPayment', # Added Order/CryptoPayment
+    'redis_lock', 'notification_service' # Added notification service
+)
 def check_xmr_deposits(self: Task):
-    """ Checks XMR deposits, credits ledger. Includes locking and retries. """
+    """ Checks XMR deposits (Orders & Vendor Bonds), credits ledger/updates apps. """
+    # NOTE: Vendor bonds are currently BTC only, so XMR service should only return 'order' type.
     _perform_deposit_check(
         task_instance=self, currency_code=CURRENCY_XMR,
         scan_service_func=monero_service.scan_for_new_deposits,
-        amount_field='amount_xmr'
     )
 
 @shared_task(
-    name="check_btc_deposits",
+    name="store.tasks.check_btc_deposits", # Ensure name matches trigger task
     ignore_result=True,
     time_limit=TASK_DEPOSIT_CHECK_TIME_LIMIT,
     soft_time_limit=TASK_DEPOSIT_CHECK_SOFT_TIME_LIMIT,
@@ -635,17 +866,20 @@ def check_xmr_deposits(self: Task):
     retry_backoff_max=TASK_RETRY_DELAY * 5,
     retry_jitter=True
 )
-@check_dependencies('User', 'LedgerTransaction', 'ledger_service', 'bitcoin_service', 'GlobalSettings', 'redis_lock')
+@check_dependencies(
+    'User', 'LedgerTransaction', 'ledger_service', 'bitcoin_service',
+    'GlobalSettings', 'VendorApplication', 'Order', 'CryptoPayment', # Added Order/CryptoPayment
+    'redis_lock', 'notification_service', 'exchange_rate_service' # Added exchange_rate for fallback calc
+)
 def check_btc_deposits(self: Task):
-    """ Checks BTC deposits, credits ledger. Includes locking and retries. """
+    """ Checks BTC deposits (Orders & Vendor Bonds), credits ledger/updates apps. """
     _perform_deposit_check(
         task_instance=self, currency_code=CURRENCY_BTC,
         scan_service_func=bitcoin_service.scan_for_new_deposits,
-        amount_field='amount_btc'
     )
 
 @shared_task(
-    name="check_eth_deposits",
+    name="store.tasks.check_eth_deposits", # Ensure name matches trigger task
     ignore_result=True,
     time_limit=TASK_DEPOSIT_CHECK_TIME_LIMIT,
     soft_time_limit=TASK_DEPOSIT_CHECK_SOFT_TIME_LIMIT,
@@ -656,77 +890,190 @@ def check_btc_deposits(self: Task):
     retry_backoff_max=TASK_RETRY_DELAY * 5,
     retry_jitter=True
 )
-@check_dependencies('User', 'LedgerTransaction', 'ledger_service', 'ethereum_service', 'GlobalSettings', 'redis_lock')
+@check_dependencies(
+    'User', 'LedgerTransaction', 'ledger_service', 'ethereum_service',
+    'GlobalSettings', 'VendorApplication', 'Order', 'CryptoPayment', # Added Order/CryptoPayment
+    'redis_lock', 'notification_service' # Added notification service
+)
 def check_eth_deposits(self: Task):
-    """ Checks ETH deposits, credits ledger. Includes locking and retries. """
+    """ Checks ETH deposits (Orders & Vendor Bonds), credits ledger/updates apps. """
+    # NOTE: Vendor bonds are currently BTC only, so ETH service should only return 'order' type.
     _perform_deposit_check(
         task_instance=self, currency_code=CURRENCY_ETH,
         scan_service_func=ethereum_service.scan_for_new_deposits,
-        amount_field='amount_eth'
     )
-# <<< END CHANGE [Rev 1.0]
 
 
-# <<< CHANGE [Rev 1.0] Added autoretry_for, uncommented retry logic
 @shared_task(
     name="update_all_vendor_reputations_task",
     time_limit=TASK_REPUTATION_TIME_LIMIT,
     soft_time_limit=TASK_REPUTATION_SOFT_TIME_LIMIT,
     bind=True,
-    autoretry_for=(*CONNECTION_ERRORS, *TRANSIENT_DB_ERRORS), # Retry on network/DB issues from service
+    autoretry_for=(*CONNECTION_ERRORS, *TRANSIENT_DB_ERRORS),
     retry_kwargs={'max_retries': TASK_MAX_RETRIES},
     retry_backoff=True,
-    retry_backoff_max=TASK_RETRY_DELAY * 10, # Longer delay potentially acceptable here
+    retry_backoff_max=TASK_RETRY_DELAY * 10,
     retry_jitter=True
 )
 @check_dependencies('reputation_service')
 def update_all_vendor_reputations_task(self: Task):
     """ Periodically updates vendor reputations via service, with retries. """
+    if not MODELS_SERVICES_LOADED: return "Task Failed: Critical imports failed."
     task_id = self.request.id
     log_prefix = f"[VendorReputationUpdate:{task_id}]"
     logger.info(f"{log_prefix} Starting periodic vendor reputation update task.")
 
     if not hasattr(reputation_service, 'update_all_vendor_reputations'):
-         error_msg = f"{log_prefix} CRITICAL: Service function 'update_all_vendor_reputations' missing."
-         logger.critical(error_msg)
-         return "Task Aborted: Service function missing."
+       error_msg = f"{log_prefix} CRITICAL: Service function 'update_all_vendor_reputations' missing."
+       logger.critical(error_msg)
+       return "Task Aborted: Service function missing."
 
     try:
-        # Call service, assuming it might raise transient errors handled by autoretry
         result_summary = reputation_service.update_all_vendor_reputations()
         success_msg = f"{log_prefix} Periodic vendor reputation update task completed successfully."
-        if result_summary:
-            logger.info(f"{success_msg} Service summary: {result_summary}")
-        else:
-            logger.info(success_msg)
+        if result_summary: logger.info(f"{success_msg} Service summary: {result_summary}")
+        else: logger.info(success_msg)
         return f"Reputation update cycle finished. Task ID: {task_id}"
 
     except Exception as e:
-        # Catch non-retryable or unexpected errors after retries fail
         logger.exception(f"{log_prefix} Error during periodic vendor reputation update after potential retries: {e}")
-        # Ensure Celery knows the task failed permanently after exhausting retries
-        # The exception will be re-raised by Celery's mechanism if not caught here after retries.
-        # Log it critically here for visibility.
         logger.critical(f"{log_prefix} Vendor reputation update failed permanently after retries or due to non-transient error.")
-        # Depending on Celery config, this might raise MaxRetriesExceededError or the original exception.
-        # No need to explicitly return "Task Failed" here if exception is raised.
-        raise # Re-raise the final exception
-# <<< END CHANGE [Rev 1.0]
+        # Re-raise to mark task as failed after retries are exhausted
+        raise
 
 
-# --- Celery Beat Schedule Reminder ---
-# (Keep the reminder comment as it's useful context)
-# ... existing comment ...
+# --- NEW: Task to update exchange rates ---
+@shared_task(
+    name="update_exchange_rates_task",
+    time_limit=TASK_EXCHANGE_RATE_TIME_LIMIT,
+    soft_time_limit=TASK_EXCHANGE_RATE_SOFT_TIME_LIMIT,
+    bind=True,
+    autoretry_for=(*CONNECTION_ERRORS, *TRANSIENT_DB_ERRORS), # Retry on network/DB errors
+    retry_kwargs={'max_retries': TASK_MAX_RETRIES},
+    retry_backoff=True,
+    retry_backoff_max=TASK_RETRY_DELAY * 2,
+    retry_jitter=True
+)
+@check_dependencies('GlobalSettings', 'exchange_rate_service', 'redis_lock') # Added redis_lock
+def update_exchange_rates_task(self: Task):
+    """ Periodically fetches exchange rates and updates GlobalSettings. """
+    if not MODELS_SERVICES_LOADED: return "Task Failed: Critical imports failed."
+    task_id = self.request.id
+    log_prefix = f"[UpdateExchangeRates:{task_id}]"
+
+    # Optional: Use a lock to prevent multiple workers updating rates simultaneously
+    lock = None # Initialize lock variable
+    if redis_lock is None:
+        logger.warning(f"{log_prefix} Skipping lock check: 'django-redis-lock' library not available.")
+    else:
+        try:
+            lock = redis_lock.Lock(_redis=None, name=RATES_LOCK_KEY, expire=RATES_LOCK_EXPIRY, id=task_id, auto_renewal=False)
+            if not lock.acquire(blocking=False):
+                logger.info(f"{log_prefix} Could not acquire lock '{RATES_LOCK_KEY}'. Another update likely in progress. Skipping.")
+                raise Ignore() # Skip this run gracefully
+            logger.info(f"{log_prefix} Acquired lock '{RATES_LOCK_KEY}'.")
+        except Ignore:
+            raise # Propagate Ignore
+        except Exception as lock_err:
+            logger.error(f"{log_prefix} Error acquiring lock '{RATES_LOCK_KEY}': {lock_err}. Proceeding without lock.", exc_info=True)
+            lock = None # Ensure lock is None if acquisition failed
+
+    logger.info(f"{log_prefix} Starting exchange rate update.")
+    try:
+        # Fetch rates using the service
+        # Assume service handles internal errors/retries appropriately or raises exceptions
+        rates_data = exchange_rate_service.get_current_rates(fetch_fresh=True) # Add fetch_fresh if needed
+
+        if not rates_data:
+            logger.error(f"{log_prefix} Failed to get current rates from exchange_rate_service. Aborting update.")
+            # No retry here at task level if service failed after its own retries.
+            return "Update Failed: Could not retrieve rates."
+
+        # Update GlobalSettings atomically
+        try:
+            with transaction.atomic():
+                gs = GlobalSettings.objects.select_for_update().first()
+                if not gs:
+                    logger.error(f"{log_prefix} GlobalSettings record not found. Cannot store rates.")
+                    return "Update Failed: GlobalSettings not found."
+
+                update_fields = []
+                # Map fetched rates (structure depends on exchange_rate_service)
+                # Example assuming rates_data = {'BTC_USD': Decimal(...), 'BTC_EUR': ..., 'ETH_USD': ...}
+                rate_fields = [f.name for f in GlobalSettings._meta.get_fields() if f.name.endswith('_rate')]
+
+                for field_name in rate_fields:
+                    # Parse crypto/fiat from field name, e.g., 'btc_usd_rate' -> 'BTC', 'USD'
+                    parts = field_name.split('_')
+                    if len(parts) == 3 and parts[2] == 'rate':
+                         crypto_code = parts[0].upper()
+                         fiat_code = parts[1].upper()
+                         rate_key = f"{crypto_code}_{fiat_code}" # Key format used by service?
+                         rate_value = rates_data.get(rate_key)
+
+                         if rate_value is not None:
+                             try:
+                                 # Validate and set
+                                 validated_rate = Decimal(str(rate_value))
+                                 if validated_rate > 0:
+                                     setattr(gs, field_name, validated_rate)
+                                     update_fields.append(field_name)
+                                 else:
+                                     logger.warning(f"{log_prefix} Ignoring non-positive rate for {rate_key}: {rate_value}")
+                             except (InvalidOperation, TypeError, ValueError) as e:
+                                 logger.warning(f"{log_prefix} Invalid rate format for {rate_key} ('{rate_value}'): {e}")
+                         # else: Rate not found in fetched data
+
+                if update_fields:
+                    gs.rates_last_updated = timezone.now()
+                    update_fields.append('rates_last_updated')
+                    gs.save(update_fields=update_fields)
+                    logger.info(f"{log_prefix} Successfully updated exchange rates in GlobalSettings. Fields: {', '.join(update_fields)}")
+                else:
+                    logger.warning(f"{log_prefix} No applicable exchange rate fields found or updated in GlobalSettings based on fetched data.")
+
+        except (DatabaseError, IntegrityError) as db_err:
+            logger.exception(f"{log_prefix} Database error saving exchange rates to GlobalSettings: {db_err}")
+            # Re-raise to potentially trigger retry
+            raise db_err
+        except Exception as e:
+             logger.exception(f"{log_prefix} Unexpected error saving exchange rates: {e}")
+             raise # Re-raise non-transient errors
+
+        return f"Exchange rates updated successfully. Task ID: {task_id}"
+
+    except Ignore:
+        raise # Propagate Ignore from lock acquisition
+    except Exception as e:
+        # Catch errors from exchange_rate_service call or other unexpected issues
+        logger.exception(f"{log_prefix} Failed to update exchange rates: {e}")
+        # Let Celery handle retry/failure based on autoretry_for
+        raise
+    finally:
+        # Release lock if acquired
+        if lock and lock.locked():
+             try:
+                 lock.release()
+                 logger.info(f"{log_prefix} Released lock '{RATES_LOCK_KEY}'.")
+             except Exception as release_err:
+                 logger.error(f"{log_prefix} Failed to release lock '{RATES_LOCK_KEY}': {release_err}", exc_info=True)
+
+
 # --- Celery Beat Schedule Reminder ---
 # Ensure the following (or similar) configuration exists in your Django settings
 # (e.g., settings/base.py, settings/celery.py, or wherever CELERY_BEAT_SCHEDULE is defined)
-# from celery.schedules import crontab
+# from celery.schedules import crontab, timedelta # Added timedelta
 #
 # CELERY_BEAT_SCHEDULE = {
+#     'update-exchange-rates-every-few-minutes': { # NEW TASK SCHEDULE
+#         'task': 'store.tasks.update_exchange_rates_task',
+#         'schedule': timedelta(minutes=5), # Adjust frequency based on API limits and needs
+#         'options': {'expires': 100.0},
+#     },
 #     'check-all-deposits-every-few-minutes': {
 #         'task': 'store.tasks.check_all_deposits',
 #         'schedule': timedelta(minutes=3), # Adjust frequency as needed
-#         'options': {'expires': 150.0}, # Example: Task expires if not started in 150s
+#         'options': {'expires': 150.0},
 #     },
 #     'auto-finalize-orders-hourly': {
 #         'task': 'store.tasks.auto_finalize_paid_orders',
@@ -744,3 +1091,5 @@ def update_all_vendor_reputations_task(self: Task):
 #          'schedule': crontab(hour=3, minute=0),
 #      },
 # }
+
+# --- END OF FILE ---

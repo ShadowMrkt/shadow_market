@@ -1,230 +1,213 @@
-// frontend/utils/api.js
+// frontend/utils/formatters.js
 // --- REVISION HISTORY ---
-// 2025-04-07: Rev 2 - Imported API_BASE_URL, uncommented getUnsignedReleaseTxData, added TODOs.
-//           - Replaced local API_BASE_URL definition with import from constants.
-//           - Uncommented and placed getUnsignedReleaseTxData function for multi-sig flow.
-//           - Added comments/TODOs suggesting structured error codes and AbortController usage.
-//           - Added TODO placeholders for missing API functions.
-// 2025-04-07: Rev 1 - Initial enterprise-grade review and update.
-//           - Conditionally add X-CSRFToken header only if token exists.
-//           - Added comments on CSRF cookie config, HTTPS, credentials include.
-//           - Improved 403 error handling for PGP requirement detection (case-insensitive).
-//           - Refined network error message in catch block.
-//           - Removed unused 'requiresPgpAuth' parameter from apiRequest.
+// 2025-04-09: Rev 2 - Added comments for TODO formatters.
+// 2025-04-07: Rev 1 - Added formatPrice (using Decimal.js), formatCurrency. Refined formatDate.
+//           - Implemented precise currency formatting using Decimal.js.
+//           - Added helper to combine formatted price with currency symbol.
+//           - Added options parameter to formatDate.
+//           - Reviewed renderStars function.
+//           - Added necessary imports and comments.
 //           - Added revision history block.
 
-import Cookies from 'js-cookie';
-import { API_BASE_URL } from './constants'; // Import base URL from constants
+import React from 'react'; // Import React, needed if functions return JSX like renderStars
+import { Decimal } from 'decimal.js';
+import { CURRENCY_SYMBOLS, DEFAULT_PAGE_SIZE } from './constants'; // Import currency symbols and page size constant
 
-// Helper to get CSRF token from cookies
-function getCsrfToken() {
-    return Cookies.get('csrftoken'); // Default Django CSRF cookie name
-}
-// --- Canary ---
 /**
- * Fetches the latest warrant canary data.
- * Assumes backend endpoint returns { canary_last_updated: "YYYY-MM-DD", ... }
- * @returns {Promise<object>} Canary data object or null.
+ * Formats a date string or Date object into a locale-aware string.
+ * @param {string | Date | null | undefined} dateInput - The date string or Date object.
+ * @param {Intl.DateTimeFormatOptions} [options={}] - Optional formatting options for toLocaleString/toLocaleDateString.
+ * @returns {string} Formatted date string or 'N/A'.
  */
-export const getCanaryData = () => apiRequest('/api/store/canary/', 'GET');
-/**
- * Centralized helper function for making API requests.
- * Handles base URL, JSON parsing, CSRF token, and basic error handling.
- * TODO: Consider enhancing error handling to rely on structured error codes from the backend
- * (e.g., { "code": "pgp_required", "detail": "..." }) instead of string matching for messages like "PGP Auth Required".
- * TODO: For specific use cases like type-ahead search, consider implementing AbortController logic
- * to cancel stale requests.
- * @param {string} endpoint - The API endpoint (e.g., '/api/store/users/me/').
- * @param {string} [method='GET'] - HTTP method.
- * @param {object|null} [data=null] - Data payload for POST/PUT/PATCH requests.
- * @returns {Promise<any>} - Resolves with the JSON response data or null for 204 No Content.
- * @throws {Error} - Throws an error with specific messages for known issues (Unauthorized, PGP Auth Required, Forbidden, Not Found, Network error) or the backend error detail.
- */
-async function apiRequest(endpoint, method = 'GET', data = null) {
-    const url = `${API_BASE_URL}${endpoint}`; // Use imported constant
-    const headers = {
-        ...(data && ['POST', 'PUT', 'PATCH'].includes(method.toUpperCase()) && { 'Content-Type': 'application/json' }),
-        'Accept': 'application/json',
+export const formatDate = (dateInput, options = {}) => { // Make options default to empty object
+    if (!dateInput) return 'N/A';
+
+    const defaultOptions = {
+        year: 'numeric',
+        month: 'short',
+        day: 'numeric',
+        // Optionally add time:
+        // hour: 'numeric',
+        // minute: '2-digit',
     };
 
-    const csrfToken = getCsrfToken();
-    if (csrfToken) {
-        headers['X-CSRFToken'] = csrfToken;
-    } else if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(method.toUpperCase())) {
-        console.warn(`CSRF token cookie 'csrftoken' not found for state-changing request: ${method} ${endpoint}`);
-    }
-
-    const config = {
-        method: method.toUpperCase(),
-        headers: headers,
-        // credentials: 'include', // Uncomment ONLY if needed for cross-origin cookie-based auth (CORS)
-    };
-
-    if (data && ['POST', 'PUT', 'PATCH'].includes(config.method)) {
-        config.body = JSON.stringify(data);
-    }
-
-    let response;
+    const formatOptions = { ...defaultOptions, ...options };
 
     try {
-        response = await fetch(url, config);
-
-        if (response.status === 204) {
-            return null;
+        const date = new Date(dateInput);
+        // Check if the date is valid after parsing
+        if (isNaN(date.getTime())) {
+            // Try common alternative if direct parse fails (e.g., simple YYYY-MM-DD)
+             const parts = String(dateInput).split('-');
+             if (parts.length === 3) {
+                 const potentiallyValidDate = new Date(parts[0], parts[1] - 1, parts[2]);
+                 if (!isNaN(potentiallyValidDate.getTime())) {
+                     date.setTime(potentiallyValidDate.getTime());
+                 } else {
+                    throw new Error('Invalid date input');
+                 }
+             } else {
+                 throw new Error('Invalid date input');
+             }
         }
-
-        let responseData = null;
-        const contentType = response.headers.get("content-type");
-        if (contentType && contentType.includes("application/json")) {
-            try {
-                responseData = await response.json();
-            } catch (jsonError) {
-                console.error(`API Error: Failed to parse JSON response for ${method} ${endpoint}`, jsonError);
-                throw new Error(`API Error: Unexpected response format received from server (${response.status}).`);
-            }
-        }
-
-        if (!response.ok) {
-            let errorMessage = response.statusText;
-            if (responseData) {
-                errorMessage = responseData.detail || responseData.error ||
-                               (typeof responseData === 'object' ? JSON.stringify(responseData) : String(responseData));
-            }
-
-            console.error(`API Error (${response.status}) on ${method} ${endpoint}: ${errorMessage}`);
-
-            if (response.status === 401) {
-                throw new Error('Unauthorized');
-            }
-            if (response.status === 403) {
-                // Relying on string message is brittle; structured error codes preferred.
-                if (typeof errorMessage === 'string' && errorMessage.toLowerCase().includes("pgp authenticated session required")) {
-                    throw new Error("PGP Auth Required");
-                }
-                throw new Error(errorMessage || 'Forbidden');
-            }
-            if (response.status === 404) {
-                throw new Error(errorMessage || 'Not Found');
-            }
-            // Throw the specific detail message from the backend for other errors
-            throw new Error(errorMessage);
-        }
-
-        return responseData;
-
-    } catch (error) {
-        console.error(`API Request Failed (${method} ${endpoint}):`, error);
-
-        if (error instanceof Error) {
-            // Re-throw specific errors we've already identified
-            if (['Unauthorized', 'PGP Auth Required', 'Forbidden', 'Not Found'].includes(error.message) || error.message.startsWith('API Error:')) {
-                throw error;
-            }
-            // Wrap other errors (like network failures)
-            throw new Error(`Network error or invalid response when trying to reach the API. Please check your connection. (${error.message})`);
+        // Use toLocaleString if time options are present, otherwise toLocaleDateString
+        if (formatOptions.hour || formatOptions.minute || formatOptions.second) {
+            return date.toLocaleString(undefined, formatOptions); // Use user's locale settings
         } else {
-            // Fallback for non-standard throws
-            throw new Error('An unknown network or API error occurred.');
+            return date.toLocaleDateString(undefined, formatOptions); // Use user's locale settings
         }
+    } catch (e) {
+        console.error("Error formatting date:", dateInput, e);
+        return 'Invalid Date';
     }
-}
-
-
-// --- Auth ---
-export const registerUser = (userData) => apiRequest('/api/store/auth/register/', 'POST', userData);
-export const loginInit = (credentials) => apiRequest('/api/store/auth/login/init/', 'POST', credentials);
-export const loginPgpVerify = (signatureData) => apiRequest('/api/store/auth/login/pgp_verify/', 'POST', signatureData);
-export const logoutUser = () => apiRequest('/api/store/auth/logout/', 'POST');
-
-// --- User ---
-export const getCurrentUser = () => apiRequest('/api/store/users/me/', 'GET');
-// Update requires PGP auth check *before* calling
-export const updateCurrentUser = (userData) => apiRequest('/api/store/users/me/', 'PATCH', userData);
-
-// --- Vendors ---
-export const getVendorPublicProfile = (username) => apiRequest(`/api/store/vendors/${username}/`, 'GET');
-// Stats/Sales require PGP auth check *before* calling
-export const getVendorStats = () => apiRequest('/api/store/vendor/stats/', 'GET');
-export const listMySales = (params = {}) => {
-    const query = new URLSearchParams(params).toString();
-    return apiRequest(`/api/store/vendor/sales/?${query}`, 'GET');
-};
-// TODO: Define getVendorFeedback(username, params={})
-
-// --- Categories ---
-export const getCategories = async (params = {}) => {
-    const query = new URLSearchParams(params).toString();
-    return apiRequest(`/api/store/categories/?${query}`, 'GET');
-};
-export const getCategoryDetail = (slug) => apiRequest(`/api/store/categories/${slug}/`, 'GET');
-
-// --- Products ---
-// Helper to standardize paginated response
-const handlePaginatedResponse = (responseData) => ({
-    count: responseData?.count ?? 0,
-    next: responseData?.next ?? null,
-    previous: responseData?.previous ?? null,
-    // Handle cases where API might return just an array for non-paginated lists
-    results: responseData?.results ?? (Array.isArray(responseData) ? responseData : []),
-});
-
-export const getProducts = async (params = {}) => {
-    const query = new URLSearchParams(params).toString();
-    const endpoint = `/api/store/products/?${query}`;
-    const responseData = await apiRequest(endpoint, 'GET');
-    return handlePaginatedResponse(responseData);
-};
-export const getProductDetail = (productIdOrSlug) => apiRequest(`/api/store/products/${productIdOrSlug}/`, 'GET');
-// Product CUD requires PGP auth check *before* calling
-export const createProduct = (productData) => apiRequest('/api/store/products/', 'POST', productData);
-export const updateProduct = (slug, productData) => apiRequest(`/api/store/products/${slug}/`, 'PATCH', productData);
-export const deleteProduct = (slug) => apiRequest(`/api/store/products/${slug}/`, 'DELETE');
-
-// --- Orders ---
-// Order actions generally require PGP auth check *before* calling
-export const placeOrder = (orderData) => apiRequest('/api/store/orders/place/', 'POST', orderData);
-export const listOrders = async (params = {}) => {
-    const query = new URLSearchParams(params).toString();
-    const endpoint = `/api/store/orders/?${query}`;
-    const responseData = await apiRequest(endpoint, 'GET');
-    return handlePaginatedResponse(responseData);
-};
-export const getOrderDetails = (orderId) => apiRequest(`/api/store/orders/${orderId}/`, 'GET');
-export const markOrderShipped = (orderId, trackingData = {}) => apiRequest(`/api/store/orders/${orderId}/ship/`, 'POST', trackingData);
-// export const finalizeOrder = (orderId) => apiRequest(`/api/store/orders/${orderId}/finalize/`, 'POST'); // May be deprecated by multi-sig flow initiation
-export const getUnsignedReleaseTxData = (orderId) => apiRequest(`/api/store/orders/${orderId}/prepare-release-tx/`, 'POST'); // <-- Uncommented and verified placement
-export const signRelease = (orderId, signatureData) => apiRequest(`/api/store/orders/${orderId}/sign_release/`, 'POST', { signature_data: signatureData }); // Pass signature in correct format
-export const openDispute = (orderId, reasonData) => apiRequest(`/api/store/orders/${orderId}/dispute/`, 'POST', reasonData);
-
-// --- Wallet/Withdrawal ---
-// Wallet actions require PGP auth check *before* calling
-export const getWalletBalances = () => apiRequest('/api/store/wallet/balances/', 'GET');
-export const prepareWithdrawal = (prepData) => apiRequest('/api/store/wallet/withdraw/prepare/', 'POST', prepData);
-export const executeWithdrawal = (execData) => apiRequest('/api/store/wallet/withdraw/execute/', 'POST', execData);
-
-// --- Feedback ---
-// Feedback requires PGP auth check *before* calling
-export const submitFeedback = (feedbackData) => apiRequest('/api/store/feedback/submit/', 'POST', feedbackData);
-// TODO: Define getFeedback({ recipient_id: vendorId / recipient_username: username, ...params }) function
-
-// --- Support Tickets ---
-// Ticket actions may require PGP auth check *before* calling
-export const listTickets = async (params = {}) => {
-     const query = new URLSearchParams(params).toString();
-     const endpoint = `/api/store/tickets/?${query}`;
-     const responseData = await apiRequest(endpoint, 'GET');
-     return handlePaginatedResponse(responseData);
-};
-export const getTicketDetail = (ticketId) => apiRequest(`/api/store/tickets/${ticketId}/`, 'GET');
-export const createTicket = (ticketData) => apiRequest('/api/store/tickets/', 'POST', ticketData);
-export const replyToTicket = (ticketId, messageData) => apiRequest(`/api/store/tickets/${ticketId}/messages/`, 'POST', messageData);
-
-// --- Utils ---
-// Encrypt requires PGP auth check *before* calling
-export const encryptShippingInfo = (vendorId, shippingData) => {
-    const payload = { vendor_id: vendorId, shipping_data: shippingData };
-    return apiRequest('/api/store/utils/encrypt-for-vendor/', 'POST', payload);
 };
 
-// --- Health Check ---
-export const healthCheck = () => apiRequest('/health/', 'GET');
+
+/**
+ * Formats a numeric amount to a specific number of decimal places, tailored for cryptocurrencies.
+ * Uses Decimal.js for precision.
+ * @param {number | string | Decimal | null | undefined} amount - The numeric amount to format.
+ * @param {string} currencyCode - The currency code (e.g., 'BTC', 'XMR', 'USD').
+ * @returns {string | null} Formatted price string or null if input is invalid/null/undefined.
+ */
+export const formatPrice = (amount, currencyCode) => {
+    if (amount === null || amount === undefined || amount === '') return null;
+
+    try {
+        const value = new Decimal(amount);
+        let decimalPlaces;
+
+        // Determine decimal places based on currency code
+        switch (currencyCode?.toUpperCase()) {
+            case 'BTC':
+                decimalPlaces = 8;
+                break;
+            case 'XMR':
+                // Monero has 12 decimal places (piconero), but often displayed with fewer
+                decimalPlaces = 6; // Common display precision, adjust if needed
+                // decimalPlaces = 12; // Full precision
+                break;
+            case 'ETH':
+                // Ether has 18 decimal places (wei), often displayed with 4-8
+                decimalPlaces = 6; // Common display precision, adjust if needed
+                // decimalPlaces = 8;
+                break;
+            case 'USD':
+            case 'EUR':
+            case 'GBP': // Add other FIAT currencies as needed
+                decimalPlaces = 2;
+                break;
+            default:
+                // Default for unknown or non-crypto currencies (assume 2dp)
+                decimalPlaces = 2;
+        }
+
+        // Ensure we don't display negative zero
+        if (value.isZero() && value.isNegative()) {
+            return new Decimal(0).toFixed(decimalPlaces);
+        }
+
+        return value.toFixed(decimalPlaces);
+
+    } catch (e) {
+        console.error(`Error formatting price for ${currencyCode}:`, amount, e);
+        return null; // Indicate formatting failure
+    }
+};
+
+/**
+ * Formats a numeric amount as currency, prepending the correct symbol.
+ * @param {number | string | Decimal | null | undefined} amount - The numeric amount.
+ * @param {string} currencyCode - The currency code (e.g., 'BTC', 'XMR', 'USD').
+ * @param {object} [options={}] - Optional flags.
+ * @param {boolean} [options.showNA=true] - Whether to return 'N/A' for null/invalid amounts (default true). Set to false to return empty string ''.
+ * @returns {string} Formatted currency string (e.g., '₿ 0.12345678', '$ 19.99'), 'N/A', or ''.
+ */
+export const formatCurrency = (amount, currencyCode, options = { showNA: true }) => {
+    const formattedAmount = formatPrice(amount, currencyCode);
+
+    if (formattedAmount === null) {
+        // Handle zero explicitly if needed, otherwise respect showNA option
+        if (amount === 0 || amount === '0') {
+             const zeroFormatted = formatPrice(0, currencyCode);
+             const symbol = CURRENCY_SYMBOLS[currencyCode?.toUpperCase()] || currencyCode || '';
+             return `${symbol} ${zeroFormatted}`;
+        }
+        return options.showNA ? 'N/A' : ''; // Return N/A or empty string based on option
+    }
+
+    const symbol = CURRENCY_SYMBOLS[currencyCode?.toUpperCase()] || currencyCode || ''; // Use code if symbol missing
+
+    return `${symbol} ${formattedAmount}`;
+};
+
+
+/**
+ * Renders a star rating component using text characters.
+ * NOTE: Consider using SVG icons for better styling and accessibility.
+ * @param {number | null | undefined} rating - The rating value (ideally 0-5).
+ * @returns {React.ReactElement | string} JSX span with stars or 'N/A'.
+ */
+export const renderStars = (rating) => {
+    if (rating === null || rating === undefined || isNaN(rating)) return 'N/A';
+
+    const RATING_MAX = 5;
+    // Clamp rating value between 0 and RATING_MAX
+    const ratingValue = Math.max(0, Math.min(Number(rating), RATING_MAX));
+    // Round to nearest 0.5 for half-star representation
+    const rounded = Math.round(ratingValue * 2) / 2;
+    const fullStars = Math.floor(rounded);
+    const halfStar = rounded % 1 !== 0;
+    const emptyStars = RATING_MAX - fullStars - (halfStar ? 1 : 0);
+
+    // Ensure we don't exceed max stars due to rounding edge cases (should be rare with clamp)
+    const totalStars = fullStars + (halfStar ? 1 : 0) + emptyStars;
+    if (totalStars !== RATING_MAX && totalStars >= 0) { // Ensure emptyStars doesn't go negative
+        console.warn("Star calculation resulted in incorrect total:", totalStars, "for rating:", rating);
+        // Adjust calculation if necessary, though clamping should prevent most issues
+    }
+
+    return (
+        <span title={`${ratingValue.toFixed(2)} / ${RATING_MAX.toFixed(0)}`}>
+            {'★'.repeat(fullStars)}
+            {halfStar ? '½' : ''} {/* TODO: Consider using a better half-star character or icon library */}
+            {'☆'.repeat(Math.max(0, emptyStars))} {/* Ensure emptyStars isn't negative */}
+        </span>
+    );
+};
+
+// --- TODO: Implement other formatters as needed ---
+// export const truncateText = (text, maxLength = 100) => {
+//     if (!text) return '';
+//     if (text.length <= maxLength) return text;
+//     return text.substring(0, maxLength) + '...';
+// };
+
+// export const truncateHash = (hash, startChars = 6, endChars = 4) => {
+//     if (!hash || typeof hash !== 'string' || hash.length < (startChars + endChars)) return hash || '';
+//     return `${hash.substring(0, startChars)}...${hash.substring(hash.length - endChars)}`;
+// };
+
+// export const formatBytes = (bytes, decimals = 2) => {
+//     if (!+bytes) return '0 Bytes';
+//     const k = 1024;
+//     const dm = decimals < 0 ? 0 : decimals;
+//     const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB', 'PB', 'EB', 'ZB', 'YB'];
+//     const i = Math.floor(Math.log(bytes) / Math.log(k));
+//     return `${parseFloat((bytes / Math.pow(k, i)).toFixed(dm))} ${sizes[i]}`;
+// };
+
+// Requires date-fns or dayjs library:
+// import { formatDistanceToNowStrict } from 'date-fns';
+// export const formatTimeAgo = (dateInput) => {
+//     if (!dateInput) return 'N/A';
+//     try {
+//         const date = new Date(dateInput);
+//         if (isNaN(date.getTime())) throw new Error('Invalid date');
+//         return formatDistanceToNowStrict(date, { addSuffix: true });
+//     } catch (e) {
+//         console.error("Error formatting time ago:", e);
+//         return 'Invalid Date';
+//     }
+// };
+// --- END TODO ---

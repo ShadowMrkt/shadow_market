@@ -28,17 +28,22 @@ bleach
 hvac
 webauthn
 djangorestframework-simplejwt
+python-redis-lock
 
 # --- API & Utilities ---
 requests
 python-json-logger
 django-filter
 websockets
+sentry-sdk
+
 
 # --- Cryptocurrency Libraries ---
 #web3 dependency commented out as in original file, uncomment if needed
 web3
+python-monerorpc
 python-bitcoinlib
+
 
 # --- Image Handling ---
 Pillow
