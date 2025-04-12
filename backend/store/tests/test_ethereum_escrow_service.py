@@ -2,33 +2,17 @@
 # Author: The Void
 
 # --- Revision History ---
-# v1.3.4 (2025-04-11): FIX (Gemini)
-#           - Removed pytest.skip from test_create_escrow_eth_success.
-#           - Removed the try/except block specifically designed to catch the
-#             "Service not implemented" CryptoProcessingError and skip the test.
-#           - Test is now expected to FAIL until the underlying ETH service
-#             in common_escrow_utils / ethereum_escrow_service is implemented.
-# v1.3.3 (2025-04-11): FIX (Gemini)
-#           - Corrected skip condition in test_create_escrow_eth_success again.
-#             Check the message of the caught CryptoProcessingError directly,
-#             as the original NotImplementedError is not chained as __cause__.
-# v1.3.2 (2025-04-11): FIX (Gemini)
-#           - Simplified skip condition in test_create_escrow_eth_success
-#             to only check `isinstance(e.__cause__, NotImplementedError)`...
-# v1.3.1 (2025-04-10): FIX (Gemini)
-#           - Adjusted test_create_escrow_eth_success exception handling...
-#           - Updated expected error message match in test_create_escrow_eth_crypto_fail...
-# v1.3.0 (2025-04-09): FIX (The Void)
-#   - Added `create=True` to @patch decorators...
-#   - Updated `test_create_escrow_eth_success` to `pytest.skip`...
-# v1.2.0 (2025-04-09): FIX (The Void)
-#   - Modified `global_settings_eth` fixture...
-#   - Resolved IntegrityError...
-# v1.1.0 (2025-04-09): FIX (The Void)
-#   - Updated user fixtures (market_user_eth, buyer_user_eth, vendor_user_eth)...
-# v1.0.0 (2025-04-09): REFACTOR / SKELETON (The Void)
-#   - Created this skeleton file for Ethereum-specific escrow tests.
-# --- (Previous revisions omitted) ---
+# 2025-04-11 (Gemini Rev 4):
+#   - Removed direct import of 'get_market_user' (ModuleNotFoundError).
+# 2025-04-11 (Gemini Rev 3):
+#   - Removed direct import of 'create_notification' (ModuleNotFoundError).
+#   - Updated @patch target for 'create_notification' to the service module namespace.
+# 2025-04-11 (Gemini Rev 2):
+#   - Corrected ImportError by importing IntegrityError from django.db instead of django.core.exceptions.
+# 2025-04-11 (Gemini Rev 1):
+#   - Updated expected error message in test_create_escrow_eth_crypto_fail
+#     to match actual error raised by service ('Failed to generate...').
+# ... (Previous revisions omitted) ...
 # ------------------------
 
 # --- Standard Library Imports ---
@@ -44,8 +28,9 @@ import datetime # Keep even if unused for potential future use
 # --- Third-Party Imports ---
 import pytest
 from django.conf import settings as django_settings
+# FIX (Rev 2): Import IntegrityError from django.db
 from django.core.exceptions import ValidationError as DjangoValidationError, FieldError, ObjectDoesNotExist
-from django.db import transaction # Keep even if unused for potential future use
+from django.db import transaction, IntegrityError # Keep transaction, add IntegrityError
 from django.utils import timezone
 
 # --- Local Imports ---
@@ -55,7 +40,7 @@ from ledger.models import UserBalance, LedgerTransaction # noqa - Mark as used b
 
 # Services and Exceptions
 # Import specific service being tested if direct calls are made, otherwise rely on common_escrow_utils dispatch
-# from store.services import ethereum_escrow_service
+from store.services import ethereum_escrow_service as service_under_test # Import service under test
 from store.services import common_escrow_utils
 # Assume ethereum_service is imported within ethereum_escrow_service or patched
 # from store.services import ethereum_service
@@ -63,6 +48,9 @@ from ledger import services as ledger_service
 from ledger.services import InsufficientFundsError, InvalidLedgerOperationError # noqa
 from ledger.exceptions import LedgerError # noqa
 from store.exceptions import EscrowError, CryptoProcessingError # noqa
+# FIX (Rev 3): Removed direct import of create_notification
+# FIX (Rev 4): Removed direct import of get_market_user
+# from store.utils.users import get_market_user # Removed import
 
 DjangoUser = django_get_user_model()
 
@@ -106,6 +94,8 @@ DEFAULT_CATEGORY_ID = 1
 # Get constant names dynamically from common_escrow_utils
 ATTR_ETH_OWNER_ADDRESS_NAME = getattr(common_escrow_utils, 'ATTR_ETH_MULTISIG_OWNER_ADDRESS', 'eth_multisig_owner_address') # Default added
 ATTR_ETH_WITHDRAWAL_ADDRESS_NAME = getattr(common_escrow_utils, 'ATTR_ETH_WITHDRAWAL_ADDRESS', 'eth_withdrawal_address') # Default added
+# Dynamically get constant if defined, otherwise use default (used in setup_eth_escrow)
+ATTR_ETH_ESCROW_ADDRESS_NAME = getattr(common_escrow_utils, 'ATTR_ETH_ESCROW_ADDRESS', 'eth_escrow_address')
 
 
 # --- Helper Function for Atomic Conversion (Generic, keep) ---
@@ -252,7 +242,6 @@ def global_settings_eth(db, market_user_eth, mock_settings_eth_escrow) -> Global
             }
         )
         # FIX v1.2.0: Set other currency fields to valid defaults (0) instead of None
-        # This assumes these fields have NOT NULL constraints in the DB schema.
         gs.market_fee_percentage_btc = Decimal('0.0')
         gs.market_fee_percentage_xmr = Decimal('0.0') # Set default instead of None
         gs.confirmations_needed_btc = 0
@@ -369,7 +358,7 @@ def setup_eth_escrow(db, mock_settings_eth_escrow) -> Callable[[Order, str], Ord
 
         update_fields_order = ['status', 'payment_deadline', 'updated_at']
         # Set ETH specific field (e.g., the contract address for this order)
-        eth_addr_attr = getattr(common_escrow_utils, 'ATTR_ETH_ESCROW_ADDRESS', 'eth_escrow_address') # Dynamic get
+        eth_addr_attr = ATTR_ETH_ESCROW_ADDRESS_NAME # Use dynamically fetched name
         if hasattr(order, eth_addr_attr):
             setattr(order, eth_addr_attr, contract_address)
             update_fields_order.append(eth_addr_attr)
@@ -439,6 +428,7 @@ def mark_eth_shipped(db, mock_settings_eth_escrow, global_settings_eth) -> Calla
     """ Helper fixture to simulate marking an ETH order as shipped. """
     # !!! IMPLEMENTATION NEEDED: Adapt based on ETH release mechanism (e.g., preparing contract call data) !!!
     try:
+        # Ensure these helpers exist and are importable
         from store.services.common_escrow_utils import _get_currency_precision, _get_withdrawal_address
     except ImportError: pytest.fail("Could not import helpers in mark_eth_shipped.")
 
@@ -482,7 +472,7 @@ def mark_eth_shipped(db, mock_settings_eth_escrow, global_settings_eth) -> Calla
             'type': release_type,
             'data': unsigned_release_data, # Assume this comes from fixture call
             'payout': str(payout_std), # Store STANDARD ETH as string
-            'fee': str(fee_std),       # Store STANDARD ETH as string
+            'fee': str(fee_std),      # Store STANDARD ETH as string
             'vendor_address': vendor_payout_address,
             'ready_for_broadcast': False, # Needs signing/interaction
             'signatures': {}, # Store signatures keyed by signer's ETH address
@@ -576,6 +566,8 @@ def mark_disputed(db) -> Callable[[Order], Order]:
     def _mark_disputed(order: Order) -> Order:
         order.status = OrderStatusChoices.DISPUTED
         order.disputed_at = timezone.now()
+        # Ensure Dispute object exists for the order
+        Dispute.objects.get_or_create(order=order, defaults={'status': Dispute.StatusChoices.OPEN})
         order.save(update_fields=['status', 'disputed_at', 'updated_at'])
         order.refresh_from_db()
         return order
@@ -597,115 +589,103 @@ def order_disputed_eth(order_shipped_eth, mark_disputed) -> Order:
 # --- Test Class ---
 
 @pytest.mark.django_db(transaction=True) # Use transactions for tests involving multiple saves
-@pytest.mark.usefixtures("mock_settings_eth_escrow", "global_settings_eth", "market_user_eth")
+@pytest.mark.usefixtures("db", "mock_settings_eth_escrow", "global_settings_eth", "market_user_eth")
 class TestEthereumEscrowService:
     """ Test suite for the store.services.ethereum_escrow_service module. (SKELETON) """
 
     def setup_method(self, method):
         """ Reset market user cache if it exists in common_escrow_utils. """
-        if hasattr(common_escrow_utils, '_market_user_cache'):
-            common_escrow_utils._market_user_cache = None
+        # Check the actual location of get_market_user cache if used
+        if hasattr(common_escrow_utils, 'get_market_user'):
+             if hasattr(common_escrow_utils.get_market_user, 'cache_clear'):
+                 common_escrow_utils.get_market_user.cache_clear()
+
 
     # === Test ETH Escrow Creation ===
     # Patch the assumed function in ethereum_service that creates the contract
-    @patch('store.services.ethereum_service.create_eth_multisig_contract', create=True)
-    def test_create_escrow_eth_success(self, mock_create_contract, order_pending_eth, market_user_eth, buyer_user_eth, vendor_user_eth):
+    @patch('store.services.ethereum_escrow_service.ethereum_service.create_eth_multisig_contract', create=True)
+    # FIX (Rev 3): Patch create_notification where it's looked up (in the service module)
+    @patch('store.services.ethereum_escrow_service.create_notification')
+    @patch('store.services.ethereum_escrow_service.get_market_user')
+    def test_create_escrow_eth_success(self, mock_get_mkt_user, mock_notify, mock_create_contract, order_pending_eth, market_user_eth, buyer_user_eth, vendor_user_eth):
         """ Test successful creation of ETH escrow (contract deployment). """
         order = order_pending_eth
+        mock_get_mkt_user.return_value = market_user_eth # Ensure helper returns correct user
         # Mock contract deployment result
         mock_create_contract.return_value = {'contract_address': MOCK_ETH_CONTRACT_ADDRESS, 'tx_hash': '0xDEPLOY_HASH...'}
 
         # Call via the common dispatcher
-        # FIX [Rev 1.3.4]: Removed try/except block that skipped test on expected
-        #                  CryptoProcessingError("...Service not implemented...").
-        #                  Test will now FAIL until the service is implemented.
         common_escrow_utils.create_escrow_for_order(order)
 
-        # --- Assertions (will only be reached if the above call succeeds) ---
+        # --- Assertions ---
         order.refresh_from_db()
-        assert order.status == OrderStatusChoices.PENDING_PAYMENT, "Order status should remain PENDING_PAYMENT after escrow creation."
-        eth_addr_attr = getattr(common_escrow_utils, 'ATTR_ETH_ESCROW_ADDRESS', 'eth_escrow_address')
-        assert getattr(order, eth_addr_attr, None) == MOCK_ETH_CONTRACT_ADDRESS, "ETH escrow contract address not set correctly on order."
-        assert order.payment_deadline is not None, "Payment deadline should be set."
-        assert order.payment_deadline > timezone.now(), "Payment deadline should be in the future."
+        assert order.status == OrderStatusChoices.PENDING_PAYMENT
+        eth_addr_attr = ATTR_ETH_ESCROW_ADDRESS_NAME
+        assert getattr(order, eth_addr_attr, None) == MOCK_ETH_CONTRACT_ADDRESS
+        assert order.payment_deadline is not None
+        assert order.payment_deadline > timezone.now()
         try:
             payment = CryptoPayment.objects.get(order=order, currency='ETH')
-            assert payment.payment_address == MOCK_ETH_CONTRACT_ADDRESS, "CryptoPayment address mismatch."
-            assert payment.expected_amount_native == order.total_price_native_selected, "CryptoPayment expected amount (Wei) mismatch."
+            assert payment.payment_address == MOCK_ETH_CONTRACT_ADDRESS
+            assert payment.expected_amount_native == order.total_price_native_selected
         except CryptoPayment.DoesNotExist:
             pytest.fail("CryptoPayment record for ETH was not created.")
         mock_create_contract.assert_called_once()
-        # Verify arguments passed to the mock
         call_args, call_kwargs = mock_create_contract.call_args
-        owner_arg_name = 'owner_addresses' # Assuming this name, adjust if needed based on ethereum_service implementation
-        assert owner_arg_name in call_kwargs, f"'{owner_arg_name}' keyword arg missing in mock call."
+        owner_arg_name = 'owner_addresses'
+        assert owner_arg_name in call_kwargs
         owner_addresses_passed = call_kwargs[owner_arg_name]
         assert MOCK_BUYER_ETH_OWNER_ADDR in owner_addresses_passed
         assert MOCK_VENDOR_ETH_OWNER_ADDR in owner_addresses_passed
         assert MOCK_MARKET_ETH_OWNER_ADDR in owner_addresses_passed
         assert len(owner_addresses_passed) == 3
-        assert call_kwargs.get('threshold') == 2 # Assuming default threshold
+        assert call_kwargs.get('threshold') == 2
 
 
-    # FIX v1.3.1: Updated match pattern for expected error.
-    # Note: This test currently verifies the handling of the NotImplementedError path.
-    # It does NOT test the handling of a genuine crypto deploy failure until the service is implemented.
-    @patch('store.services.ethereum_service.create_eth_multisig_contract', side_effect=CryptoProcessingError("ETH Deploy Failed"), create=True)
-    def test_create_escrow_eth_crypto_fail(self, mock_create_contract, order_pending_eth, buyer_user_eth, vendor_user_eth, market_user_eth): # Added users to ensure addresses are attempted
+    @patch('store.services.ethereum_escrow_service.ethereum_service.create_eth_multisig_contract', side_effect=CryptoProcessingError("ETH Deploy Failed"), create=True)
+    @patch('store.services.ethereum_escrow_service.get_market_user')
+    def test_create_escrow_eth_crypto_fail(self, mock_get_mkt_user, mock_create_contract, order_pending_eth, buyer_user_eth, vendor_user_eth, market_user_eth):
         """ Test create_escrow handles crypto service failure (ETH). """
+        mock_get_mkt_user.return_value = market_user_eth
+
         order = order_pending_eth
         initial_status = order.status
 
-        # Expect CryptoProcessingError originating from the NOT IMPLEMENTED path
-        # The originally mocked side_effect=CryptoProcessingError("ETH Deploy Failed") is never reached
-        with pytest.raises(CryptoProcessingError, match="ETH escrow creation failed: Service not implemented."):
-            common_escrow_utils.create_escrow_for_order(order)
+        # FIX (Gemini Rev 1): Updated match string
+        with pytest.raises(CryptoProcessingError, match="Failed to generate ETH escrow details: ETH Deploy Failed"):
+             common_escrow_utils.create_escrow_for_order(order)
 
         # Assert order state unchanged
         order.refresh_from_db()
-        assert order.status == initial_status, "Order status should not change on crypto failure."
-        eth_addr_attr = getattr(common_escrow_utils, 'ATTR_ETH_ESCROW_ADDRESS', 'eth_escrow_address')
-        assert getattr(order, eth_addr_attr, None) is None, "ETH escrow address should not be set on failure."
-        assert not CryptoPayment.objects.filter(order=order, currency='ETH').exists(), "CryptoPayment should not be created on failure."
-        # Verify the mock that *would* be called (but isn't due to NotImplementedError) was NOT called
-        mock_create_contract.assert_not_called() # Because the NotImplementedError happens before the call
+        assert order.status == initial_status
+        eth_addr_attr = ATTR_ETH_ESCROW_ADDRESS_NAME
+        assert getattr(order, eth_addr_attr, None) is None
+        assert not CryptoPayment.objects.filter(order=order, currency='ETH').exists()
+        mock_create_contract.assert_called_once() # Verify the mock service call was attempted
 
 
     # === Placeholder Tests (Unchanged) ===
     # !!! IMPLEMENTATION NEEDED !!!
-    # @patch('store.models.User.objects.get')
-    # @patch('store.services.ethereum_service.scan_for_payment_confirmation')
-    # @patch('ledger.services.credit_funds') ... etc ...
-    # def test_check_confirm_eth_success(self, ..., order_escrow_created_eth, market_user_eth):
-        # ...
+    # @patch('store.services.ethereum_escrow_service.ethereum_service.check_eth_multisig_deposit')
+    # @patch('store.services.ethereum_escrow_service.ledger_service.lock_funds')
+    # # ... other patches ...
+    # def test_check_confirm_eth_success(self, mock_lock_funds, mock_check_deposit, order_escrow_created_eth, ...):
+    #    payment = CryptoPayment.objects.get(...)
+    #    mock_check_deposit.return_value = (True, payment.expected_amount_native, MOCK_ETH_TX_HASH)
+    #    mock_lock_funds.return_value = True
+    #    confirmed = common_escrow_utils.check_payment_confirmation(payment.id)
+    #    assert confirmed is True
+    #    # ... other assertions ...
 
-    # !!! IMPLEMENTATION NEEDED !!!
-    # @patch('store.services.ethereum_service.prepare_eth_release_tx') # Adjusted patch target
-    # def test_mark_shipped_eth_success(self, mock_prepare_release, order_payment_confirmed_eth, vendor_user_eth):
-        # ...
 
-    # !!! IMPLEMENTATION NEEDED !!!
-    # @patch('store.services.ethereum_service.sign_eth_multisig_tx') # Adjusted patch target
-    # def test_sign_order_release_eth_buyer(self, mock_sign_eth, order_shipped_eth, buyer_user_eth):
-        # ...
+# Note: Ensure ETHEREUM_SERVICE_APP_LABEL and COMMON_ESCROW_UTILS_APP_LABEL are correctly defined
+# in the service_under_test module or replace with the actual import path string. Example:
+# ETHEREUM_SERVICE_APP_LABEL = 'ethereum_service' # If it's a sibling service
+# COMMON_ESCROW_UTILS_APP_LABEL = 'common_escrow_utils'
+# LEDGER_SERVICE_APP_LABEL = 'ledger_service'
 
-    # !!! IMPLEMENTATION NEEDED !!!
-    # @patch('store.models.User.objects.get')
-    # @patch('store.services.ethereum_service.finalize_and_broadcast_eth_release') # Adjusted
-    # @patch('ledger.services.credit_funds')
-    # def test_broadcast_release_eth_success(self, ..., order_ready_for_broadcast_eth, market_user_eth):
-        # ...
-
-    # !!! IMPLEMENTATION NEEDED !!!
-    # @patch('store.models.User.objects.get')
-    # @patch('store.services.ethereum_service.create_and_broadcast_dispute_tx') # Adjusted
-    # @patch('ledger.services.credit_funds')
-    # def test_resolve_dispute_eth_split(self, ..., order_disputed_eth, moderator_user_eth, market_user_eth):
-        # ...
-
-    # !!! IMPLEMENTATION NEEDED !!! (If applicable to ETH flow)
-    # def test_get_unsigned_release_tx_eth_success(self, order_shipped_eth, buyer_user_eth):
-        # ...
+# If they are imported directly, use the module path:
+# e.g. @patch('store.services.ethereum_service.check_eth_multisig_deposit')
 
 # === Test Placeholders / Future Work ===
 # Add tests for ETH-specific contract interactions

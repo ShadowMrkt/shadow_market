@@ -1,6 +1,9 @@
 # backend/store/services/common_escrow_utils.py
 # Contains shared constants, exceptions, and helper functions for escrow services.
 # Revision History:
+# 2025-04-11: (Gemini Rev 8): Re-enabled 'ETH-MULTISIG' mapping in service_module_map
+#                            to resolve test failures in test_ethereum_escrow_service.py.
+# 2025-04-11: (Gemini): Updated service_module_map: Removed 'ETH-MULTISIG', Added 'ETH-BASIC'.
 # 2025-04-10: v1.13.1 (Gemini):
 #           - FIXED: ValueError in _get_specific_escrow_service due to incorrect case comparison.
 #                    Changed `escrow_type.upper()` to `escrow_type.lower()` for comparison with EscrowTypeChoices.values.
@@ -114,7 +117,7 @@ ATTR_BTC_REDEEM_SCRIPT: Final = 'btc_redeem_script'
 ATTR_BTC_ESCROW_ADDRESS: Final = 'btc_escrow_address'
 ATTR_XMR_MULTISIG_WALLET_NAME: Final = 'xmr_multisig_wallet_name'
 ATTR_XMR_MULTISIG_INFO_ORDER: Final = 'xmr_multisig_info' # Note: Same name as user attr for XMR
-ATTR_ETH_ESCROW_ADDRESS: Final = 'eth_escrow_address' # Example if needed
+ATTR_ETH_ESCROW_ADDRESS: Final = 'eth_escrow_contract_address' # Corrected attribute name based on models.py
 
 
 # Define a basic protocol for expected crypto service methods (can be expanded)
@@ -212,58 +215,53 @@ def _get_currency_precision(currency: str) -> int:
     return precision
 
 
-def _get_atomic_to_standard_converter(crypto_service: CryptoServiceInterface, currency: str) -> Optional[callable]:
-    """ Gets the appropriate atomic-to-standard conversion function from the crypto service. """
+def _get_atomic_to_standard_converter(crypto_service: Optional[CryptoServiceInterface], currency: str) -> Optional[callable]:
+    """ Gets the appropriate atomic-to-standard conversion function from the crypto service (if provided). """
+    if not crypto_service: return None # Handle case where service isn't needed/provided for fallback
     conversion_method_map = {
         'BTC': 'satoshis_to_btc',
         'XMR': 'piconero_to_xmr',
         'ETH': 'wei_to_eth',
-        # Add other currencies here
     }
     method_name = conversion_method_map.get(currency.upper())
     if method_name and hasattr(crypto_service, method_name):
         return getattr(crypto_service, method_name)
-    logger.warning(f"No specific atomic-to-standard conversion method found for {currency} on {type(crypto_service).__name__}.")
+    logger.warning(f"No specific converter method '{method_name}' found for {currency} on {type(crypto_service).__name__}.")
     return None
 
 
-def _convert_atomic_to_standard(amount_atomic: Decimal, currency: str, crypto_service: CryptoServiceInterface) -> Decimal:
-    """ Converts an atomic amount (Decimal) to standard units using the crypto service method or fallback. """
+def _convert_atomic_to_standard(amount_atomic: Decimal, currency: str, crypto_service: Optional[CryptoServiceInterface]) -> Decimal:
+    """ Converts an atomic amount (Decimal) to standard units using the crypto service method or fallback precision. """
     log_prefix = f"(_convert_atomic_to_std for {currency})"
     if amount_atomic is None:
         raise ValueError("Cannot convert None atomic amount.")
-
     converter = _get_atomic_to_standard_converter(crypto_service, currency)
     if converter:
         try:
             atomic_int = int(amount_atomic)
             standard_amount = converter(atomic_int)
-            logger.debug(f"{log_prefix}: Converted {amount_atomic} atomic to {standard_amount} standard using {converter.__name__}.")
             if not isinstance(standard_amount, Decimal):
-                standard_amount = Decimal(str(standard_amount))
+                 standard_amount = Decimal(str(standard_amount))
             return standard_amount
         except (TypeError, ValueError, InvalidOperation) as conv_err:
-            logger.error(f"{log_prefix}: Error using {getattr(converter,'__name__','N/A')} to convert {amount_atomic} atomic: {conv_err}. Falling back.", exc_info=True)
-    else:
-        logger.warning(f"{log_prefix}: Falling back to precision-based conversion for {amount_atomic} atomic.")
-
-    # Fallback logic (only if converter fails or is missing)
+             logger.error(f"{log_prefix}: Error using {getattr(converter,'__name__','N/A')}: {conv_err}. Falling back.", exc_info=True)
+    # Fallback logic using precision
     try:
-        precision = _get_currency_precision(currency) # Now raises ValueError if unsupported
+        precision = _get_currency_precision(currency)
         divisor = Decimal(f'1e{precision}')
         if divisor == 0:
-            raise ValueError(f"Invalid precision {precision} resulting in zero divisor for currency {currency}.")
+            raise ValueError(f"Invalid precision {precision} for {currency}.")
         if not isinstance(amount_atomic, Decimal):
             amount_atomic = Decimal(str(amount_atomic))
         standard_amount = (amount_atomic / divisor).quantize(Decimal(f'1e-{precision}'), rounding=ROUND_DOWN)
-        logger.debug(f"{log_prefix}: Fallback conversion: {amount_atomic} atomic -> {standard_amount} standard (Precision: {precision})")
+        logger.debug(f"{log_prefix}: Fallback conversion: {amount_atomic} atomic -> {standard_amount} standard")
         return standard_amount
-    except ValueError as precision_err: # Catch error from _get_currency_precision
-        logger.error(f"{log_prefix}: Cannot perform fallback conversion for {amount_atomic} atomic due to error: {precision_err}")
-        raise EscrowError(f"Cannot convert atomic amount for unsupported currency {currency}.") from precision_err
+    except ValueError as precision_err:
+        logger.error(f"{log_prefix}: Fallback failed: {precision_err}")
+        raise EscrowError(f"Cannot convert unsupported currency {currency}.") from precision_err
     except Exception as e:
-        logger.exception(f"{log_prefix}: Unexpected error during fallback conversion for {amount_atomic} atomic: {e}")
-        raise EscrowError("Unexpected error during atomic to standard conversion.") from e
+        logger.exception(f"{log_prefix}: Unexpected fallback error: {e}")
+        raise EscrowError("Unexpected conversion error.") from e
 
 
 def _get_market_fee_percentage(currency: str) -> Decimal:
@@ -277,10 +275,10 @@ def _get_market_fee_percentage(currency: str) -> Decimal:
     default_fee = getattr(settings, 'DEFAULT_MARKET_FEE_PERCENTAGE', Decimal('2.5'))
     try:
         if not isinstance(default_fee, Decimal):
-            default_fee = Decimal(str(default_fee))
+             default_fee = Decimal(str(default_fee))
         if not (Decimal('0.0') <= default_fee <= Decimal('100.0')):
-            logger.warning(f"DEFAULT_MARKET_FEE_PERCENTAGE setting ('{settings.DEFAULT_MARKET_FEE_PERCENTAGE}') out of range 0-100. Clamping.")
-            default_fee = max(Decimal('0.0'), min(Decimal('100.0'), default_fee))
+             logger.warning(f"DEFAULT_MARKET_FEE_PERCENTAGE setting ('{settings.DEFAULT_MARKET_FEE_PERCENTAGE}') out of range 0-100. Clamping.")
+             default_fee = max(Decimal('0.0'), min(Decimal('100.0'), default_fee))
     except (InvalidOperation, TypeError, ValueError):
         logger.error(f"Invalid format for settings.DEFAULT_MARKET_FEE_PERCENTAGE ('{settings.DEFAULT_MARKET_FEE_PERCENTAGE}'). Using hardcoded 2.5%.")
         default_fee = Decimal('2.5') # Hardcoded fallback if setting is unusable
@@ -306,16 +304,16 @@ def _get_market_fee_percentage(currency: str) -> Decimal:
         # If attribute exists and is not None, validate/convert it
         if isinstance(fee_value, Decimal):
             if not (Decimal('0.0') <= fee_value <= Decimal('100.0')):
-                logger.warning(f"Market fee for {currency} ({fee_value}%) from GlobalSettings is outside 0-100 range. Clamping.")
-                fee_value = max(Decimal('0.0'), min(Decimal('100.0'), fee_value))
+                 logger.warning(f"Market fee for {currency} ({fee_value}%) from GlobalSettings is outside 0-100 range. Clamping.")
+                 fee_value = max(Decimal('0.0'), min(Decimal('100.0'), fee_value))
             return fee_value
         else:
             # Try converting non-Decimal value, raise ValueError on failure
             try:
                 fee_decimal = Decimal(str(fee_value))
                 if not (Decimal('0.0') <= fee_decimal <= Decimal('100.0')):
-                    logger.warning(f"Converted market fee for {currency} ({fee_decimal}%) is outside 0-100 range. Clamping.")
-                    fee_decimal = max(Decimal('0.0'), min(Decimal('100.0'), fee_decimal))
+                     logger.warning(f"Converted market fee for {currency} ({fee_decimal}%) is outside 0-100 range. Clamping.")
+                     fee_decimal = max(Decimal('0.0'), min(Decimal('100.0'), fee_decimal))
                 logger.debug(f"Converted stored fee '{fee_value}' to Decimal {fee_decimal} for {currency}.")
                 return fee_decimal
             except (InvalidOperation, TypeError, ValueError) as conv_err:
@@ -460,7 +458,7 @@ def _get_specific_escrow_service(currency: str, escrow_type: str) -> ModuleType:
     if service_key in _specific_service_cache:
         return _specific_service_cache[service_key]
 
-    # --- UPDATED Map ---
+    # --- Service Map (FIX APPLIED HERE) ---
     service_module_map = {
         # Bitcoin
         'BTC-MULTISIG': 'store.services.bitcoin_escrow_service',
@@ -468,10 +466,11 @@ def _get_specific_escrow_service(currency: str, escrow_type: str) -> ModuleType:
         # Monero
         'XMR-MULTISIG': 'store.services.monero_escrow_service',
         'XMR-BASIC': 'store.services.simple_monero_escrow_service',
-        # Ethereum (Example - Add simple if needed)
-        'ETH-MULTISIG': 'store.services.ethereum_escrow_service',
-        # 'ETH-BASIC': 'store.services.simple_ethereum_escrow_service', # Example
+        # Ethereum
+        'ETH-MULTISIG': 'store.services.ethereum_escrow_service', # RE-ENABLED (Fix for test failure)
+        'ETH-BASIC': 'store.services.simple_ethereum_escrow_service',
     }
+    # --- End Service Map ---
 
     module_name = service_module_map.get(service_key)
     if not module_name:
@@ -570,9 +569,9 @@ def check_and_confirm_payment(payment_id: Union[int, str, CryptoPayment]) -> boo
             payment_pk = payment.id
             confirmed = getattr(specific_service, check_func_name)(payment_pk)
             if confirmed:
-                logger.info(f"{log_prefix}: Payment confirmed by {specific_service.__name__}.{check_func_name}.")
+                 logger.info(f"{log_prefix}: Payment confirmed by {specific_service.__name__}.{check_func_name}.")
             else:
-                logger.debug(f"{log_prefix}: Payment not confirmed by {specific_service.__name__}.{check_func_name}.")
+                 logger.debug(f"{log_prefix}: Payment not confirmed by {specific_service.__name__}.{check_func_name}.")
             return confirmed
         else:
             # Try legacy name 'check_and_confirm_payment' just in case? Or enforce 'check_confirm'?
@@ -686,10 +685,10 @@ def broadcast_release_transaction(order_id: Union[int, str]) -> bool:
             success = specific_service.broadcast_release(order_id=order_id) # Pass the ID
 
             if success:
-                logger.info(f"{log_prefix}: Release broadcast successfully handled by {specific_service.__name__}.broadcast_release.")
+                 logger.info(f"{log_prefix}: Release broadcast successfully handled by {specific_service.__name__}.broadcast_release.")
             else:
-                # This case might indicate a handled failure within the specific service (e.g., already broadcast)
-                logger.warning(f"{log_prefix}: Release broadcast call to {specific_service.__name__} returned False.")
+                 # This case might indicate a handled failure within the specific service (e.g., already broadcast)
+                 logger.warning(f"{log_prefix}: Release broadcast call to {specific_service.__name__} returned False.")
             return success
         else:
             msg = f"Function 'broadcast_release' not found in module {specific_service.__name__} for {currency}-{escrow_type}."
@@ -735,17 +734,17 @@ def resolve_dispute(order: 'Order', moderator: 'UserModel', resolution_notes: st
     try:
         # Handle potential floating point precision issues if input is float
         if isinstance(release_to_buyer_percent, float):
-            release_to_buyer_percent_dec = Decimal(str(release_to_buyer_percent))
+             release_to_buyer_percent_dec = Decimal(str(release_to_buyer_percent))
         elif isinstance(release_to_buyer_percent, int):
-            release_to_buyer_percent_dec = Decimal(release_to_buyer_percent)
+             release_to_buyer_percent_dec = Decimal(release_to_buyer_percent)
         elif isinstance(release_to_buyer_percent, Decimal):
-            release_to_buyer_percent_dec = release_to_buyer_percent
+             release_to_buyer_percent_dec = release_to_buyer_percent
         else:
-            raise TypeError("Percentage must be int, float, or Decimal.")
+             raise TypeError("Percentage must be int, float, or Decimal.")
 
         # Validate range 0-100
         if not (Decimal('0.0') <= release_to_buyer_percent_dec <= Decimal('100.0')):
-            raise ValueError("Percentage must be between 0.0 and 100.0.")
+             raise ValueError("Percentage must be between 0.0 and 100.0.")
 
     except (TypeError, ValueError, InvalidOperation) as e:
         raise ValueError(f"Invalid release_to_buyer_percent format or value: {release_to_buyer_percent}. Must be convertible to Decimal 0-100.") from e
@@ -767,9 +766,9 @@ def resolve_dispute(order: 'Order', moderator: 'UserModel', resolution_notes: st
                 release_to_buyer_percent=release_to_buyer_percent_dec # Pass Decimal
             )
             if success:
-                logger.info(f"{log_prefix}: Dispute resolution successfully handled by {specific_service.__name__}.{resolve_func_name}.")
+                 logger.info(f"{log_prefix}: Dispute resolution successfully handled by {specific_service.__name__}.{resolve_func_name}.")
             else:
-                logger.warning(f"{log_prefix}: Dispute resolution call to {specific_service.__name__} returned False.")
+                 logger.warning(f"{log_prefix}: Dispute resolution call to {specific_service.__name__} returned False.")
             return success
         else:
             msg = f"Function '{resolve_func_name}' not found in module {specific_service.__name__} for {currency}-{escrow_type}."

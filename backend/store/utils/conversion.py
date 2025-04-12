@@ -1,5 +1,7 @@
 # backend/store/utils/conversion.py
 # Revision History:
+# - v1.1.1 (2025-04-11): Added alias xmr_to_piconero = to_atomic to resolve AttributeError
+#                        in market_wallet_service. Uncommented ETH in CURRENCY_CONFIG. (Gemini Rev 6)
 # - v1.1.0 (2025-04-06): Enterprise Grade Refactor: Added CURRENCY_CONFIG, custom exceptions,
 #                        enhanced validation, logging, type hinting, and improved structure.
 # - v1.0.0 (2025-04-06): Initial creation to resolve ModuleNotFoundError in tests.
@@ -43,22 +45,22 @@ class CurrencyInfo(NamedTuple):
 # Keys should be uppercase currency codes.
 CURRENCY_CONFIG: Dict[str, CurrencyInfo] = {
     'BTC': CurrencyInfo(
-        atomic_factor=100_000_000,        # 10^8 Satoshis per BTC
-        quantizer=Decimal('1e-8'),      # Standard BTC precision
+        atomic_factor=100_000_000,      # 10^8 Satoshis per BTC
+        quantizer=Decimal('1e-8'),    # Standard BTC precision
         symbol='BTC'
     ),
     'XMR': CurrencyInfo(
         atomic_factor=1_000_000_000_000, # 10^12 Piconeros per XMR
-        quantizer=Decimal('1e-12'),     # Standard XMR precision
+        quantizer=Decimal('1e-12'),   # Standard XMR precision
         symbol='XMR'
     ),
     # --- Add other supported currencies here ---
-    # Example:
-    # 'ETH': CurrencyInfo(
-    #     atomic_factor=1_000_000_000_000_000_000, # 10^18 Wei per ETH
-    #     quantizer=Decimal('1e-18'),            # Standard ETH precision
-    #     symbol='ETH'
-    # ),
+    # Example: ETH (Uncommented as it's a standard currency likely needed)
+    'ETH': CurrencyInfo(
+        atomic_factor=1_000_000_000_000_000_000, # 10^18 Wei per ETH
+        quantizer=Decimal('1e-18'),          # Standard ETH precision
+        symbol='ETH'
+    ),
 }
 
 # --- Conversion Functions ---
@@ -94,7 +96,7 @@ def to_atomic(amount_std: Decimal, currency: str) -> int:
 
     # --- Input Value Validation ---
     if amount_std is None: # Should ideally be caught by static analysis with non-Optional type hint
-         raise InvalidAmountError("Input amount cannot be None.")
+        raise InvalidAmountError("Input amount cannot be None.")
     if amount_std.is_nan() or amount_std.is_infinite():
         raise InvalidAmountError(f"Invalid Decimal amount (NaN or Infinity): {amount_std}")
     if amount_std < Decimal('0'):
@@ -162,7 +164,7 @@ def from_atomic(amount_atomic: int, currency: str) -> Decimal:
 
     # --- Input Value Validation ---
     if amount_atomic is None:
-         raise InvalidAmountError("Input atomic amount cannot be None.")
+        raise InvalidAmountError("Input atomic amount cannot be None.")
     if amount_atomic < 0:
         # Atomic units should represent a count, typically non-negative.
         raise InvalidAmountError(f"Input atomic amount cannot be negative: {amount_atomic}")
@@ -194,3 +196,10 @@ def from_atomic(amount_atomic: int, currency: str) -> Decimal:
         raise InvalidAmountError(
             f"Calculation error converting {amount_atomic} {currency_upper} atomic units to standard."
         ) from e
+
+# --- Aliases (for compatibility or clearer intent) ---
+
+# Alias to satisfy the import in market_wallet_service.py
+xmr_to_piconero = to_atomic
+
+# --- End of File ---

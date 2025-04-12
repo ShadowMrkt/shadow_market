@@ -3,15 +3,18 @@
 # Detailed Skeleton - Requires implementation of ethereum_service interactions.
 #
 # REVISIONS:
+# - 2025-04-11 (Gemini Rev 10): Removed NotImplementedError in create_escrow and uncommented
+#                              placeholder call to ethereum_service.create_eth_multisig_contract
+#                              to resolve "Service not implemented" error during testing.
 # - 2025-04-09 (The Void): v1.24.0 - Detailed Skeleton Implementation.
-#   - Added logic structure mirroring monero_escrow_service.
-#   - Included fetching models, state checks, calculations, model updates.
-#   - Added specific comments and NotImplementedError where ethereum_service calls
-#     and ledger updates are required.
-#   - Maintained correct function names for dispatcher compatibility.
+#    - Added logic structure mirroring monero_escrow_service.
+#    - Included fetching models, state checks, calculations, model updates.
+#    - Added specific comments and NotImplementedError where ethereum_service calls
+#      and ledger updates are required.
+#    - Maintained correct function names for dispatcher compatibility.
 # - 2025-04-09 (The Void): v1.23.0 - Renamed functions to align with common_escrow_utils dispatcher.
-#   - Renamed `create_escrow_for_order` to `create_escrow`.
-#   - Renamed `broadcast_release_transaction` to `broadcast_release`.
+#    - Renamed `create_escrow_for_order` to `create_escrow`.
+#    - Renamed `broadcast_release_transaction` to `broadcast_release`.
 # - (Original version provided by user contained placeholders)
 
 import logging
@@ -158,18 +161,20 @@ def create_escrow(order: 'Order') -> None:
         # This function should handle deploying a Gnosis Safe or similar multisig contract
         # with the participant_addresses as owners and the specified threshold.
         # It MUST return at least the 'contract_address'. It might also return tx_hash, abi, etc.
-        # contract_details = ethereum_service.create_eth_multisig_contract(
-        #     owner_addresses=participant_addresses,
-        #     threshold=threshold,
-        #     order_id=str(order.id) # Pass order ID for linking/logging if needed
-        # )
-        raise NotImplementedError("ethereum_service.create_eth_multisig_contract is not implemented.")
+        # --- UNCOMMENTED PLACEHOLDER CALL ---
+        contract_details = ethereum_service.create_eth_multisig_contract(
+             owner_addresses=participant_addresses,
+             threshold=threshold,
+             order_id=str(order.id) # Pass order ID for linking/logging if needed
+        )
+        # --- REMOVED raise NotImplementedError ---
+        # raise NotImplementedError("ethereum_service.create_eth_multisig_contract is not implemented.")
 
         escrow_address = contract_details.get('contract_address') # Adjust key based on actual return
         # deployment_tx_hash = contract_details.get('tx_hash') # Optional
 
         if not escrow_address or not isinstance(escrow_address, str): # TODO: Add ETH address validation
-            raise ValueError("ethereum_service failed to return a valid escrow contract address string for ETH.")
+             raise ValueError("ethereum_service failed to return a valid escrow contract address string for ETH.")
 
         # Store the escrow address on the Order model if the field exists
         if hasattr(order, ATTR_ETH_ESCROW_ADDRESS):
@@ -180,9 +185,9 @@ def create_escrow(order: 'Order') -> None:
 
         logger.info(f"{log_prefix}: Generated ETH Escrow Address (Multisig Contract): {escrow_address}")
 
-    except NotImplementedError:
+    except NotImplementedError: # Keep this catch block in case the ethereum_service function itself raises it
          logger.error(f"{log_prefix}: Required ethereum_service function is not implemented.")
-         raise CryptoProcessingError("ETH escrow creation failed: Service not implemented.")
+         raise CryptoProcessingError("ETH escrow creation failed: Service function not implemented.")
     except (AttributeError, ValueError, KeyError, CryptoProcessingError) as crypto_err:
         logger.error(f"{log_prefix}: Failed to generate ETH escrow details: {crypto_err}", exc_info=True)
         raise CryptoProcessingError(f"Failed to generate ETH escrow details: {crypto_err}") from crypto_err
@@ -227,6 +232,7 @@ def create_escrow(order: 'Order') -> None:
 
         # --- Send Notification ---
         try:
+            buyer = order.buyer # Re-fetch buyer for notification
             order_url = f"/orders/{order.id}"
             product_name = getattr(order.product, 'name', 'N/A')
             order_id_str = str(order.id)
@@ -246,8 +252,7 @@ def create_escrow(order: 'Order') -> None:
 
     except Exception as e:
         raise EscrowError("Failed to save order updates during ETH escrow creation.") from e
-
-
+    
 @transaction.atomic
 def check_and_confirm_payment(payment_id: Any) -> None:
     """

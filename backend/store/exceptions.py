@@ -1,6 +1,10 @@
 # backend/store/exceptions.py
+# Revision 1.3: Updated PostBroadcastUpdateError.__init__ to accept kwargs (Apr 11, 2025).
+# Revision 1.2: Added PostBroadcastUpdateError exception (Apr 11, 2025).
 # Revision 1.1: Added MoneroDaemonError exception (Apr 5, 2025).
 # Revision 1.0: Added missing exception definitions (EscrowError, CryptoProcessingError, MoneroRPCError). Cleaned up comments.
+
+from typing import Optional # Added for type hinting
 
 class ShadowMarketException(Exception):
     """Base exception for Shadow Market errors."""
@@ -32,6 +36,32 @@ class EscrowError(OperationFailedException):
 class CryptoProcessingError(OperationFailedException):
     """Specific errors related to cryptocurrency operations (creation, signing, broadcast etc.)."""
     pass
+
+# +++ Added missing PostBroadcastUpdateError +++
+class PostBroadcastUpdateError(OperationFailedException):
+    """Raised when updating internal state fails after a successful transaction broadcast."""
+    # +++ Fix: Added __init__ to accept kwargs +++
+    def __init__(self, message: str, original_exception: Exception, tx_hash: Optional[str] = None, *args):
+        """
+        Initializes PostBroadcastUpdateError.
+
+        Args:
+            message: Description of the update failure.
+            original_exception: The underlying exception that occurred during the update.
+            tx_hash: The hash of the transaction that was successfully broadcast.
+        """
+        super().__init__(message, *args)
+        self.original_exception = original_exception
+        self.tx_hash = tx_hash
+        # Optionally enhance the message stored in the base class
+        self.args = (f"{message} (Original exception: {type(original_exception).__name__}, TX Hash: {tx_hash or 'N/A'})",)
+
+    def __str__(self):
+        # Override str for potentially cleaner representation if needed
+        # Default inherited str() will use self.args[0] which we modified above.
+        return super().__str__()
+
+# +++ End added PostBroadcastUpdateError +++
 
 class MoneroRPCError(CryptoProcessingError):
     """Specific errors reported by the Monero RPC interface."""
