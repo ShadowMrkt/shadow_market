@@ -1,5 +1,7 @@
 // frontend/components/ProductCard.js
 // --- REVISION HISTORY ---
+// 2025-04-13 (Gemini): Rev 2 - Fixed nested <a> tag issue for Image and Name links by removing `legacyBehavior` prop from next/link, keeping `passHref`.
+//                        - Added note about potentially needing more specific query in test if 'multiple elements found' error persists.
 // 2025-04-07: Rev 1 - Migrated to CSS Modules, added next/image, Decimal.js price formatting, improved a11y.
 //           - Replaced inline styles with imports from ProductCard.module.css.
 //           - Removed local CURRENCY_SYMBOLS, import from constants.
@@ -64,7 +66,7 @@ export default function ProductCard({ product }) {
         if (formattedPrice === null || formattedPrice === 'Error') {
              // Optionally render something if currency is accepted but price missing/error
              // if (accepted_currencies.includes(currency)) {
-             //    return <p className={styles.priceNotSet}>{CURRENCY_SYMBOLS[currency] || currency} Price Unavailable</p>
+             //   return <p className={styles.priceNotSet}>{CURRENCY_SYMBOLS[currency] || currency} Price Unavailable</p>
              // }
              return null; // Don't show price if unavailable/error
         }
@@ -90,55 +92,68 @@ export default function ProductCard({ product }) {
     return (
         <div className={styles.card}>
             <div className={styles.imageWrapper}>
-                 <Link href={`/products/${slug}`} passHref legacyBehavior>
-                    <a aria-label={`View product: ${name}`}> {/* Wrap Image in Link/anchor */}
-                        <Image
-                            src={imageUrl}
-                            alt={`${name} - Product Image`} // Descriptive alt text
-                            width={300} // Provide base width (adjust as needed)
-                            height={200} // Provide base height (adjust as needed)
-                            layout="responsive" // Makes image scale with wrapper
-                            objectFit="cover" // How image should fit (cover, contain, etc.)
-                            className={styles.productImage} // Optional class for specific image styling
-                            // TODO: Consider adding placeholder="blur" and blurDataURL if using static imports or generating base64 previews
-                        />
-                    </a>
-                </Link>
+                 {/* Rev 2: Removed legacyBehavior to fix nested <a> tag */}
+                 <Link href={`/products/${slug}`} passHref>
+                     <a aria-label={`View product: ${name}`}> {/* Wrap Image in Link/anchor */}
+                         <Image
+                             src={imageUrl}
+                             alt={`${name} - Product Image`} // Descriptive alt text
+                             width={300} // Provide base width (adjust as needed)
+                             height={200} // Provide base height (adjust as needed)
+                             // Using fill and objectFit is often preferred for responsive images within a sized container
+                             // layout="fill" // Alternative to width/height + responsive
+                             // objectFit="cover" // Ensure image covers the area
+                             layout="responsive" // Makes image scale with wrapper based on width/height aspect ratio
+                             objectFit="cover" // How image should fit (cover, contain, etc.) - still useful with responsive
+                             className={styles.productImage} // Optional class for specific image styling
+                             priority={false} // Set to true for LCP images (e.g., above the fold)
+                             loading="lazy" // Default is lazy, explicitly setting
+                             // TODO: Consider adding placeholder="blur" and blurDataURL if using static imports or generating base64 previews
+                         />
+                     </a>
+                 </Link>
             </div>
 
             <div className={styles.cardContent}>
                  {category && (
-                    <div className={styles.category}>
-                        Category: <Link href={`/categories/${category.slug}`} className={styles.link}>{category.name}</Link>
-                    </div>
+                     <div className={styles.category}>
+                         Category: <Link href={`/categories/${category.slug}`} className={styles.link}>{category.name}</Link>
+                     </div>
                  )}
-                {vendor && (
-                    <div className={styles.vendor}>
-                        Vendor: <Link href={`/vendors/${vendor.username}`} className={styles.link}>{vendor.username}</Link>
-                    </div>
-                )}
+                 {vendor && (
+                     <div className={styles.vendor}>
+                         Vendor: <Link href={`/vendors/${vendor.username}`} className={styles.link}>{vendor.username}</Link>
+                     </div>
+                 )}
 
-                <Link href={`/products/${slug}`} passHref legacyBehavior>
-                     <a className={styles.nameLink}>{name}</a>
-                </Link>
+                 {/* Rev 2: Removed legacyBehavior to fix nested <a> tag */}
+                 <Link href={`/products/${slug}`} passHref>
+                       <a className={styles.nameLink}>{name}</a>
+                 </Link>
 
-                {/* Optional: Rating and Sales Info */}
-                {/* <div className={styles.metaInfo}>
-                    {average_rating !== null && average_rating !== undefined && (
-                        <span>⭐ {average_rating.toFixed(1)}</span>
-                    )}
-                    {sales_count !== null && sales_count !== undefined && (
-                        <span> | {sales_count} Sales</span>
-                    )}
-                </div> */}
+                 {/* Optional: Rating and Sales Info */}
+                 {/* <div className={styles.metaInfo}>
+                      {average_rating !== null && average_rating !== undefined && (
+                           <span>⭐ {average_rating.toFixed(1)}</span>
+                      )}
+                      {sales_count !== null && sales_count !== undefined && (
+                           <span> | {sales_count} Sales</span>
+                      )}
+                 </div> */}
 
 
-                <div className={styles.prices}>
-                    {renderPrice('XMR', price_xmr)}
-                    {renderPrice('BTC', price_btc)}
-                    {renderPrice('ETH', price_eth)}
-                    {/* Add more currencies if needed */}
-                </div>
+                 {/* Note for Test File: If the "Found multiple elements" error persists after fixing nested links,
+                     the query in `ProductCard.test.js` for the price text might need to be more specific.
+                     Example: Find the 'prices' div first, then query within it.
+                     const pricesDiv = screen.getByTestId('product-prices'); // Add data-testid="product-prices" to the div below
+                     const xmrPrice = within(pricesDiv).getByText(...)
+                 */}
+                 <div className={styles.prices} data-testid="product-prices"> {/* Added data-testid for potentially more specific test queries */}
+                     {renderPrice('XMR', price_xmr)}
+                     {renderPrice('BTC', price_btc)}
+                     {renderPrice('ETH', price_eth)}
+                     {/* Add more currencies if needed */}
+                 </div>
             </div>
         </div>
     );

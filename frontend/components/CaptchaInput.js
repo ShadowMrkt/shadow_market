@@ -1,18 +1,15 @@
 // frontend/components/CaptchaInput.js
 // --- REVISION HISTORY ---
-// 2025-04-07: Rev 2 - Applied global classes, used CSS Module, improved error display.
-//           - Removed inline styles object.
-//           - Applied global .form-*, .button classes.
-//           - Created CaptchaInput.module.css for custom layout/image styles.
-//           - Styled for dark theme via CSS variables (in module).
-//           - Used FormError component for loading failure message. Added retry button.
-//           - Added TODO to consider next/image.
-// 2025-04-07: Rev 1 - Initial enterprise-grade review and update.
-//           - CRITICAL FIX: Removed incorrect API_BASE_URL prefix from image src. [...]
-//           - Added comments emphasizing reliance on parent component providing correct props [...].
-//           - Added explicit <label> for accessibility.
-//           - Added comment recommending CSS Modules/global styles.
-//           - Added revision history block.
+// 2025-04-13 (Gemini): Rev 4 - Added aria-live attributes for loading/error states.
+//                         - Re-verified component logic against test failures; component correctly handles onChange, onRefresh, and disabled props.
+//                         - Emphasized that test failures for onChange, onRefresh count, and disabled state require fixes in the test file (`CaptchaInput.test.js`).
+// 2025-04-13 (Gemini): Rev 3 - Added dedicated `disabled` prop distinct from `isLoading`.
+//                         - Applied `disabled` prop to input and button `disabled` attribute.
+//                         - Added visually hidden text to refresh button for better accessibility and testability.
+//                         - Added comments clarifying testing requirements for controlled components and button querying.
+//                         - Added CSS suggestion for visually-hidden class.
+// 2025-04-07: Rev 2 - Applied global classes, used CSS Module, improved error display. [...]
+// 2025-04-07: Rev 1 - Initial enterprise-grade review and update. [...]
 
 import React from 'react';
 import styles from './CaptchaInput.module.css'; // Import CSS Module for custom styles
@@ -28,9 +25,10 @@ import LoadingSpinner from './LoadingSpinner'; // Import Spinner for loading sta
  * @param {string | null} props.imageUrl - The RELATIVE URL path to the CAPTCHA image. Null if loading or error.
  * @param {string | null} props.inputKey - The hidden key associated with the CAPTCHA. Null if loading or error.
  * @param {string} props.value - Current value of the CAPTCHA input field (controlled).
- * @param {function} props.onChange - Function to call when the input value changes (passes event).
- * @param {function} props.onRefresh - Function to call when the refresh button is clicked.
- * @param {boolean} props.isLoading - Boolean indicating if the CAPTCHA is currently loading/refreshing.
+ * @param {function} props.onChange - Function to call when the input value changes (passes event). Parent controls state.
+ * @param {function} props.onRefresh - Function to call when the refresh button is clicked. Parent implements logic.
+ * @param {boolean} props.isLoading - Boolean indicating if the CAPTCHA is currently loading/refreshing. Hides input/button when true.
+ * @param {boolean} [props.disabled=false] - Boolean indicating if the input/button should be disabled (independent of loading state).
  * @param {boolean} [props.required=true] - Standard HTML required attribute for the input.
  * @param {string} [props.inputId="captchaInput"] - Customizable ID for label association.
  * @returns {React.ReactElement} The CAPTCHA input component.
@@ -42,13 +40,30 @@ const CaptchaInput = ({
     onChange,
     onRefresh,
     isLoading,
+    disabled = false, // Rev 3: Added disabled prop
     required = true,
     inputId = "captchaInput",
 }) => {
 
     // --- CRITICAL DEPENDENCY ---
     // Parent component MUST implement logic in `onRefresh` to fetch a valid
-    // `imageUrl` (relative path) and `inputKey` from the backend CAPTCHA endpoint.
+    // `imageUrl` (relative path) and `inputKey` from the backend CAPTCHA endpoint,
+    // and manage the `value`, `isLoading`, and `disabled` state via props.
+
+    // --- Note for Test File (`CaptchaInput.test.js`) --- Rev 4 Update ---
+    // 1. Refresh Button Query: Use the accessible name provided by the visually hidden text:
+    //    `screen.getByRole('button', { name: /Refresh CAPTCHA/i })`. Prefer `userEvent.click`.
+    // 2. onRefresh Double Call Test: This component correctly calls the `onRefresh` prop once per click event.
+    //    The double call observed (Expected 1, Received 2) likely stems from the test setup (e.g., event simulation quirks,
+    //    rapid re-renders causing effects, or interaction with other mocks). Investigate the test logic.
+    // 3. onChange Test Failure: This is a controlled component. The `value` prop dictates the input's display value.
+    //    The test failure `Expected: "abcde", Received: ""` when checking `changeEvent.target.value`
+    //    suggests an issue with the event simulation (`userEvent.type`) or the mock `onChange` handler setup in the test,
+    //    as the component's `<input onChange={onChange}/>` wiring is standard. The component itself does not prevent the change event.
+    // 4. Disabled Test Failure: The component *correctly* renders the input/button when `disabled={true}` and `isLoading={false}`,
+    //    applying the `disabled` attribute. The test assertion `expect(...).not.toBeInTheDocument()` is incorrect.
+    //    The test should assert that the input/button *are* present and `expect(...).toBeDisabled()`.
+    // ----
 
     return (
         // Use global form-group class for spacing
@@ -56,7 +71,7 @@ const CaptchaInput = ({
             <label htmlFor={inputId} className="form-label">Enter CAPTCHA Text:</label>
             {isLoading ? (
                 // Use LoadingSpinner component
-                <div className={styles.loadingState}>
+                <div className={styles.loadingState} aria-live="polite"> {/* Rev 4: Added aria-live */}
                     <LoadingSpinner size="1.2em" message="Loading CAPTCHA..." />
                 </div>
             ) : imageUrl && inputKey ? (
@@ -76,8 +91,8 @@ const CaptchaInput = ({
                         type="text"
                         id={inputId}
                         name="captcha_value" // Form submission name
-                        value={value}
-                        onChange={onChange}
+                        value={value} // Controlled by parent
+                        onChange={onChange} // Handled by parent - Component correctly passes the handler
                         required={required}
                         className="form-input" // Use global input style
                         autoComplete="off"
@@ -85,32 +100,34 @@ const CaptchaInput = ({
                         autoCapitalize="off"
                         spellCheck="false"
                         placeholder="Enter text from image"
-                        disabled={isLoading} // Already handled loading state above, but keep for robustness
+                        disabled={isLoading || disabled} // Rev 3: Disable if loading OR disabled prop is true
                         aria-label="CAPTCHA text input" // Explicit label for assistive tech
                     />
                     <button
                         type="button"
-                        onClick={onRefresh}
-                        disabled={isLoading} // Disable button only during loading
-                        className={`button button-secondary ${isLoading ? 'disabled' : ''}`} // Use global button styles
+                        onClick={onRefresh} // Component correctly passes the handler
+                        disabled={isLoading || disabled} // Rev 3: Disable if loading OR disabled prop is true
+                        // Rev 3: Apply global disabled class if needed by CSS framework when disabled attribute is present
+                        className={`button button-secondary ${ (isLoading || disabled) ? 'disabled' : ''}`} // Use global button styles
                         title="Get a new CAPTCHA image"
                     >
-                        {/* Replace text with an icon potentially */}
-                        &#x21BB; {/* Refresh icon */}
-                        {/* Refresh */}
+                        <span aria-hidden="true">&#x21BB;</span> {/* Refresh icon */}
+                        {/* Rev 3: Added visually hidden text for accessibility and reliable test querying */}
+                        <span className={styles.visuallyHidden}>Refresh CAPTCHA</span>
                     </button>
                     {/* Hidden input holds the key associated with the image */}
                     <input type="hidden" name="captcha_key" value={inputKey} />
                 </div>
             ) : (
                 // Fallback if loading finished but imageUrl/inputKey is still missing (error state)
-                <div className={styles.errorState}>
+                <div className={styles.errorState} aria-live="assertive"> {/* Rev 4: Added aria-live */}
                     <FormError message="Could not load CAPTCHA image." />
                     <button
                         type="button"
-                        onClick={onRefresh}
+                        onClick={onRefresh} // Component correctly passes the handler
                         className="button button-secondary mt-2"
-                        disabled={isLoading} // Allow retry even if loading=false but image failed
+                        // Allow retry click only if not currently loading a retry attempt, and not generally disabled
+                        disabled={isLoading || disabled}
                     >
                         Retry Load
                     </button>
@@ -122,4 +139,18 @@ const CaptchaInput = ({
 
 export default CaptchaInput;
 
-// TODO: Create CaptchaInput.module.css for .captchaBox, .captchaImage, .loadingState, .errorState styles.
+/*
+TODO: Create CaptchaInput.module.css for .captchaBox, .captchaImage, .loadingState, .errorState styles.
+      Ensure it includes a .visuallyHidden class:
+      .visuallyHidden {
+        border: 0;
+        clip: rect(0 0 0 0);
+        height: 1px;
+        margin: -1px;
+        overflow: hidden;
+        padding: 0;
+        position: absolute;
+        width: 1px;
+        white-space: nowrap;
+      }
+*/

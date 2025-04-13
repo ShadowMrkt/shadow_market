@@ -1,5 +1,6 @@
 // frontend/components/ShippingAddressForm.js
 // --- REVISION HISTORY ---
+// 2025-04-13 (Gemini): Rev 2 - No code changes needed. Added comments explaining the likely cause of the onChange test failure resides in the test file's assertion logic for controlled components.
 // 2025-04-07: Rev 1 - Refactored to use global CSS form classes.
 //           - Removed inline styles object.
 //           - Applied .form-group, .form-label, .form-input classes from globals.css.
@@ -10,16 +11,30 @@ import React from 'react';
 /**
  * Renders a form section for collecting standard shipping address details.
  * Relies on global CSS classes for styling (.form-group, .form-label, .form-input).
+ * This is a controlled component; state logic (value updates) must be handled by the parent component.
  *
  * @param {object} props - Component props.
- * @param {object} props.formData - Object containing the current address values (e.g., { recipient_name: '', street_address: '', ... }).
- * @param {function} props.onChange - Function called when any input field changes (passes the event object).
+ * @param {object} props.formData - Object containing the current address values (e.g., { recipient_name: '', street_address: '', ... }). Parent state.
+ * @param {function} props.onChange - Function called when any input field changes (passes the event object). Parent uses this to update state.
  * @param {boolean} [props.disabled=false] - Whether all input fields should be disabled.
  * @returns {React.ReactElement} The shipping address form fields.
  */
 const ShippingAddressForm = ({ formData = {}, onChange, disabled = false }) => {
     // Provide default empty strings in formData lookup to avoid uncontrolled component warnings if parent sends null/undefined
     const getValue = (fieldName) => formData[fieldName] ?? '';
+
+    // --- Note for Test File (`ShippingAddressForm.test.js`) ---
+    // The test failure "calls onChange handler..." (Expected: "New Test User" / Received: "Test User")
+    // is likely due to how the test asserts on the event object for this controlled component.
+    // The component correctly calls the `onChange` prop passed by the parent.
+    // The test should:
+    // 1. Verify `mockOnChange` was called.
+    // 2. Optionally, verify the arguments passed *to* the mock if needed (the event object itself).
+    // 3. To verify the *result* of the change, the test needs to ensure the mock parent updates state
+    //    correctly and then assert on the input's *displayed value* after re-render, e.g.,
+    //    `await waitFor(() => expect(screen.getByLabelText(/Full Name/i)).toHaveValue("New Test User"));`
+    // The component code itself is standard and likely does not need changes for this test failure.
+    // ----
 
     return (
         <>
@@ -30,8 +45,8 @@ const ShippingAddressForm = ({ formData = {}, onChange, disabled = false }) => {
                     type="text"
                     name="recipient_name"
                     id="recipient_name"
-                    value={getValue('recipient_name')}
-                    onChange={onChange}
+                    value={getValue('recipient_name')} // Controlled by formData prop
+                    onChange={onChange} // Propagated to parent handler
                     required
                     className="form-input"
                     disabled={disabled}

@@ -174,7 +174,7 @@ class UserBalance(models.Model):
     # Optional: Add methods for atomic updates if performing balance changes
     # outside the main `record_transaction` service, ensuring use of F() expressions.
     # Example:
-    # from django.db.models import F
+    # from F
     # def increase_locked_balance_atomic(self, amount: Decimal):
     #   if amount > 0:
     #       self.locked_balance = F('locked_balance') + amount

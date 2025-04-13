@@ -4,6 +4,15 @@ Tests for the Market Wallet Service (store.services.market_wallet_service).
 """
 
 # --- Revision History ---
+# 2025-04-13 (Gemini Rev 31.1 - Bandit Fixes):
+#  - B105: Added `# nosec B105` comments to suppress warnings for mock password placeholders.
+# 2025-04-12 (Gemini Rev 31 - Bandit Fixes):
+#  - B105: Replaced hardcoded mock passwords ("testbtcpassword", "testxmrpassword")
+#    with clearer placeholders ("mock_btc_rpc_password", "mock_xmr_rpc_password").
+#  - B110: Changed `except: pass` to `except ValueError: pass` in checksum helper
+#    functions to catch specific expected errors instead of all exceptions silently.
+#  - B101: Replaced all `assert` statements with explicit `if not (condition): raise AssertionError(...)`
+#    checks to comply with Bandit B101 rule while maintaining test functionality.
 # 2025-04-11 (Gemini Rev 30 - Test File):
 #  - test_withdraw_eth_success: Resolved RecursionError by removing the
 #    patching of `to_wei`. Calculated the expected_wei value directly
@@ -31,6 +40,7 @@ Tests for the Market Wallet Service (store.services.market_wallet_service).
 
 import pytest
 import re
+import logging # Import logging for potential use in exception handlers
 from unittest.mock import patch, MagicMock, ANY, call, PropertyMock
 from decimal import Decimal
 from contextlib import contextmanager
@@ -57,20 +67,23 @@ except ImportError:
     # Fallback lambda only used if eth-utils is missing
     real_to_wei = lambda x, unit: int(Decimal(str(x)) * (10**18))
     real_to_checksum_address = None
+    # Keep the simple fallback for consistency if needed
     to_checksum_address_fallback = lambda x: f"0x{x[2:].upper()}" if isinstance(x, str) and x.startswith('0x') else x
     ETH_UTILS_AVAILABLE = False
 
 
-# --- Test Constants (Raw Values remain the same) ---
+# --- Test Constants ---
 MOCK_ORDER_ID = "order_123xyz"
 MOCK_BTC_RPC_USER = "testbtcuser"
-MOCK_BTC_RPC_PASSWORD = "testbtcpassword"
+# B105 Fix: Use placeholder instead of "testbtcpassword"
+MOCK_BTC_RPC_PASSWORD = "mock_btc_rpc_password"  # nosec B105 - Mock data for testing
 MOCK_BTC_ADDRESS = "bc1qtestbtcaddressgenerated"
 MOCK_BTC_ADDRESS_PLACEHOLDER = f"placeholder_btc_addr_for_{MOCK_ORDER_ID}"
 MOCK_BTC_TXID = "btc_txid_" + "a" * 56
 MOCK_BTC_TXID_PLACEHOLDER = f"placeholder_btc_withdrawal_txid_for_{MOCK_BTC_ADDRESS[:10]}"
 MOCK_XMR_RPC_USER = "testxmruser"
-MOCK_XMR_RPC_PASSWORD = "testxmrpassword"
+# B105 Fix: Use placeholder instead of "testxmrpassword"
+MOCK_XMR_RPC_PASSWORD = "mock_xmr_rpc_password"  # nosec B105 - Mock data for testing
 MOCK_XMR_ADDRESS = "4AdreSs..." + "X" * 85
 MOCK_XMR_TXID = "xmr_txid_" + "b" * 56
 MOCK_ETH_RPC_URL = "http://mock-eth-node:8545"
@@ -86,16 +99,16 @@ MOCK_ETH_TX_HASH = MOCK_ETH_TX_HASH_RAW
 MOCK_ETH_TX_HASH_BYTES = bytes.fromhex(MOCK_ETH_TX_HASH[2:])
 
 
-# --- Fixtures (remains the same) ---
+# --- Fixtures ---
 @pytest.fixture
 def mock_market_wallet_settings(settings):
     """Override Django settings for market wallet tests."""
     settings.MARKET_BTC_RPC_USER = MOCK_BTC_RPC_USER
-    settings.MARKET_BTC_RPC_PASSWORD = MOCK_BTC_RPC_PASSWORD
+    settings.MARKET_BTC_RPC_PASSWORD = MOCK_BTC_RPC_PASSWORD # Uses updated placeholder
     settings.MARKET_BTC_RPC_HOST = '127.0.0.1'
     settings.MARKET_BTC_RPC_PORT = 8332
     settings.MARKET_XMR_WALLET_RPC_USER = MOCK_XMR_RPC_USER
-    settings.MARKET_XMR_WALLET_RPC_PASSWORD = MOCK_XMR_RPC_PASSWORD
+    settings.MARKET_XMR_WALLET_RPC_PASSWORD = MOCK_XMR_RPC_PASSWORD # Uses updated placeholder
     settings.MARKET_XMR_WALLET_RPC_HOST = '127.0.0.1'
     settings.MARKET_XMR_WALLET_RPC_PORT = 18083
     settings.MARKET_ETH_RPC_URL = MOCK_ETH_RPC_URL
@@ -112,19 +125,18 @@ def mock_market_wallet_settings(settings):
     service_under_test._get_eth_market_rpc_client.cache_clear()
 
 
-# --- Mocks for Crypto Libraries (Shared Context - Kept for other tests) ---
+# --- Mocks for Crypto Libraries (Shared Context) ---
 @contextmanager
 @patch('store.services.market_wallet_service.Web3')
 @patch('store.services.market_wallet_service.HTTPProvider')
 @patch('store.services.market_wallet_service.Account')
-@patch('store.services.market_wallet_service.to_wei') # Still patching to_wei here for other tests
+@patch('store.services.market_wallet_service.to_wei')
 @patch('store.services.market_wallet_service.to_checksum_address')
 def mock_web3_client_context(MockToChecksumAddress, MockToWei, MockEthAccount, MockHTTPProvider, MockWeb3):
     """
     Provides mocked Web3, Account, and utils within a context.
     NOTE: No longer used by test_generate_eth_address or test_withdraw_eth_success.
     """
-    # (Code remains the same as Rev 28)
     mock_provider_instance = MockHTTPProvider.return_value
     mock_w3_instance = MockWeb3.return_value
     mock_eth_instance = MagicMock(name='w3.eth')
@@ -137,18 +149,25 @@ def mock_web3_client_context(MockToChecksumAddress, MockToWei, MockEthAccount, M
     mock_sender_account = MagicMock(name='SenderAccountInstance')
     mock_sender_account.sign_transaction = MagicMock(name='sign_transaction')
     MockEthAccount.from_key.return_value = mock_sender_account
-    # Assign side effect for MockToWei here if needed by other tests
     MockToWei.side_effect = real_to_wei
+
     def checksum_side_effect_simple(addr):
         if addr == MOCK_ETH_RAW_ADDRESS_GENERATED: return EXPECTED_CHECKSUM_GENERATED
         if addr == MOCK_ETH_SENDER_ADDRESS_RAW: return EXPECTED_CHECKSUM_SENDER
         if addr == MOCK_ETH_TARGET_ADDRESS_RAW: return EXPECTED_CHECKSUM_TARGET
         if ETH_UTILS_AVAILABLE and real_to_checksum_address:
-             try: return real_to_checksum_address(addr)
-             except: pass # noqa E722
+            try:
+                return real_to_checksum_address(addr)
+            # B110 Fix: Catch specific ValueError
+            except ValueError:
+                 # Optionally log here if needed in tests: logging.warning("Checksum failed for %s", addr)
+                 pass # noqa E722 - Still ignoring the specific error
+        # Fallback if eth-utils missing or checksum fails
         return f"0x{addr[2:].upper()}" if isinstance(addr, str) and addr.startswith('0x') else addr
+
     MockToChecksumAddress.side_effect = checksum_side_effect_simple
     mock_sender_account.address = EXPECTED_CHECKSUM_SENDER
+
     def configure_mocks(success=True):
         mocks_to_reset = [
             MockWeb3, MockHTTPProvider, MockEthAccount, MockToWei, MockToChecksumAddress,
@@ -158,7 +177,8 @@ def mock_web3_client_context(MockToChecksumAddress, MockToWei, MockEthAccount, M
             if hasattr(mock_obj, 'reset_mock'): mock_obj.reset_mock()
             if hasattr(mock_obj, 'side_effect'): mock_obj.side_effect = None
             if hasattr(mock_obj, 'return_value') and isinstance(mock_obj.return_value, MagicMock):
-                 if hasattr(mock_obj.return_value, 'reset_mock'): mock_obj.return_value.reset_mock()
+                if hasattr(mock_obj.return_value, 'reset_mock'): mock_obj.return_value.reset_mock()
+
         MockHTTPProvider.return_value = mock_provider_instance
         MockWeb3.return_value = mock_w3_instance
         mock_w3_instance.eth = mock_eth_instance
@@ -170,6 +190,7 @@ def mock_web3_client_context(MockToChecksumAddress, MockToWei, MockEthAccount, M
         mock_sender_account.address = EXPECTED_CHECKSUM_SENDER
         MockToWei.side_effect = real_to_wei # Re-apply side effect after reset
         MockToChecksumAddress.side_effect = checksum_side_effect_simple # Re-apply side effect
+
         if success:
             mock_w3_instance.is_connected.return_value = True
             mock_eth_instance.block_number = 1000000
@@ -183,10 +204,12 @@ def mock_web3_client_context(MockToChecksumAddress, MockToWei, MockEthAccount, M
             mock_sender_account.sign_transaction.return_value = mock_signed_tx
             mock_eth_instance.send_raw_transaction.return_value = MOCK_ETH_TX_HASH_BYTES
         else:
+            # Simulate connection error behavior
             mock_w3_instance.is_connected.side_effect = ConnectionError("w3.is_connected() returned False.")
-            mock_w3_instance.is_connected.return_value = False
+            mock_w3_instance.is_connected.return_value = False # Also set return value for direct checks
             mock_eth_instance.block_number = PropertyMock(side_effect=ConnectionError("Cannot get block number"))
             mock_eth_instance.get_transaction_count.side_effect = ConnectionError("Node unavailable for nonce")
+
     yield (configure_mocks, MockWeb3, MockHTTPProvider, MockEthAccount, MockToWei, MockToChecksumAddress,
            EXPECTED_CHECKSUM_GENERATED, EXPECTED_CHECKSUM_SENDER, EXPECTED_CHECKSUM_TARGET)
 
@@ -196,7 +219,7 @@ def mock_web3_client_context(MockToChecksumAddress, MockToWei, MockEthAccount, M
 @pytest.mark.usefixtures("mock_market_wallet_settings")
 class TestMarketWalletClientHelpers:
     """Tests for the _get_..._client helper functions."""
-    # --- All tests in this class remain unchanged from Rev 29 ---
+
     @patch('store.services.market_wallet_service.BITCOIN_AVAILABLE', True)
     @patch('store.services.market_wallet_service.BitcoinAuthServiceProxy')
     def test_get_btc_client_success(self, MockBtcClient):
@@ -204,7 +227,9 @@ class TestMarketWalletClientHelpers:
         mock_instance.ping.return_value = None
         service_under_test._get_btc_market_rpc_client.cache_clear()
         client = service_under_test._get_btc_market_rpc_client()
-        assert client is not None
+        # B101 Fix
+        if not (client is not None):
+            raise AssertionError("Client should not be None")
         MockBtcClient.assert_called_once()
         client.ping.assert_called_once()
 
@@ -233,7 +258,9 @@ class TestMarketWalletClientHelpers:
         mock_instance.get_version = MagicMock(return_value={'version': 'mock_v0.17'})
         service_under_test._get_xmr_market_rpc_client.cache_clear()
         client = service_under_test._get_xmr_market_rpc_client()
-        assert client is not None
+        # B101 Fix
+        if not (client is not None):
+            raise AssertionError("Client should not be None")
         MockXmrClient.assert_called_once()
         client.get_version.assert_called_once()
 
@@ -256,8 +283,12 @@ class TestMarketWalletClientHelpers:
         mock_get_eth_client.return_value = mock_w3_success
         service_under_test._get_eth_market_rpc_client.cache_clear()
         client = service_under_test._get_eth_market_rpc_client()
-        assert client is not None
-        assert client == mock_w3_success
+        # B101 Fix
+        if not (client is not None):
+            raise AssertionError("Client should not be None")
+        # B101 Fix
+        if not (client == mock_w3_success):
+            raise AssertionError(f"Client '{client}' does not match expected mock '{mock_w3_success}'")
         mock_get_eth_client.assert_called_once()
         service_under_test._get_eth_market_rpc_client.cache_clear()
 
@@ -275,22 +306,24 @@ class TestMarketWalletClientHelpers:
     def test_get_eth_client_missing_config(self, settings):
         settings.MARKET_ETH_RPC_URL = None
         service_under_test._get_eth_market_rpc_client.cache_clear()
+        # Ensure WEB3_AVAILABLE is correctly patched if needed for this test path
         with patch('store.services.market_wallet_service.WEB3_AVAILABLE', True):
-             with patch('store.services.market_wallet_service.Web3', MagicMock()):
-                  with patch('store.services.market_wallet_service.HTTPProvider', MagicMock()):
-                       with pytest.raises(ImproperlyConfigured, match="MARKET_ETH_RPC_URL not configured"):
-                            service_under_test._get_eth_market_rpc_client()
+            with patch('store.services.market_wallet_service.Web3', MagicMock()):
+                with patch('store.services.market_wallet_service.HTTPProvider', MagicMock()):
+                    with pytest.raises(ImproperlyConfigured, match="MARKET_ETH_RPC_URL not configured"):
+                        service_under_test._get_eth_market_rpc_client()
 
 
 @pytest.mark.usefixtures("mock_market_wallet_settings")
 class TestGenerateDepositAddress:
     """Tests for generate_deposit_address function."""
 
-    # --- BTC/XMR Tests (unchanged) ---
     @patch('store.services.market_wallet_service.BITCOIN_AVAILABLE', True)
     def test_generate_btc_address(self):
         address = service_under_test.generate_deposit_address('BTC', MOCK_ORDER_ID)
-        assert address == MOCK_BTC_ADDRESS_PLACEHOLDER
+        # B101 Fix
+        if not (address == MOCK_BTC_ADDRESS_PLACEHOLDER):
+            raise AssertionError(f"Expected address '{MOCK_BTC_ADDRESS_PLACEHOLDER}', got '{address}'")
 
     @patch('store.services.market_wallet_service.MONERO_AVAILABLE', True)
     @patch('store.services.market_wallet_service.MoneroWalletRPC')
@@ -300,7 +333,9 @@ class TestGenerateDepositAddress:
         mock_client_instance.create_address = MagicMock(return_value={'address': MOCK_XMR_ADDRESS, 'address_index': 1})
         mock_get_client.return_value = mock_client_instance
         address = service_under_test.generate_deposit_address('XMR', MOCK_ORDER_ID)
-        assert address == MOCK_XMR_ADDRESS
+        # B101 Fix
+        if not (address == MOCK_XMR_ADDRESS):
+            raise AssertionError(f"Expected address '{MOCK_XMR_ADDRESS}', got '{address}'")
         mock_get_client.assert_called_once()
         mock_client_instance.create_address.assert_called_once_with(account_index=0, label=f"order_{MOCK_ORDER_ID}")
 
@@ -316,7 +351,6 @@ class TestGenerateDepositAddress:
         mock_get_client.assert_called_once()
         mock_client_instance.create_address.assert_called_once()
 
-    # --- ETH Test (Simplified Mocking - Rev 28 - Passed) ---
     @patch('store.services.market_wallet_service.validate_ethereum_address')
     @patch('store.services.market_wallet_service.to_checksum_address')
     @patch('store.services.market_wallet_service.Account')
@@ -330,12 +364,13 @@ class TestGenerateDepositAddress:
 
         address = service_under_test.generate_deposit_address('ETH', MOCK_ORDER_ID)
 
-        assert address == EXPECTED_CHECKSUM_GENERATED
+        # B101 Fix
+        if not (address == EXPECTED_CHECKSUM_GENERATED):
+            raise AssertionError(f"Expected address '{EXPECTED_CHECKSUM_GENERATED}', got '{address}'")
         MockEthAccount.create.assert_called_once_with(f'order_{MOCK_ORDER_ID}_{django_settings.SECRET_KEY}')
         MockToChecksumAddress.assert_called_once_with(MOCK_ETH_RAW_ADDRESS_GENERATED)
         mock_validate_addr.assert_called_once_with(EXPECTED_CHECKSUM_GENERATED)
 
-    # --- General Test ---
     def test_generate_unsupported_currency(self):
         with pytest.raises(ValueError, match="Unsupported currency"):
             service_under_test.generate_deposit_address('LTC', MOCK_ORDER_ID)
@@ -344,11 +379,13 @@ class TestGenerateDepositAddress:
 @pytest.mark.usefixtures("mock_market_wallet_settings")
 class TestScanForDeposit:
     """Tests for scan_for_deposit function."""
-    # --- Tests remain unchanged from Rev 29, still using context manager ---
+
     @patch('store.services.market_wallet_service.BITCOIN_AVAILABLE', True)
     def test_scan_btc_found(self):
         result = service_under_test.scan_for_deposit('BTC', MOCK_BTC_ADDRESS, Decimal(100000), 3)
-        assert result is None
+        # B101 Fix
+        if not (result is None):
+            raise AssertionError(f"Expected result to be None, got {result}")
 
     @patch('store.services.market_wallet_service.MONERO_AVAILABLE', True)
     @patch('store.services.market_wallet_service.MoneroWalletRPC')
@@ -363,11 +400,21 @@ class TestScanForDeposit:
             'in': [{'address': MOCK_XMR_ADDRESS, 'amount': expected_amount_pico_int, 'confirmations': confs_needed + 5, 'txid': MOCK_XMR_TXID}]
         })
         result = service_under_test.scan_for_deposit('XMR', MOCK_XMR_ADDRESS, amount_pico, confs_needed)
-        assert result is not None
-        assert result[0] is True
-        assert result[1] == amount_pico
-        assert result[2] == confs_needed + 5
-        assert result[3] == MOCK_XMR_TXID
+        # B101 Fix
+        if not (result is not None):
+            raise AssertionError(f"Expected result to not be None, got {result}")
+        # B101 Fix
+        if not (result[0] is True):
+             raise AssertionError(f"Expected result[0] to be True, got {result[0]}")
+        # B101 Fix
+        if not (result[1] == amount_pico):
+             raise AssertionError(f"Expected result[1] ({result[1]}) to equal amount_pico ({amount_pico})")
+        # B101 Fix
+        if not (result[2] == confs_needed + 5):
+             raise AssertionError(f"Expected result[2] ({result[2]}) to equal confs_needed + 5 ({confs_needed + 5})")
+        # B101 Fix
+        if not (result[3] == MOCK_XMR_TXID):
+             raise AssertionError(f"Expected result[3] ('{result[3]}') to equal MOCK_XMR_TXID ('{MOCK_XMR_TXID}')")
         mock_get_client.assert_called_once()
         mock_client_instance.get_transfers.assert_called_once_with(in_=True, pool_=False, out_=False, pending_=False, failed_=False, filter_by_height=False)
 
@@ -379,7 +426,9 @@ class TestScanForDeposit:
         mock_get_client.return_value = mock_client_instance
         mock_client_instance.get_transfers = MagicMock(return_value={'in': []})
         result = service_under_test.scan_for_deposit('XMR', MOCK_XMR_ADDRESS, Decimal(1000), 10)
-        assert result is None
+        # B101 Fix
+        if not (result is None):
+            raise AssertionError(f"Expected result to be None, got {result}")
         mock_get_client.assert_called_once()
         mock_client_instance.get_transfers.assert_called_once()
 
@@ -399,28 +448,42 @@ class TestScanForDeposit:
             confs_needed = 12
             mock_w3_instance.eth.get_balance.return_value = int(amount_wei)
             result = service_under_test.scan_for_deposit('ETH', context_checksum_generated, amount_wei, confs_needed)
-            assert result is not None
+            # B101 Fix
+            if not (result is not None):
+                 raise AssertionError(f"Expected result to not be None, got {result}")
+            # Check inside the if block remains valid as it prevents None access
             if result is not None:
-                assert result[0] is True
-                assert result[1] == amount_wei
-                assert result[2] == confs_needed
-                assert result[3] is None
+                # B101 Fix
+                if not (result[0] is True):
+                     raise AssertionError(f"Expected result[0] to be True, got {result[0]}")
+                # B101 Fix
+                if not (result[1] == amount_wei):
+                     raise AssertionError(f"Expected result[1] ({result[1]}) to equal amount_wei ({amount_wei})")
+                # B101 Fix
+                if not (result[2] == confs_needed):
+                     raise AssertionError(f"Expected result[2] ({result[2]}) to equal confs_needed ({confs_needed})")
+                # B101 Fix
+                if not (result[3] is None):
+                     raise AssertionError(f"Expected result[3] to be None, got {result[3]}")
                 mock_get_w3_helper.assert_called_once()
                 mock_w3_instance.eth.get_balance.assert_called_once_with(context_checksum_generated)
+            # else case means the 'result is not None' assertion failed, which is already handled above.
 
     @patch.object(service_under_test, '_get_eth_market_rpc_client')
     def test_scan_eth_zero_balance(self, mock_get_w3_helper):
         service_under_test._get_eth_market_rpc_client.cache_clear()
         with mock_web3_client_context() as (
-             configure_mocks, MockWeb3, MockHTTPProvider, MockEthAccount, MockToWei, MockToChecksumAddress,
-             context_checksum_generated, _, _
+                configure_mocks, MockWeb3, MockHTTPProvider, MockEthAccount, MockToWei, MockToChecksumAddress,
+                context_checksum_generated, _, _
         ):
             configure_mocks(success=True)
             mock_w3_instance = MockWeb3.return_value
             mock_get_w3_helper.return_value = mock_w3_instance
             mock_w3_instance.eth.get_balance.return_value = 0
             result = service_under_test.scan_for_deposit('ETH', context_checksum_generated, Decimal(1), 12)
-            assert result is None
+            # B101 Fix
+            if not (result is None):
+                raise AssertionError(f"Expected result to be None when balance is 0, got {result}")
             mock_get_w3_helper.assert_called_once()
             mock_w3_instance.eth.get_balance.assert_called_once_with(context_checksum_generated)
 
@@ -436,7 +499,9 @@ class TestScanForDeposit:
             mock_get_w3_helper.return_value = mock_w3_instance
             mock_w3_instance.eth.get_balance.side_effect = ConnectionError("ETH Node unavailable")
             result = service_under_test.scan_for_deposit('ETH', context_checksum_generated, Decimal(1), 12)
-            assert result is None
+            # B101 Fix
+            if not (result is None):
+                raise AssertionError(f"Expected result to be None on RPC error, got {result}")
             mock_get_w3_helper.assert_called_once()
             mock_w3_instance.eth.get_balance.assert_called_once_with(context_checksum_generated)
 
@@ -445,7 +510,6 @@ class TestScanForDeposit:
 class TestInitiateMarketWithdrawal:
     """Tests for initiate_market_withdrawal function."""
 
-    # --- BTC/XMR Tests (unchanged) ---
     @patch('store.services.market_wallet_service.BITCOIN_AVAILABLE', True)
     @patch('store.services.market_wallet_service.validate_bitcoin_address')
     @patch('store.services.market_wallet_service.BitcoinAuthServiceProxy')
@@ -453,8 +517,12 @@ class TestInitiateMarketWithdrawal:
     def test_withdraw_btc_success(self, mock_get_client, MockBtcClientClass, mock_validate_btc):
         mock_client_instance = MockBtcClientClass.return_value
         mock_get_client.return_value = mock_client_instance
+        # Assume withdrawal simulation returns placeholder
+        # (Real client interaction not shown, but test structure implies a placeholder return)
         txid = service_under_test.initiate_market_withdrawal('BTC', MOCK_BTC_ADDRESS, Decimal("0.1"))
-        assert txid == MOCK_BTC_TXID_PLACEHOLDER
+        # B101 Fix
+        if not (txid == MOCK_BTC_TXID_PLACEHOLDER):
+            raise AssertionError(f"Expected txid '{MOCK_BTC_TXID_PLACEHOLDER}', got '{txid}'")
         mock_validate_btc.assert_called_once_with(MOCK_BTC_ADDRESS)
         mock_get_client.assert_called_once()
 
@@ -471,7 +539,9 @@ class TestInitiateMarketWithdrawal:
         mock_conv.return_value=expected_pico
         mock_client_instance.transfer = MagicMock(return_value={'tx_hash': MOCK_XMR_TXID})
         txid = service_under_test.initiate_market_withdrawal('XMR', MOCK_XMR_ADDRESS, amount_xmr)
-        assert txid == MOCK_XMR_TXID
+        # B101 Fix
+        if not (txid == MOCK_XMR_TXID):
+            raise AssertionError(f"Expected txid '{MOCK_XMR_TXID}', got '{txid}'")
         mock_validate_xmr.assert_called_once_with(MOCK_XMR_ADDRESS)
         mock_conv.assert_called_once_with(amount_xmr)
         mock_get_client.assert_called_once()
@@ -480,7 +550,6 @@ class TestInitiateMarketWithdrawal:
             priority=1, get_tx_hex=True
         )
 
-    # --- ETH Tests (Simplified Mocking - Rev 30) ---
     @patch('store.services.market_wallet_service.validate_ethereum_address')
     @patch.object(service_under_test, '_get_eth_market_rpc_client')
     @patch('store.services.market_wallet_service.Account')
@@ -504,12 +573,14 @@ class TestInitiateMarketWithdrawal:
 
         # 3. Mock to_checksum_address
         def checksum_side_effect(addr):
-             if addr == MOCK_ETH_TARGET_ADDRESS_RAW: return EXPECTED_CHECKSUM_TARGET
-             if addr == MOCK_ETH_SENDER_ADDRESS_RAW: return EXPECTED_CHECKSUM_SENDER
-             if ETH_UTILS_AVAILABLE and real_to_checksum_address:
-                 try: return real_to_checksum_address(addr)
-                 except: pass # noqa E722
-             return f"0x{addr[2:].upper()}" if isinstance(addr, str) and addr.startswith('0x') else addr
+            if addr == MOCK_ETH_TARGET_ADDRESS_RAW: return EXPECTED_CHECKSUM_TARGET
+            if addr == MOCK_ETH_SENDER_ADDRESS_RAW: return EXPECTED_CHECKSUM_SENDER
+            if ETH_UTILS_AVAILABLE and real_to_checksum_address:
+                try: return real_to_checksum_address(addr)
+                # B110 Fix: Catch specific ValueError
+                except ValueError:
+                    pass # noqa E722
+            return f"0x{addr[2:].upper()}" if isinstance(addr, str) and addr.startswith('0x') else addr
         MockToChecksumAddress.side_effect = checksum_side_effect
 
         # 4. Configure w3.eth methods
@@ -535,17 +606,19 @@ class TestInitiateMarketWithdrawal:
 
         # --- Assertions ---
         # 1. Check final TX Hash
-        assert tx_hash == MOCK_ETH_TX_HASH
+        # B101 Fix
+        if not (tx_hash == MOCK_ETH_TX_HASH):
+             raise AssertionError(f"Expected tx_hash '{MOCK_ETH_TX_HASH}', got '{tx_hash}'")
 
         # 2. Check helper calls
         mock_get_w3_helper.assert_called_once()
-        MockToChecksumAddress.assert_any_call(MOCK_ETH_TARGET_ADDRESS_RAW)
+        MockToChecksumAddress.assert_any_call(MOCK_ETH_TARGET_ADDRESS_RAW) # Check it was called with the target
         mock_validate_eth.assert_called_once_with(EXPECTED_CHECKSUM_TARGET)
 
         # 3. Check Account.from_key call
         MockEthAccount.from_key.assert_called_once_with(MOCK_ETH_SENDER_PK)
 
-        # 4. Check w3.eth calls (no check for to_wei anymore)
+        # 4. Check w3.eth calls
         mock_eth_instance.get_transaction_count.assert_called_once_with(EXPECTED_CHECKSUM_SENDER)
         expected_estimate_dict = {
             'to': EXPECTED_CHECKSUM_TARGET, 'value': expected_wei, 'gas': 0,
@@ -584,13 +657,13 @@ class TestInitiateMarketWithdrawal:
     def test_withdraw_invalid_address(self):
         """Test withdrawal with an invalid target address."""
         invalid_addr = "not_an_address"
+        # Simulate checksum failure by raising ValueError
         with patch('store.services.market_wallet_service.to_checksum_address', side_effect=ValueError("Invalid address for checksum")):
-             with patch('store.services.market_wallet_service.validate_ethereum_address'):
-                 with pytest.raises(ValueError, match="Invalid target withdrawal address"):
-                     service_under_test.initiate_market_withdrawal('ETH', invalid_addr, Decimal("0.1"))
+            with patch('store.services.market_wallet_service.validate_ethereum_address'): # Still need to patch validation
+                with pytest.raises(ValueError, match="Invalid target withdrawal address"):
+                    service_under_test.initiate_market_withdrawal('ETH', invalid_addr, Decimal("0.1"))
 
 
-    # Kept using context manager - may need simplification if it fails
     @patch('store.services.market_wallet_service.validate_ethereum_address')
     @patch.object(service_under_test, '_get_eth_market_rpc_client')
     def test_withdraw_eth_send_fails(self, mock_get_w3_helper, mock_validate_eth):
@@ -598,17 +671,19 @@ class TestInitiateMarketWithdrawal:
         service_under_test._get_eth_market_rpc_client.cache_clear()
         with mock_web3_client_context() as (
             configure_mocks, MockWeb3, MockHTTPProvider, MockEthAccount, MockToWei, MockToChecksumAddress,
-            _, _, context_checksum_target
+            _, _, context_checksum_target # Need target checksum here
         ):
             configure_mocks(success=True)
             mock_w3_instance = MockWeb3.return_value
             mock_get_w3_helper.return_value = mock_w3_instance
+            # Simulate send_raw_transaction failure
             mock_w3_instance.eth.send_raw_transaction.side_effect = Exception("Node connection lost during send")
 
             expected_regex = r"Failed to send transaction to node: Node connection lost during send"
             with pytest.raises(CryptoProcessingError, match=expected_regex):
                 service_under_test.initiate_market_withdrawal('ETH', MOCK_ETH_TARGET_ADDRESS_RAW, Decimal("0.01"))
 
+            # Ensure validation was still attempted before failure
             mock_validate_eth.assert_called_once_with(context_checksum_target)
             mock_get_w3_helper.assert_called_once()
 
@@ -616,11 +691,11 @@ class TestInitiateMarketWithdrawal:
     def test_withdraw_eth_missing_sender_key(self, settings):
         """Test ETH withdrawal when sender private key is not configured."""
         settings.MARKET_ETH_SENDER_PRIVATE_KEY = None
-        service_under_test._get_eth_market_rpc_client.cache_clear()
+        service_under_test._get_eth_market_rpc_client.cache_clear() # Ensure settings change is picked up
         with patch('store.services.market_wallet_service.validate_ethereum_address'):
-             with patch('store.services.market_wallet_service.to_checksum_address', return_value=EXPECTED_CHECKSUM_TARGET):
-                 with pytest.raises(ImproperlyConfigured, match="MARKET_ETH_SENDER_PRIVATE_KEY not configured"):
-                     service_under_test.initiate_market_withdrawal('ETH', MOCK_ETH_TARGET_ADDRESS_RAW, Decimal("0.01"))
+            with patch('store.services.market_wallet_service.to_checksum_address', return_value=EXPECTED_CHECKSUM_TARGET):
+                with pytest.raises(ImproperlyConfigured, match="MARKET_ETH_SENDER_PRIVATE_KEY not configured"):
+                    service_under_test.initiate_market_withdrawal('ETH', MOCK_ETH_TARGET_ADDRESS_RAW, Decimal("0.01"))
 
 
 # ------ End Of file-----

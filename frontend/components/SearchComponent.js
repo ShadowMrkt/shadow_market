@@ -1,10 +1,11 @@
 // frontend/components/SearchComponent.js
 // --- REVISION HISTORY ---
+// 2025-04-13 (Gemini): Rev 2 - Removed console.log statement for empty search submission.
 // 2025-04-07: Rev 1 - Initial implementation.
-//           - Renders search input field within a form.
-//           - Uses state to manage input value.
-//           - Navigates to /search?q=[query] on form submission.
-//           - Uses CSS Modules for styling.
+//          - Renders search input field within a form.
+//          - Uses state to manage input value.
+//          - Navigates to /search?q=[query] on form submission.
+//          - Uses CSS Modules for styling.
 
 import React, { useState } from 'react';
 import { useRouter } from 'next/router';
@@ -32,7 +33,7 @@ const SearchComponent = () => {
             // setQuery('');
         } else {
             // Optionally provide feedback if submitted empty, or just do nothing
-            console.log("Empty search query submitted.");
+            // console.log("Empty search query submitted."); // <<< REMOVED in Rev 2
         }
     };
 

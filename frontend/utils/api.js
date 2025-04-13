@@ -1,213 +1,268 @@
-// frontend/utils/formatters.js
+// frontend/utils/api.js
 // --- REVISION HISTORY ---
-// 2025-04-09: Rev 2 - Added comments for TODO formatters.
-// 2025-04-07: Rev 1 - Added formatPrice (using Decimal.js), formatCurrency. Refined formatDate.
-//           - Implemented precise currency formatting using Decimal.js.
-//           - Added helper to combine formatted price with currency symbol.
-//           - Added options parameter to formatDate.
-//           - Reviewed renderStars function.
-//           - Added necessary imports and comments.
-//           - Added revision history block.
+// 2025-04-11: Rev 1 - Recreated file based on utils/api.test.js.
+//                   - Implemented core apiRequest helper.
+//                   - Added specific functions: getCurrentUser, getProducts, loginInit, logoutUser, updateCurrentUser.
+//                   - Implemented CSRF handling via js-cookie.
+//                   - Added robust error handling for network errors and non-ok HTTP responses (including 401, 403, 400 with JSON body).
+//                   - Used URLSearchParams for query parameters.
+//                   - Added ApiError custom error class.
 
-import React from 'react'; // Import React, needed if functions return JSX like renderStars
-import { Decimal } from 'decimal.js';
-import { CURRENCY_SYMBOLS, DEFAULT_PAGE_SIZE } from './constants'; // Import currency symbols and page size constant
+import Cookies from 'js-cookie';
+import { API_BASE_URL } from './constants'; // Assuming constants.js is in the same directory
 
 /**
- * Formats a date string or Date object into a locale-aware string.
- * @param {string | Date | null | undefined} dateInput - The date string or Date object.
- * @param {Intl.DateTimeFormatOptions} [options={}] - Optional formatting options for toLocaleString/toLocaleDateString.
- * @returns {string} Formatted date string or 'N/A'.
+ * Custom Error class for API-related errors.
+ * Includes HTTP status and parsed error data if available.
  */
-export const formatDate = (dateInput, options = {}) => { // Make options default to empty object
-    if (!dateInput) return 'N/A';
+class ApiError extends Error {
+    /**
+     * @param {string} message - The error message.
+     * @param {number | undefined} status - The HTTP status code, if available.
+     * @param {any} [data] - Parsed error data from the response body, if available.
+     */
+    constructor(message, status, data) {
+        super(message);
+        this.name = 'ApiError';
+        this.status = status;
+        this.data = data;
+        // Maintain proper stack trace (optional, depends on environment support)
+        if (Error.captureStackTrace) {
+            Error.captureStackTrace(this, ApiError);
+        }
+    }
+}
 
-    const defaultOptions = {
-        year: 'numeric',
-        month: 'short',
-        day: 'numeric',
-        // Optionally add time:
-        // hour: 'numeric',
-        // minute: '2-digit',
+/**
+ * Core function for making API requests. Handles URL construction, headers,
+ * CSRF tokens, request body, response parsing, and error handling.
+ *
+ * @param {string} endpoint - The API endpoint path (e.g., '/api/store/users/me/').
+ * @param {string} [method='GET'] - The HTTP method.
+ * @param {object | null} [body=null] - The request body for POST/PUT/PATCH etc. Will be JSON.stringify'd.
+ * @param {object | null} [params=null] - Query parameters as an object.
+ * @param {boolean} [requiresCsrf=false] - Whether to include the X-CSRFToken header.
+ * @returns {Promise<any>} - Resolves with the parsed JSON response, or null for 204 No Content.
+ * @throws {ApiError} - Rejects with an ApiError for network issues or non-ok HTTP responses.
+ */
+export const apiRequest = async (endpoint, method = 'GET', body = null, params = null, requiresCsrf = false) => {
+    // Ensure API_BASE_URL is defined
+    if (!API_BASE_URL) {
+        throw new Error("API_BASE_URL is not defined. Check your environment variables and constants file.");
+    }
+
+    let url;
+    try {
+        // Construct URL carefully, handling potential base URL trailing slash and endpoint leading slash
+        const baseUrl = API_BASE_URL.endsWith('/') ? API_BASE_URL : `${API_BASE_URL}/`;
+        const endpointPath = endpoint.startsWith('/') ? endpoint.substring(1) : endpoint;
+        url = new URL(endpointPath, baseUrl);
+    } catch (e) {
+        console.error("Error constructing URL:", e, { API_BASE_URL, endpoint });
+        throw new Error(`Invalid URL components: ${e.message}`);
+    }
+
+
+    // Append query parameters if provided
+    if (params) {
+        // Filter out null/undefined params before creating search string
+        const definedParams = Object.entries(params).reduce((acc, [key, value]) => {
+            if (value !== null && value !== undefined) {
+                acc[key] = value;
+            }
+            return acc;
+        }, {});
+        if (Object.keys(definedParams).length > 0) {
+            url.search = new URLSearchParams(definedParams).toString();
+        }
+    }
+
+    const headers = new Headers({
+        'Accept': 'application/json',
+    });
+
+    const config = {
+        method: method.toUpperCase(),
+        headers: headers,
+        // credentials: 'include', // Uncomment if backend requires cookies (ensure CORS allows credentials)
+        // mode: 'cors', // Usually default, but can be explicit
+        // cache: 'no-cache', // Consider cache policy for production
     };
 
-    const formatOptions = { ...defaultOptions, ...options };
-
-    try {
-        const date = new Date(dateInput);
-        // Check if the date is valid after parsing
-        if (isNaN(date.getTime())) {
-            // Try common alternative if direct parse fails (e.g., simple YYYY-MM-DD)
-             const parts = String(dateInput).split('-');
-             if (parts.length === 3) {
-                 const potentiallyValidDate = new Date(parts[0], parts[1] - 1, parts[2]);
-                 if (!isNaN(potentiallyValidDate.getTime())) {
-                     date.setTime(potentiallyValidDate.getTime());
-                 } else {
-                    throw new Error('Invalid date input');
-                 }
-             } else {
-                 throw new Error('Invalid date input');
-             }
+    // Only add Content-Type and body if body is actually present and method allows it
+    if (body !== null && body !== undefined && ['POST', 'PUT', 'PATCH'].includes(config.method)) {
+        try {
+            config.body = JSON.stringify(body);
+            headers.set('Content-Type', 'application/json');
+        } catch (e) {
+            console.error("Failed to stringify request body:", e);
+            throw new Error("Invalid request body provided.");
         }
-        // Use toLocaleString if time options are present, otherwise toLocaleDateString
-        if (formatOptions.hour || formatOptions.minute || formatOptions.second) {
-            return date.toLocaleString(undefined, formatOptions); // Use user's locale settings
+    }
+
+    if (requiresCsrf) {
+        const csrfToken = Cookies.get('csrftoken');
+        if (csrfToken) {
+            headers.set('X-CSRFToken', csrfToken);
         } else {
-            return date.toLocaleDateString(undefined, formatOptions); // Use user's locale settings
+            console.warn(`CSRF token requested for ${method} ${endpoint} but not found in cookies.`);
+            // Decide how to handle missing CSRF. Throwing an error might be safer.
+            // throw new ApiError('CSRF token is missing', 403); // Example: Treat as Forbidden
         }
-    } catch (e) {
-        console.error("Error formatting date:", dateInput, e);
-        return 'Invalid Date';
     }
-};
-
-
-/**
- * Formats a numeric amount to a specific number of decimal places, tailored for cryptocurrencies.
- * Uses Decimal.js for precision.
- * @param {number | string | Decimal | null | undefined} amount - The numeric amount to format.
- * @param {string} currencyCode - The currency code (e.g., 'BTC', 'XMR', 'USD').
- * @returns {string | null} Formatted price string or null if input is invalid/null/undefined.
- */
-export const formatPrice = (amount, currencyCode) => {
-    if (amount === null || amount === undefined || amount === '') return null;
 
     try {
-        const value = new Decimal(amount);
-        let decimalPlaces;
+        const response = await fetch(url.toString(), config);
 
-        // Determine decimal places based on currency code
-        switch (currencyCode?.toUpperCase()) {
-            case 'BTC':
-                decimalPlaces = 8;
-                break;
-            case 'XMR':
-                // Monero has 12 decimal places (piconero), but often displayed with fewer
-                decimalPlaces = 6; // Common display precision, adjust if needed
-                // decimalPlaces = 12; // Full precision
-                break;
-            case 'ETH':
-                // Ether has 18 decimal places (wei), often displayed with 4-8
-                decimalPlaces = 6; // Common display precision, adjust if needed
-                // decimalPlaces = 8;
-                break;
-            case 'USD':
-            case 'EUR':
-            case 'GBP': // Add other FIAT currencies as needed
-                decimalPlaces = 2;
-                break;
-            default:
-                // Default for unknown or non-crypto currencies (assume 2dp)
-                decimalPlaces = 2;
+        // --- Handle successful responses (2xx) ---
+        if (response.ok) {
+            if (response.status === 204) { // No Content
+                return null;
+            }
+            // Attempt to parse JSON for other 2xx responses
+            try {
+                // Check content type before assuming JSON
+                const contentType = response.headers.get('content-type');
+                if (contentType && contentType.includes('application/json')) {
+                    return await response.json();
+                } else {
+                    // Handle cases like 200 OK with non-JSON content if expected by any endpoint
+                    console.warn(`Received successful status ${response.status} but non-JSON content-type: ${contentType} for ${endpoint}`);
+                    return await response.text(); // Or return null, or throw, depending on desired behavior
+                }
+            } catch (e) {
+                console.error(`Failed to parse JSON for successful response ${response.status} from ${endpoint}:`, e);
+                // Throw an error indicating parsing failure despite success status
+                throw new ApiError(`API Error (${response.status}): Failed to parse successful response body`, response.status);
+            }
         }
 
-        // Ensure we don't display negative zero
-        if (value.isZero() && value.isNegative()) {
-            return new Decimal(0).toFixed(decimalPlaces);
+        // --- Handle error responses (non-2xx) ---
+        let errorData = null;
+        let errorMessage = `API Error (${response.status}): ${response.statusText}`; // Default message
+
+        // Attempt to parse error body only if content seems parseable (JSON or maybe text)
+        try {
+            const contentType = response.headers.get('content-type');
+            if (contentType && contentType.includes('application/json')) {
+                 errorData = await response.json();
+                 // Refine error message using parsed data
+                 if (errorData && typeof errorData === 'object') {
+                    if (errorData.detail && typeof errorData.detail === 'string') {
+                        errorMessage = `API Error (${response.status}): ${errorData.detail}`;
+                    } else if (Object.keys(errorData).length > 0) {
+                        // Use stringified JSON only if it's not empty and doesn't have 'detail'
+                         errorMessage = `API Error (${response.status}): ${JSON.stringify(errorData)}`;
+                    }
+                 }
+            } else {
+                // Try to get text if not JSON, could be HTML error page or plain text
+                const textBody = await response.text();
+                errorData = { detail: textBody || response.statusText }; // Store text body in 'detail'
+                errorMessage = `API Error (${response.status}): ${response.statusText}`; // Keep original status text message
+                console.warn(`Received error status ${response.status} with non-JSON content-type: ${contentType} from ${endpoint}`);
+            }
+        } catch (e) {
+            console.warn(`Failed to parse error body for status ${response.status} from ${endpoint}:`, e);
+            // Keep the basic statusText message and set detail fallback if parsing fails
+             errorData = { detail: response.statusText };
         }
 
-        return value.toFixed(decimalPlaces);
+        // Throw specific errors for common authorization/authentication issues
+        if (response.status === 401) {
+            // Could potentially trigger auto-logout or redirect here in a real app
+            console.error('Unauthorized access detected:', endpoint, errorData);
+            throw new ApiError('Unauthorized', response.status, errorData);
+        }
+        if (response.status === 403) {
+            console.error('Forbidden access detected:', endpoint, errorData);
+            throw new ApiError('Forbidden', response.status, errorData);
+        }
 
-    } catch (e) {
-        console.error(`Error formatting price for ${currencyCode}:`, amount, e);
-        return null; // Indicate formatting failure
+        // Throw generic ApiError for other non-ok statuses, including the refined message
+        throw new ApiError(errorMessage, response.status, errorData);
+
+    } catch (error) {
+        // Handle network errors or errors thrown during response processing/custom logic
+        if (error instanceof ApiError) {
+            // Re-throw ApiErrors directly (already logged if needed)
+            throw error;
+        } else if (error instanceof TypeError) { // Catches "Failed to fetch" and potentially others
+             console.error(`Network or Type Error during fetch for ${endpoint}:`, error);
+             throw new ApiError(`Network error: ${error.message}`); // No HTTP status for these
+        } else {
+             // Catch other unexpected errors (e.g., from URL parsing, JSON.stringify)
+             console.error(`An unexpected error occurred during API request to ${endpoint}:`, error);
+             throw new ApiError(`Unexpected error: ${error.message}`);
+        }
     }
+};
+
+// --- Specific API Function Implementations ---
+
+/**
+ * Fetches the current logged-in user's data.
+ * GET /api/store/users/me/
+ */
+export const getCurrentUser = () => {
+    return apiRequest('api/store/users/me/', 'GET', null, null, false);
 };
 
 /**
- * Formats a numeric amount as currency, prepending the correct symbol.
- * @param {number | string | Decimal | null | undefined} amount - The numeric amount.
- * @param {string} currencyCode - The currency code (e.g., 'BTC', 'XMR', 'USD').
- * @param {object} [options={}] - Optional flags.
- * @param {boolean} [options.showNA=true] - Whether to return 'N/A' for null/invalid amounts (default true). Set to false to return empty string ''.
- * @returns {string} Formatted currency string (e.g., '₿ 0.12345678', '$ 19.99'), 'N/A', or ''.
+ * Fetches a list of products, optionally filtered by query parameters.
+ * GET /api/store/products/
+ * @param {object} [queryParams] - Object containing query parameters (e.g., { limit, category, search }).
  */
-export const formatCurrency = (amount, currencyCode, options = { showNA: true }) => {
-    const formattedAmount = formatPrice(amount, currencyCode);
-
-    if (formattedAmount === null) {
-        // Handle zero explicitly if needed, otherwise respect showNA option
-        if (amount === 0 || amount === '0') {
-             const zeroFormatted = formatPrice(0, currencyCode);
-             const symbol = CURRENCY_SYMBOLS[currencyCode?.toUpperCase()] || currencyCode || '';
-             return `${symbol} ${zeroFormatted}`;
-        }
-        return options.showNA ? 'N/A' : ''; // Return N/A or empty string based on option
-    }
-
-    const symbol = CURRENCY_SYMBOLS[currencyCode?.toUpperCase()] || currencyCode || ''; // Use code if symbol missing
-
-    return `${symbol} ${formattedAmount}`;
+export const getProducts = (queryParams = null) => {
+    return apiRequest('api/store/products/', 'GET', null, queryParams, false);
 };
-
 
 /**
- * Renders a star rating component using text characters.
- * NOTE: Consider using SVG icons for better styling and accessibility.
- * @param {number | null | undefined} rating - The rating value (ideally 0-5).
- * @returns {React.ReactElement | string} JSX span with stars or 'N/A'.
+ * Initiates the login process.
+ * POST /api/store/auth/login/init/
+ * @param {object} credentials - { username, password, captcha_key, captcha_value }.
  */
-export const renderStars = (rating) => {
-    if (rating === null || rating === undefined || isNaN(rating)) return 'N/A';
-
-    const RATING_MAX = 5;
-    // Clamp rating value between 0 and RATING_MAX
-    const ratingValue = Math.max(0, Math.min(Number(rating), RATING_MAX));
-    // Round to nearest 0.5 for half-star representation
-    const rounded = Math.round(ratingValue * 2) / 2;
-    const fullStars = Math.floor(rounded);
-    const halfStar = rounded % 1 !== 0;
-    const emptyStars = RATING_MAX - fullStars - (halfStar ? 1 : 0);
-
-    // Ensure we don't exceed max stars due to rounding edge cases (should be rare with clamp)
-    const totalStars = fullStars + (halfStar ? 1 : 0) + emptyStars;
-    if (totalStars !== RATING_MAX && totalStars >= 0) { // Ensure emptyStars doesn't go negative
-        console.warn("Star calculation resulted in incorrect total:", totalStars, "for rating:", rating);
-        // Adjust calculation if necessary, though clamping should prevent most issues
+export const loginInit = (credentials) => {
+    // Ensure credentials object is provided
+    if (!credentials) {
+        return Promise.reject(new Error("Login credentials are required."));
     }
-
-    return (
-        <span title={`${ratingValue.toFixed(2)} / ${RATING_MAX.toFixed(0)}`}>
-            {'★'.repeat(fullStars)}
-            {halfStar ? '½' : ''} {/* TODO: Consider using a better half-star character or icon library */}
-            {'☆'.repeat(Math.max(0, emptyStars))} {/* Ensure emptyStars isn't negative */}
-        </span>
-    );
+    return apiRequest('api/store/auth/login/init/', 'POST', credentials, null, true); // Requires CSRF
 };
 
-// --- TODO: Implement other formatters as needed ---
-// export const truncateText = (text, maxLength = 100) => {
-//     if (!text) return '';
-//     if (text.length <= maxLength) return text;
-//     return text.substring(0, maxLength) + '...';
-// };
+/**
+ * Logs the current user out.
+ * POST /api/store/auth/logout/
+ */
+export const logoutUser = () => {
+    // Expects 204 No Content on success. Send empty body {} as per test expectation.
+    return apiRequest('api/store/auth/logout/', 'POST', {}, null, true); // Requires CSRF
+};
 
-// export const truncateHash = (hash, startChars = 6, endChars = 4) => {
-//     if (!hash || typeof hash !== 'string' || hash.length < (startChars + endChars)) return hash || '';
-//     return `${hash.substring(0, startChars)}...${hash.substring(hash.length - endChars)}`;
-// };
+/**
+ * Updates the current logged-in user's data.
+ * PATCH /api/store/users/me/
+ * @param {object} updateData - Object containing fields to update.
+ */
+export const updateCurrentUser = (updateData) => {
+     // Ensure updateData object is provided
+    if (!updateData || Object.keys(updateData).length === 0) {
+        return Promise.reject(new Error("No update data provided for user profile."));
+    }
+    return apiRequest('api/store/users/me/', 'PATCH', updateData, null, true); // Requires CSRF
+};
 
-// export const formatBytes = (bytes, decimals = 2) => {
-//     if (!+bytes) return '0 Bytes';
-//     const k = 1024;
-//     const dm = decimals < 0 ? 0 : decimals;
-//     const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB', 'PB', 'EB', 'ZB', 'YB'];
-//     const i = Math.floor(Math.log(bytes) / Math.log(k));
-//     return `${parseFloat((bytes / Math.pow(k, i)).toFixed(dm))} ${sizes[i]}`;
-// };
+// --- Add other API functions below as needed, following the pattern ---
+/*
+export const someOtherGetFunction = (id, queryParams) => {
+    return apiRequest(`/api/resource/${id}/`, 'GET', null, queryParams, false);
+};
 
-// Requires date-fns or dayjs library:
-// import { formatDistanceToNowStrict } from 'date-fns';
-// export const formatTimeAgo = (dateInput) => {
-//     if (!dateInput) return 'N/A';
-//     try {
-//         const date = new Date(dateInput);
-//         if (isNaN(date.getTime())) throw new Error('Invalid date');
-//         return formatDistanceToNowStrict(date, { addSuffix: true });
-//     } catch (e) {
-//         console.error("Error formatting time ago:", e);
-//         return 'Invalid Date';
-//     }
-// };
-// --- END TODO ---
+export const createResource = (data) => {
+    return apiRequest('/api/resource/', 'POST', data, null, true); // Requires CSRF
+};
+
+export const deleteResource = (id) => {
+    return apiRequest(`/api/resource/${id}/`, 'DELETE', null, null, true); // Requires CSRF, often expects 204
+};
+*/

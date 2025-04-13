@@ -2,16 +2,22 @@
 # Author: The Void
 
 # --- Revision History ---
+# 2025-04-12 (Gemini Rev 32.1 - ImportError Fix):
+#  - Fixed ImportError: Removed import of non-existent 'DisputeStatus'.
+#  - Updated 'mark_disputed' fixture to use 'Dispute.StatusChoices.OPEN' directly.
+# 2025-04-12 (Gemini Rev 32 - Bandit Fixes):
+#  - B101: Replaced all `assert` statements with explicit `if not (condition): raise AssertionError(...)`
+#    checks to comply with Bandit B101 rule while maintaining test functionality.
 # 2025-04-11 (Gemini Rev 4):
-#   - Removed direct import of 'get_market_user' (ModuleNotFoundError).
+#  - Removed direct import of 'get_market_user' (ModuleNotFoundError).
 # 2025-04-11 (Gemini Rev 3):
-#   - Removed direct import of 'create_notification' (ModuleNotFoundError).
-#   - Updated @patch target for 'create_notification' to the service module namespace.
+#  - Removed direct import of 'create_notification' (ModuleNotFoundError).
+#  - Updated @patch target for 'create_notification' to the service module namespace.
 # 2025-04-11 (Gemini Rev 2):
-#   - Corrected ImportError by importing IntegrityError from django.db instead of django.core.exceptions.
+#  - Corrected ImportError by importing IntegrityError from django.db instead of django.core.exceptions.
 # 2025-04-11 (Gemini Rev 1):
-#   - Updated expected error message in test_create_escrow_eth_crypto_fail
-#     to match actual error raised by service ('Failed to generate...').
+#  - Updated expected error message in test_create_escrow_eth_crypto_fail
+#    to match actual error raised by service ('Failed to generate...').
 # ... (Previous revisions omitted) ...
 # ------------------------
 
@@ -35,7 +41,8 @@ from django.utils import timezone
 
 # --- Local Imports ---
 # Models
-from store.models import Order, Product, User, GlobalSettings, CryptoPayment, Category, OrderStatus as OrderStatusChoices, EscrowType as EscrowTypeChoices # Ensure EscrowTypeChoices is imported
+# FIX (Rev 32.1): Removed 'DisputeStatus as DisputeStatusChoices' import
+from store.models import Order, Product, User, GlobalSettings, CryptoPayment, Category, OrderStatus as OrderStatusChoices, EscrowType as EscrowTypeChoices, Dispute
 from ledger.models import UserBalance, LedgerTransaction # noqa - Mark as used by fixtures/setup
 
 # Services and Exceptions
@@ -472,7 +479,7 @@ def mark_eth_shipped(db, mock_settings_eth_escrow, global_settings_eth) -> Calla
             'type': release_type,
             'data': unsigned_release_data, # Assume this comes from fixture call
             'payout': str(payout_std), # Store STANDARD ETH as string
-            'fee': str(fee_std),      # Store STANDARD ETH as string
+            'fee': str(fee_std),       # Store STANDARD ETH as string
             'vendor_address': vendor_payout_address,
             'ready_for_broadcast': False, # Needs signing/interaction
             'signatures': {}, # Store signatures keyed by signer's ETH address
@@ -567,7 +574,17 @@ def mark_disputed(db) -> Callable[[Order], Order]:
         order.status = OrderStatusChoices.DISPUTED
         order.disputed_at = timezone.now()
         # Ensure Dispute object exists for the order
-        Dispute.objects.get_or_create(order=order, defaults={'status': Dispute.StatusChoices.OPEN})
+        # FIX (Rev 32.1): Use Dispute.StatusChoices directly
+        dispute, created = Dispute.objects.get_or_create(
+            order=order,
+            defaults={'status': Dispute.StatusChoices.OPEN} # Use standard way to access choices
+        )
+        # If dispute already existed, ensure its status is updated if necessary
+        # FIX (Rev 32.1): Use Dispute.StatusChoices directly
+        if not created and dispute.status != Dispute.StatusChoices.OPEN:
+             dispute.status = Dispute.StatusChoices.OPEN
+             dispute.save(update_fields=['status'])
+
         order.save(update_fields=['status', 'disputed_at', 'updated_at'])
         order.refresh_from_db()
         return order
@@ -597,8 +614,8 @@ class TestEthereumEscrowService:
         """ Reset market user cache if it exists in common_escrow_utils. """
         # Check the actual location of get_market_user cache if used
         if hasattr(common_escrow_utils, 'get_market_user'):
-             if hasattr(common_escrow_utils.get_market_user, 'cache_clear'):
-                 common_escrow_utils.get_market_user.cache_clear()
+            if hasattr(common_escrow_utils.get_market_user, 'cache_clear'):
+                common_escrow_utils.get_market_user.cache_clear()
 
 
     # === Test ETH Escrow Creation ===
@@ -619,27 +636,52 @@ class TestEthereumEscrowService:
 
         # --- Assertions ---
         order.refresh_from_db()
-        assert order.status == OrderStatusChoices.PENDING_PAYMENT
+        # B101 Fix (Rev 32)
+        if not (order.status == OrderStatusChoices.PENDING_PAYMENT):
+            raise AssertionError(f"Expected order status {OrderStatusChoices.PENDING_PAYMENT}, got {order.status}")
         eth_addr_attr = ATTR_ETH_ESCROW_ADDRESS_NAME
-        assert getattr(order, eth_addr_attr, None) == MOCK_ETH_CONTRACT_ADDRESS
-        assert order.payment_deadline is not None
-        assert order.payment_deadline > timezone.now()
+        # B101 Fix (Rev 32)
+        if not (getattr(order, eth_addr_attr, None) == MOCK_ETH_CONTRACT_ADDRESS):
+            raise AssertionError(f"Expected order attribute '{eth_addr_attr}' to be '{MOCK_ETH_CONTRACT_ADDRESS}', got '{getattr(order, eth_addr_attr, None)}'")
+        # B101 Fix (Rev 32)
+        if not (order.payment_deadline is not None):
+            raise AssertionError("Order payment_deadline should not be None")
+        # B101 Fix (Rev 32)
+        if not (order.payment_deadline > timezone.now()):
+            raise AssertionError(f"Expected payment_deadline ({order.payment_deadline}) to be in the future")
         try:
             payment = CryptoPayment.objects.get(order=order, currency='ETH')
-            assert payment.payment_address == MOCK_ETH_CONTRACT_ADDRESS
-            assert payment.expected_amount_native == order.total_price_native_selected
+            # B101 Fix (Rev 32)
+            if not (payment.payment_address == MOCK_ETH_CONTRACT_ADDRESS):
+                raise AssertionError(f"CryptoPayment address '{payment.payment_address}' should match contract address '{MOCK_ETH_CONTRACT_ADDRESS}'")
+            # B101 Fix (Rev 32)
+            if not (payment.expected_amount_native == order.total_price_native_selected):
+                raise AssertionError(f"CryptoPayment expected amount ({payment.expected_amount_native}) should match order total ({order.total_price_native_selected})")
         except CryptoPayment.DoesNotExist:
             pytest.fail("CryptoPayment record for ETH was not created.")
+
         mock_create_contract.assert_called_once()
         call_args, call_kwargs = mock_create_contract.call_args
         owner_arg_name = 'owner_addresses'
-        assert owner_arg_name in call_kwargs
+        # B101 Fix (Rev 32)
+        if not (owner_arg_name in call_kwargs):
+            raise AssertionError(f"Expected argument '{owner_arg_name}' in mock_create_contract call kwargs: {call_kwargs}")
         owner_addresses_passed = call_kwargs[owner_arg_name]
-        assert MOCK_BUYER_ETH_OWNER_ADDR in owner_addresses_passed
-        assert MOCK_VENDOR_ETH_OWNER_ADDR in owner_addresses_passed
-        assert MOCK_MARKET_ETH_OWNER_ADDR in owner_addresses_passed
-        assert len(owner_addresses_passed) == 3
-        assert call_kwargs.get('threshold') == 2
+        # B101 Fix (Rev 32)
+        if not (MOCK_BUYER_ETH_OWNER_ADDR in owner_addresses_passed):
+            raise AssertionError(f"Expected buyer owner address '{MOCK_BUYER_ETH_OWNER_ADDR}' in passed addresses: {owner_addresses_passed}")
+        # B101 Fix (Rev 32)
+        if not (MOCK_VENDOR_ETH_OWNER_ADDR in owner_addresses_passed):
+             raise AssertionError(f"Expected vendor owner address '{MOCK_VENDOR_ETH_OWNER_ADDR}' in passed addresses: {owner_addresses_passed}")
+        # B101 Fix (Rev 32)
+        if not (MOCK_MARKET_ETH_OWNER_ADDR in owner_addresses_passed):
+             raise AssertionError(f"Expected market owner address '{MOCK_MARKET_ETH_OWNER_ADDR}' in passed addresses: {owner_addresses_passed}")
+        # B101 Fix (Rev 32)
+        if not (len(owner_addresses_passed) == 3):
+             raise AssertionError(f"Expected 3 owner addresses, got {len(owner_addresses_passed)}")
+        # B101 Fix (Rev 32)
+        if not (call_kwargs.get('threshold') == 2):
+             raise AssertionError(f"Expected threshold argument to be 2, got {call_kwargs.get('threshold')}")
 
 
     @patch('store.services.ethereum_escrow_service.ethereum_service.create_eth_multisig_contract', side_effect=CryptoProcessingError("ETH Deploy Failed"), create=True)
@@ -653,14 +695,20 @@ class TestEthereumEscrowService:
 
         # FIX (Gemini Rev 1): Updated match string
         with pytest.raises(CryptoProcessingError, match="Failed to generate ETH escrow details: ETH Deploy Failed"):
-             common_escrow_utils.create_escrow_for_order(order)
+            common_escrow_utils.create_escrow_for_order(order)
 
         # Assert order state unchanged
         order.refresh_from_db()
-        assert order.status == initial_status
+        # B101 Fix (Rev 32)
+        if not (order.status == initial_status):
+             raise AssertionError(f"Expected order status '{initial_status}' after failure, got '{order.status}'")
         eth_addr_attr = ATTR_ETH_ESCROW_ADDRESS_NAME
-        assert getattr(order, eth_addr_attr, None) is None
-        assert not CryptoPayment.objects.filter(order=order, currency='ETH').exists()
+        # B101 Fix (Rev 32)
+        if not (getattr(order, eth_addr_attr, None) is None):
+             raise AssertionError(f"Expected order attribute '{eth_addr_attr}' to be None after failure, got '{getattr(order, eth_addr_attr, None)}'")
+        # B101 Fix (Rev 32)
+        if not (not CryptoPayment.objects.filter(order=order, currency='ETH').exists()):
+             raise AssertionError("CryptoPayment (ETH) should not exist for the order after failed escrow creation")
         mock_create_contract.assert_called_once() # Verify the mock service call was attempted
 
 
@@ -674,7 +722,9 @@ class TestEthereumEscrowService:
     #    mock_check_deposit.return_value = (True, payment.expected_amount_native, MOCK_ETH_TX_HASH)
     #    mock_lock_funds.return_value = True
     #    confirmed = common_escrow_utils.check_payment_confirmation(payment.id)
-    #    assert confirmed is True
+    #    # B101 Fix
+    #    if not (confirmed is True):
+    #        raise AssertionError(f"Expected confirmation result to be True, got {confirmed}")
     #    # ... other assertions ...
 
 
