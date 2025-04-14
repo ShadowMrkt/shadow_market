@@ -1,9 +1,12 @@
 # backend/mymarketplace/settings/base.py
-# <<< Revision 4: Suppress Bandit B105 warning >>>
+# <<< Revision 5: Integrate django-simple-captcha >>>
 # Revision Notes:
-# - v1.1.2 (Current - 2025-04-08):
+# - v1.1.3 (Current - 2025-04-13):
+#   - ADDED: 'captcha' to INSTALLED_APPS.
+#   - ADDED: Basic CAPTCHA settings near the end.
+# - v1.1.2 (2025-04-08):
 #   - SECURITY: Suppressed Bandit B105 (hardcoded_password_string) finding for AXES_PASSWORD_FORM_FIELD
-#             on line 410 (was 407) as it's a form field name, not a credential (# nosec B105).
+#               on line 410 (was 407) as it's a form field name, not a credential (# nosec B105).
 # - v1.1.1 (2025-04-06):
 #   - FIXED: Removed invalid non-printable character (U+00A0 Non-Breaking Space) from line 88
 #            that was causing a SyntaxError during pytest collection/settings loading.
@@ -243,7 +246,7 @@ INSTALLED_APPS = [
     'axes', # Login attempt tracking
     'django_otp', # Base OTP framework
     'django_otp.plugins.otp_static', # Static backup codes (discouraged in production)
-    'captcha', # CAPTCHA protection
+    'captcha', # <<<--- ADDED CAPTCHA APP ---<<<
     'django_filters', # For DRF filtering
     # <<< FIX: Add WebAuthn app (if needed separate from store) >>>
     # 'webauthn.apps.WebauthnConfig', # Example if WebAuthn is a separate app
@@ -326,7 +329,7 @@ print(f"DEBUG: DATABASES configured as: {DATABASES['default'].get('ENGINE', 'N/A
 
 # Added safer check for password presence
 if 'PASSWORD' not in DATABASES['default'] or not DATABASES['default'].get('PASSWORD'):
-      print("WARNING: Database password appears empty or not set.", file=sys.stderr)
+     print("WARNING: Database password appears empty or not set.", file=sys.stderr)
 
 # <<< BEST PRACTICE: Use connection pooling in production >>>
 # DATABASES['default']['CONN_MAX_AGE'] = 600 # Example: 10 minutes
@@ -349,14 +352,6 @@ PASSWORD_HASHERS = [
     'django.contrib.auth.hashers.PBKDF2SHA1PasswordHasher',
     'django.contrib.auth.hashers.BCryptSHA256PasswordHasher',
 ]
-
-# --- Authentication Settings ---
-AUTH_USER_MODEL = 'store.User'
-# <<< BEST PRACTICE: Define explicit login/logout URLs, even if primarily API based >>>
-LOGIN_URL = '/api/store/auth/login/init/' # Example API login endpoint
-LOGOUT_URL = '/api/store/auth/logout/' # Example API logout endpoint
-# LOGIN_REDIRECT_URL = '/' # Less relevant for API-centric apps
-# LOGOUT_REDIRECT_URL = '/'
 
 # --- Internationalization ---
 LANGUAGE_CODE = 'en-us'
@@ -403,19 +398,49 @@ SESSION_SAVE_EVERY_REQUEST = True # Needed for activity timeout tracking
 SESSION_ENGINE = 'django.contrib.sessions.backends.cached_db' # Secure, DB-backed sessions
 # SESSION_CACHE_ALIAS = 'default' # Use the default cache
 
-# --- Cache Settings ---
-# <<< BEST PRACTICE: Use secure Redis URL with password >>>
-CACHES = {
-    'default': {
-        'BACKEND': 'django_redis.cache.RedisCache',
-        'LOCATION': env('REDIS_URL'),
-        'OPTIONS': {
-            'CLIENT_CLASS': 'django_redis.client.DefaultClient',
-            # Add connection pool settings, timeouts, potential TLS config if needed
-            # 'PASSWORD': env('REDIS_PASSWORD', default=None), # Handled via REDIS_URL format preferred
-        }
-    }
-}
+# --- Authentication Settings ---
+AUTH_USER_MODEL = 'store.User'
+# <<< BEST PRACTICE: Define explicit login/logout URLs, even if primarily API based >>>
+LOGIN_URL = '/api/store/auth/login/init/' # Example API login endpoint
+LOGOUT_URL = '/api/store/auth/logout/' # Example API logout endpoint
+# LOGIN_REDIRECT_URL = '/' # Less relevant for API-centric apps
+# LOGOUT_REDIRECT_URL = '/'
+
+# --- Django-Axes Configuration ---
+# <<< BEST PRACTICE: Use cache handler for distributed environments >>>
+AXES_ENABLED = env.bool('AXES_ENABLED')
+AXES_FAILURE_LIMIT = env.int('AXES_FAILURE_LIMIT')
+AXES_COOLOFF_TIME = timedelta(minutes=env.int('AXES_COOLOFF_MINUTES'))
+AXES_LOCKOUT_TEMPLATE = 'registration/lockout.html' # Ensure this template exists if needed
+AXES_USERNAME_FORM_FIELD = 'username'
+AXES_PASSWORD_FORM_FIELD = 'password' # nosec B105 - This is a form field name, not a password value.
+AXES_LOCK_OUT_BY_COMBINATION_USER_AND_IP = True
+AXES_ONLY_USER_FAILURES = False
+AXES_RESET_ON_SUCCESS = True
+AXES_HANDLER = 'axes.handlers.cache.AxesCacheHandler'
+AXES_CACHE = 'default'
+# <<< BEST PRACTICE: Log Axes events >>>
+AXES_PROXY_COUNT = env.int('AXES_PROXY_COUNT', default=0) # If behind proxies
+# AXES_LOCKOUT_URL = '/account-locked/' # Custom lockout URL if needed
+
+# --- Django-OTP Configuration ---
+OTP_LOGIN_URL = LOGIN_URL # Redirect here if OTP needed but not provided
+OTP_ADMIN_ENFORCE_OTP = True # Enforce OTP for Django admin site (/control/)
+# <<< CHANGE: Remove static device if not strictly needed for recovery >>>
+# OTP_STATIC_ENABLED = False # Disable static codes in production? (Requires alternative recovery)
+
+# --- Celery Configuration ---
+# <<< BEST PRACTICE: Use secure broker URL with password >>>
+CELERY_BROKER_URL = env('CELERY_BROKER_URL')
+CELERY_RESULT_BACKEND = 'django-db' # Store results in Django DB
+CELERY_ACCEPT_CONTENT = ['json']
+CELERY_TASK_SERIALIZER = 'json'
+CELERY_RESULT_SERIALIZER = 'json'
+CELERY_TIMEZONE = TIME_ZONE
+# <<< BEST PRACTICE: Set visibility timeout appropriate for tasks >>>
+# CELERY_BROKER_TRANSPORT_OPTIONS = {'visibility_timeout': 3600} # 1 hour example
+# <<< BEST PRACTICE: Configure flower for monitoring if used >>>
+# FLOWER_ENABLED = env.bool('FLOWER_ENABLED', default=False)
 
 # --- Logging Configuration ---
 # <<< BEST PRACTICE: Structured JSON logging for production >>>
@@ -507,7 +532,6 @@ LOGGING = {
 }
 
 # --- Sentry SDK ---
-# Note: Removed redundant Sentry block from end of original file. This block is more complete.
 SENTRY_DSN = env('SENTRY_DSN')
 if SENTRY_DSN and not DEBUG:
     try:
@@ -519,7 +543,7 @@ if SENTRY_DSN and not DEBUG:
 
         # <<< BEST PRACTICE: Configure logging integration carefully >>>
         sentry_logging = LoggingIntegration(
-            level=logging.INFO,      # Send INFO level logs as breadcrumbs
+            level=logging.INFO,        # Send INFO level logs as breadcrumbs
             event_level=logging.ERROR  # Send ERROR level logs as events
         )
         # <<< BEST PRACTICE: Add before_send hook for data scrubbing >>>
@@ -542,20 +566,6 @@ if SENTRY_DSN and not DEBUG:
         print("WARNING: Sentry DSN configured, but 'sentry-sdk' not installed. `pip install sentry-sdk`", file=sys.stderr)
     except Exception as e:
         print(f"ERROR: Failed to initialize Sentry SDK: {e}", file=sys.stderr)
-
-
-# --- Celery Configuration ---
-# <<< BEST PRACTICE: Use secure broker URL with password >>>
-CELERY_BROKER_URL = env('CELERY_BROKER_URL')
-CELERY_RESULT_BACKEND = 'django-db' # Store results in Django DB
-CELERY_ACCEPT_CONTENT = ['json']
-CELERY_TASK_SERIALIZER = 'json'
-CELERY_RESULT_SERIALIZER = 'json'
-CELERY_TIMEZONE = TIME_ZONE
-# <<< BEST PRACTICE: Set visibility timeout appropriate for tasks >>>
-# CELERY_BROKER_TRANSPORT_OPTIONS = {'visibility_timeout': 3600} # 1 hour example
-# <<< BEST PRACTICE: Configure flower for monitoring if used >>>
-# FLOWER_ENABLED = env.bool('FLOWER_ENABLED', default=False)
 
 # --- REST Framework ---
 # <<< BEST PRACTICE: Use SessionAuth primarily, add JWT/Token if specific API clients need it >>>
@@ -600,35 +610,11 @@ REST_FRAMEWORK = {
     # 'STRICT_JSON': True, # Already default
 }
 
-# --- Django-Axes Configuration ---
-# <<< BEST PRACTICE: Use cache handler for distributed environments >>>
-AXES_ENABLED = env.bool('AXES_ENABLED')
-AXES_FAILURE_LIMIT = env.int('AXES_FAILURE_LIMIT')
-AXES_COOLOFF_TIME = timedelta(minutes=env.int('AXES_COOLOFF_MINUTES'))
-AXES_LOCKOUT_TEMPLATE = 'registration/lockout.html' # Ensure this template exists if needed
-AXES_USERNAME_FORM_FIELD = 'username'
-AXES_PASSWORD_FORM_FIELD = 'password' # nosec B105 - This is a form field name, not a password value.
-AXES_LOCK_OUT_BY_COMBINATION_USER_AND_IP = True
-AXES_ONLY_USER_FAILURES = False
-AXES_RESET_ON_SUCCESS = True
-AXES_HANDLER = 'axes.handlers.cache.AxesCacheHandler'
-AXES_CACHE = 'default'
-# <<< BEST PRACTICE: Log Axes events >>>
-AXES_PROXY_COUNT = env.int('AXES_PROXY_COUNT', default=0) # If behind proxies
-# AXES_LOCKOUT_URL = '/account-locked/' # Custom lockout URL if needed
-
 # --- Django-OTP Configuration ---
 OTP_LOGIN_URL = LOGIN_URL # Redirect here if OTP needed but not provided
 OTP_ADMIN_ENFORCE_OTP = True # Enforce OTP for Django admin site (/control/)
 # <<< CHANGE: Remove static device if not strictly needed for recovery >>>
 # OTP_STATIC_ENABLED = False # Disable static codes in production? (Requires alternative recovery)
-
-# --- Captcha Settings ---
-CAPTCHA_CHALLENGE_FUNCT = 'captcha.helpers.math_challenge'
-CAPTCHA_TIMEOUT = 5 # minutes
-# <<< BEST PRACTICE: Customize noise/fonts if needed for security >>>
-# CAPTCHA_NOISE_FUNCTIONS = (...)
-# CAPTCHA_FONT_PATH = ...
 
 # --- GPG/PGP Settings ---
 # <<< CHANGE: GPG_HOME is now mandatory >>>
@@ -677,6 +663,15 @@ if DJANGO_ENV == 'production':
         sys.exit(1)
     # Optionally, perform stricter validation on the format of RP_ID and ORIGIN here
     # e.g., check if RP_ID looks like a domain, or origin looks like a valid URL.
+
+# --- CAPTCHA Settings --- <<<--- ADDED ---<<<
+CAPTCHA_CHALLENGE_FUNCT = 'captcha.helpers.math_challenge'
+CAPTCHA_TIMEOUT = 5 # minutes (Default)
+# CAPTCHA_FONT_SIZE = 22 # Example customization
+# CAPTCHA_LETTER_ROTATION = (-35, 35) # Example customization
+# CAPTCHA_BACKGROUND_COLOR = '#ffffff' # Example customization
+# CAPTCHA_FOREGROUND_COLOR = '#001100' # Example customization
+# --- End CAPTCHA Settings ---
 
 # --- Final Checks (Production Only) ---
 if DJANGO_ENV == 'production':

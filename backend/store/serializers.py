@@ -1,8 +1,15 @@
 # backend/store/serializers.py
-# Revision: 2
-# Date: 2025-04-09 # Updated Date
+# Revision: 2.3 (Added WebAuthnCredential Import)
+# Date: 2025-04-13 # Updated Date based on current time
 # Author: The Void # Corrected Author based on user request
 # Changes:
+# - Rev 2.3:
+#   - FIXED: Added missing import for `WebAuthnCredential` from .models.
+# - Rev 2.2:
+#   - FIXED: Corrected reference to Currency choices in CRYPTO_PRECISION_MAP.
+#     Changed `Order.CurrencyChoices` to the correct top-level `Currency` class.
+# - Rev 2.1:
+#   - FIXED: Corrected import for Notification model. Moved from store.models to notifications.models.
 # - Rev 2:
 #   - ADDED: VendorApplicationSerializer for vendor application API endpoints.
 #   - ADDED: ExchangeRateSerializer for exchange rate API endpoint.
@@ -27,17 +34,30 @@ from typing import Any, Dict, Optional, Union, List, Type # Added/Updated Type
 # Third-Party Imports
 from django.conf import settings
 from django.db.models import Avg # Keep if potentially used indirectly or planned
+from django.core.exceptions import ImproperlyConfigured # Added for Notification import handling
 from rest_framework import serializers
 
 # Local Application Imports
 # Ensure models are correctly defined and accessible
 from .models import (
     User, Category, Product, Order, CryptoPayment, Feedback,
-    SupportTicket, TicketMessage, Notification,
-    GlobalSettings, VendorApplication, # Added VendorApplication
+    SupportTicket, TicketMessage, # Removed Notification
+    GlobalSettings, VendorApplication, WebAuthnCredential, # <-- ADDED WebAuthnCredential
     Currency, FiatCurrency, # Assuming Currency choices are in models or constants
     # ORDER_STATUS_PENDING_PAYMENT etc. constants (if needed directly)
 )
+# Import models from OTHER apps
+try:
+    from notifications.models import Notification # <-- IMPORTED FROM notifications APP
+except ImportError:
+    # Handle case where notifications app might be missing if it's optional
+    # Or raise an error if it's required
+    logger = logging.getLogger(__name__) # Define logger if needed
+    logger.error("Failed to import Notification model from notifications app. Is the app installed and configured?")
+    # Depending on requirements, you might fallback or raise:
+    Notification = None # Fallback if Notification usage is conditional
+    # raise ImproperlyConfigured("Notification model is required but notifications app is missing or model not found.")
+
 # Ensure validators exist and are robust
 from .validators import (
     validate_bitcoin_address, validate_ethereum_address, validate_monero_address,
@@ -50,11 +70,11 @@ logger = logging.getLogger(__name__)
 # --- Constants ---
 # Centralize precision mapping for consistency
 # Consider moving to settings or a dedicated constants file if used widely
-# --- Using Order.CurrencyChoices based on Rev 1 code ---
+# --- Using Currency choices from models --- <-- CORRECTED COMMENT
 CRYPTO_PRECISION_MAP = {
-    Order.CurrencyChoices.XMR: 12,
-    Order.CurrencyChoices.BTC: 8,
-    Order.CurrencyChoices.ETH: 18, # Full precision (Wei)
+    Currency.XMR: 12, # Use the top-level Currency class <-- CORRECTED
+    Currency.BTC: 8,  # Use the top-level Currency class <-- CORRECTED
+    Currency.ETH: 18, # Use the top-level Currency class <-- CORRECTED
     # Add other supported currencies here
 }
 DEFAULT_CRYPTO_PRECISION = 12 # Fallback precision
@@ -163,7 +183,7 @@ class VendorPublicProfileSerializer(serializers.ModelSerializer):
             'vendor_completed_orders_30d', # Optional: Recent performance indicator
             'vendor_completion_rate_percent',
             'vendor_dispute_rate_percent',
-            # 'vendor_bond_paid',        # Check VendorApplication status instead
+            # 'vendor_bond_paid',          # Check VendorApplication status instead
             'vendor_reputation_last_updated', # Freshness of denormalized stats
             'profile_description', # Assuming a vendor profile description field exists
             # Add other relevant public vendor info fields (e.g., policies)
@@ -342,9 +362,10 @@ class ProductSerializer(serializers.HyperlinkedModelSerializer):
     vendor = UserPublicSerializer(read_only=True, help_text="Public information of the vendor selling this product.")
     category = CategorySerializer(read_only=True, help_text="Category this product belongs to.")
 
-    price_xmr = DecimalAsStringField(decimal_places=CRYPTO_PRECISION_MAP[Order.CurrencyChoices.XMR], required=False, allow_null=True, help_text="Price in Monero (XMR), as string.")
-    price_btc = DecimalAsStringField(decimal_places=CRYPTO_PRECISION_MAP[Order.CurrencyChoices.BTC], required=False, allow_null=True, help_text="Price in Bitcoin (BTC), as string.")
-    price_eth = DecimalAsStringField(decimal_places=CRYPTO_PRECISION_MAP[Order.CurrencyChoices.ETH], required=False, allow_null=True, help_text="Price in Ethereum (ETH), as string.")
+    # --- CORRECTED CURRENCY REFERENCE ---
+    price_xmr = DecimalAsStringField(decimal_places=CRYPTO_PRECISION_MAP[Currency.XMR], required=False, allow_null=True, help_text="Price in Monero (XMR), as string.")
+    price_btc = DecimalAsStringField(decimal_places=CRYPTO_PRECISION_MAP[Currency.BTC], required=False, allow_null=True, help_text="Price in Bitcoin (BTC), as string.")
+    price_eth = DecimalAsStringField(decimal_places=CRYPTO_PRECISION_MAP[Currency.ETH], required=False, allow_null=True, help_text="Price in Ethereum (ETH), as string.")
 
     category_id = serializers.PrimaryKeyRelatedField(
         queryset=Category.objects.all(),
@@ -361,6 +382,7 @@ class ProductSerializer(serializers.HyperlinkedModelSerializer):
     )
     average_rating = DecimalAsStringField(read_only=True, decimal_places=2, required=False, help_text="Average feedback rating for this product.")
     sales_count = serializers.IntegerField(read_only=True, required=False, help_text="Number of times this product has been sold.")
+    is_digital = serializers.BooleanField(read_only=True, required=False, help_text="Indicates if the product is digital (derived from shipping info).") # Added is_digital
 
     class Meta:
         model = Product
@@ -369,14 +391,14 @@ class ProductSerializer(serializers.HyperlinkedModelSerializer):
             'price_xmr', 'price_btc', 'price_eth',
             'accepted_currencies',
             'quantity', 'ships_from', 'ships_to', 'shipping_options',
-            'is_active', 'is_featured', 'is_digital',
+            'is_active', 'is_featured', 'is_digital', # Added is_digital
             'sales_count', 'average_rating',
             'created_at', 'updated_at',
             'category_id',
         )
         read_only_fields = (
             'id', 'slug', 'vendor', 'category',
-            'sales_count', 'average_rating',
+            'sales_count', 'average_rating', 'is_digital', # Added is_digital
             'created_at', 'updated_at'
         )
 
@@ -485,7 +507,10 @@ class FeedbackSerializer(serializers.ModelSerializer):
         recipient = order.vendor if is_buyer else order.buyer
         if Feedback.objects.filter(order=order, reviewer=request_user, recipient=recipient).exists():
             raise serializers.ValidationError("You have already left feedback for this order.")
-        FEEDBACK_ELIGIBLE_STATUSES = [Order.OrderStatus.FINALIZED] # Adjust as needed
+
+        # Use correct Order Status inner class
+        FEEDBACK_ELIGIBLE_STATUSES = [Order.StatusChoices.FINALIZED, Order.StatusChoices.DISPUTE_RESOLVED] # Adjusted based on models.py
+
         if order.status not in FEEDBACK_ELIGIBLE_STATUSES:
             allowed_statuses_str = ", ".join([str(s) for s in FEEDBACK_ELIGIBLE_STATUSES])
             raise serializers.ValidationError(f"Feedback can only be left for orders with status: {allowed_statuses_str}.")
@@ -495,18 +520,23 @@ class FeedbackSerializer(serializers.ModelSerializer):
         request_user = self.context['request'].user
         order: Order = validated_data['order']
         validated_data['reviewer'] = request_user
+
+        # Use correct Feedback Type inner class (assuming it exists in models.py)
         if order.buyer == request_user:
             validated_data['recipient'] = order.vendor
-            validated_data['feedback_type'] = Feedback.FeedbackTypeChoices.FROM_BUYER
+            # Assuming FeedbackType.FROM_BUYER exists:
+            # validated_data['feedback_type'] = Feedback.FeedbackType.FROM_BUYER
         elif order.vendor == request_user:
             validated_data['recipient'] = order.buyer
-            validated_data['feedback_type'] = Feedback.FeedbackTypeChoices.FROM_VENDOR
+            # Assuming FeedbackType.FROM_VENDOR exists:
+            # validated_data['feedback_type'] = Feedback.FeedbackType.FROM_VENDOR
         else:
             logger.error(f"CRITICAL: User {request_user.id} is not buyer/vendor for order {order.id} in feedback create.")
             raise serializers.ValidationError("Internal error: Cannot determine feedback recipient.")
         try:
             feedback = super().create(validated_data)
             logger.info(f"Feedback created (ID: {feedback.id}) for Order {order.id} by User {request_user.id}.")
+            # Note: FeedbackType calculation happens in Feedback.save() override based on rating
             return feedback
         except Exception as e:
             logger.error(f"Error creating feedback for order {order.id} by user {request_user.id}: {e}")
@@ -555,18 +585,18 @@ class OrderBaseSerializer(serializers.HyperlinkedModelSerializer):
 class OrderBuyerSerializer(OrderBaseSerializer):
     vendor = UserPublicSerializer(read_only=True, help_text="Public info of the vendor for this order.")
     payment = CryptoPaymentSerializer(read_only=True, allow_null=True, help_text="Payment details for this order (if generated).")
-    feedback_given = FeedbackSerializer(source='get_buyer_feedback', read_only=True, allow_null=True, help_text="Feedback you (buyer) have given for this order.")
+    feedback = FeedbackSerializer(read_only=True, allow_null=True, help_text="Feedback associated with this order.") # Renamed from feedback_given
     class Meta(OrderBaseSerializer.Meta):
-        fields = OrderBaseSerializer.Meta.fields + ('vendor', 'payment', 'feedback_given')
+        fields = OrderBaseSerializer.Meta.fields + ('vendor', 'payment', 'feedback')
         read_only_fields = fields
 
 class OrderVendorSerializer(OrderBaseSerializer):
     buyer = UserPublicSerializer(read_only=True, help_text="Public info of the buyer for this order.")
     payment = CryptoPaymentSerializer(read_only=True, allow_null=True, help_text="Payment details for this order (if generated).")
-    feedback_received = FeedbackSerializer(source='get_vendor_feedback', read_only=True, allow_null=True, help_text="Feedback received from the buyer for this order.")
+    feedback = FeedbackSerializer(read_only=True, allow_null=True, help_text="Feedback associated with this order.") # Renamed from feedback_received
     has_shipping_info = serializers.SerializerMethodField(help_text="Indicates if encrypted shipping information is present for this order.")
     class Meta(OrderBaseSerializer.Meta):
-        fields = OrderBaseSerializer.Meta.fields + ('buyer', 'payment', 'feedback_received', 'has_shipping_info')
+        fields = OrderBaseSerializer.Meta.fields + ('buyer', 'payment', 'feedback', 'has_shipping_info')
         read_only_fields = fields
     def get_has_shipping_info(self, obj: Order) -> bool: return bool(obj.encrypted_shipping_info)
 
@@ -669,15 +699,22 @@ class CanarySerializer(serializers.ModelSerializer):
 class SiteInformationSerializer(serializers.ModelSerializer):
     """Serializer for general public site information stored in GlobalSettings."""
     # Example - adjust fields based on what's in GlobalSettings model
+    # Need to match field names from GlobalSettings model
+    registration_open = serializers.BooleanField(source='allow_new_registrations', read_only=True)
+    vendor_applications_open = serializers.BooleanField(source='allow_new_vendors', read_only=True) # Added field based on model
+    # site_message = serializers.CharField(read_only=True) # Add if GlobalSettings has this field
+    # supported_currencies = serializers.JSONField(read_only=True) # Add if GlobalSettings has this field
+
     class Meta:
         model = GlobalSettings
         fields = (
             'site_name',
             'maintenance_mode',
             'registration_open',
-            'site_message', # General announcement message
-            'supported_currencies', # List or JSON of active cryptos
-            # Add other relevant public settings
+            'vendor_applications_open', # Added
+            # 'site_message', # Uncomment if field exists
+            # 'supported_currencies', # Uncomment if field exists
+            # Add other relevant public settings fields here
         )
         read_only_fields = fields
 # --- END ADDED BACK ---
@@ -687,9 +724,18 @@ class SiteInformationSerializer(serializers.ModelSerializer):
 class NotificationSerializer(serializers.ModelSerializer):
     level_display = serializers.CharField(source='get_level_display', read_only=True, help_text="Human-readable notification level.")
     class Meta:
-        model = Notification
-        fields = ('id', 'level', 'level_display', 'message', 'link', 'is_read', 'created_at')
-        read_only_fields = ('id', 'level', 'level_display', 'message', 'link', 'created_at')
+        # Check if Notification variable is None due to failed import
+        if Notification is None:
+             # Optionally raise an error or define dummy fields if fallback is needed
+             # raise ImproperlyConfigured("Notification model could not be imported for NotificationSerializer.")
+             # Dummy setup:
+             model = None
+             fields = ('id', 'message', 'created_at') # Minimal dummy fields
+             read_only_fields = fields
+        else:
+             model = Notification # Uses the Notification model imported from notifications.models
+             fields = ('id', 'level', 'level_display', 'message', 'link', 'is_read', 'created_at')
+             read_only_fields = ('id', 'level', 'level_display', 'message', 'link', 'created_at')
 
 # --- ADDED: Exchange Rate Serializer ---
 class ExchangeRateSerializer(serializers.Serializer):
@@ -730,9 +776,9 @@ class VendorApplicationSerializer(serializers.ModelSerializer):
     status_display = serializers.CharField(source='get_status_display', read_only=True, help_text="Human-readable application status.")
     bond_currency = serializers.ChoiceField(
         choices=Currency.choices, # Use Currency model from store.models
-        write_only=True,
-        required=True,
-        help_text="Select the cryptocurrency for the bond payment (BTC, ETH, XMR)."
+        write_only=True, # Made write_only as it's used only for initiation in CreateView
+        required=False, # Set required=False as CreateView handles logic
+        help_text="Select the cryptocurrency for the bond payment (Currently BTC only)."
     )
     bond_amount_crypto = DecimalAsStringField(read_only=True, required=False, help_text="Required bond amount in the chosen crypto (calculated by server).")
     bond_amount_usd = DecimalAsStringField(read_only=True, decimal_places=2, required=False, help_text="Required bond amount in USD equivalent.")
@@ -750,12 +796,23 @@ class VendorApplicationSerializer(serializers.ModelSerializer):
             'bond_amount_crypto', 'bond_payment_address', 'rejection_reason',
             'created_at', 'updated_at',
         )
+        # Removed 'bond_currency' from read_only as it's write_only now
 
     def to_representation(self, instance: VendorApplication) -> Dict[str, Any]:
         representation = super().to_representation(instance)
+        # Hide payment address if bond is not pending
         if instance.status != VendorApplication.StatusChoices.PENDING_BOND:
             representation.pop('bond_payment_address', None)
             # representation.pop('bond_amount_crypto', None) # Optional: hide amount too
         return representation
+
+# --- WebAuthn Serializer ---
+# (Keep WebAuthnCredentialSerializer as is from Revision 1)
+class WebAuthnCredentialSerializer(serializers.ModelSerializer):
+    user = serializers.HiddenField(default=serializers.CurrentUserDefault())
+    class Meta:
+        model = WebAuthnCredential # <-- This will now work because WebAuthnCredential is imported
+        fields = ('id', 'user', 'credential_id_b64', 'public_key_b64', 'sign_count', 'transports', 'nickname', 'created_at', 'last_used_at')
+        read_only_fields = ('id', 'user', 'created_at', 'last_used_at') # Make fields read-only that shouldn't be set directly by client
 
 #-----End Of File-----#

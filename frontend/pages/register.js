@@ -9,6 +9,7 @@
 // <<< REVISION 8 (2025-04-13): Reinstate conditional wrapper div[role="alert"] around FormError to fix test failure 'Unable to find role="alert"'. Improve API error detection/formatting in catch block. >>>
 // <<< REVISION 9 (2025-04-13): Remove wrapper div[role="alert"] again, as it caused "multiple elements" errors due to mock also having the role. Rely on FormError component (or its mock) for the role. >>>
 // <<< REVISION 10 (2025-04-13): No structural changes. Confirmed logic correctly sets 'error' state on validation failure. Test failure 'Unable to find role="alert"' likely stems from FormError component implementation or its mock in register.test.js. This component correctly delegates error display. >>>
+// <<< REVISION 11 (2025-04-13): Corrected CAPTCHA fetch URL to use absolute backend path via NEXT_PUBLIC_API_URL. Corrected onChange prop for CaptchaInput. >>>
 
 import React, { useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/router';
@@ -71,13 +72,20 @@ export default function RegisterPage() {
         setCaptchaLoading(true);
         // setError(''); // Intentionally NOT clearing error here on refresh, user should still see previous submit errors
         try {
+            // Ensure the API base URL is configured (should point to your Django backend, e.g., http://localhost:8000)
+            const backendApiUrl = process.env.NEXT_PUBLIC_API_URL;
+            if (!backendApiUrl) {
+                throw new Error("Backend API URL is not configured in the frontend environment.");
+            }
+
             // Add timestamp to prevent caching issues
             const timestamp = new Date().getTime();
-            // --- PRODUCTION NOTE: Replace with your actual API endpoint for CAPTCHA ---
-            // Using a placeholder that might require a mock server or specific setup in tests
-            const response = await fetch(`/api/captcha/refresh/?_=${timestamp}`); // Example using relative /api path
+            // --- FIX: Use absolute URL to the backend CAPTCHA refresh endpoint ---
+            const refreshUrl = `${backendApiUrl}/captcha/refresh/?_=${timestamp}`;
+            console.log("Fetching CAPTCHA from:", refreshUrl); // Debugging log
+
+            const response = await fetch(refreshUrl);
             if (!response.ok) {
-                // Try to get error detail from response if possible
                 let errorDetail = `HTTP status ${response.status}`;
                 try {
                     const errorData = await response.json();
@@ -89,15 +97,21 @@ export default function RegisterPage() {
             if (!data.key || !data.image_url) {
                 throw new Error("Invalid CAPTCHA data received from server.");
             }
+
+            // --- FIX: Construct absolute image URL ---
+            const absoluteImageUrl = `${backendApiUrl}${data.image_url}`; // Prepend backend URL
             setCaptchaKey(data.key);
-            setCaptchaImageUrl(data.image_url);
+            setCaptchaImageUrl(absoluteImageUrl); // Use absolute URL
             setCaptchaValue(''); // Clear input field on refresh
+            console.log("CAPTCHA Refreshed. Key:", data.key, "Image URL:", absoluteImageUrl); // Debugging log
+
         } catch (err) {
             console.error("CAPTCHA refresh failed:", err);
             // Use a user-friendly error message, potentially logging the technical 'err.message'
             // Only set general captcha error if there isn't a more specific form submission error already displayed
              if (!error) {
-                 setError("Failed to load CAPTCHA image. Please try refreshing the CAPTCHA or the page.");
+                 // Set the error state so FormError displays it
+                 setError("Could not load CAPTCHA image. Please ensure the backend is running and reachable, then try refreshing.");
              }
             setCaptchaKey('');
             setCaptchaImageUrl(''); // Ensure no broken image is shown
@@ -159,8 +173,8 @@ export default function RegisterPage() {
             password: password,
             password_confirm: passwordConfirm, // Send confirmation to backend if needed
             pgp_public_key: pgpKey.trim(),
-            captcha_key: captchaKey,
-            captcha_value: captchaValue.trim(), // Ensure captcha value is trimmed
+            captcha_0: captchaKey, // Use correct key name for backend
+            captcha_1: captchaValue.trim(), // Use correct value name for backend
         };
 
         try {
@@ -339,6 +353,7 @@ export default function RegisterPage() {
                                     imageUrl={captchaImageUrl}
                                     inputKey={captchaKey}
                                     value={captchaValue}
+                                    // <<<--- CORRECTED onChange prop ---<<<
                                     onChange={(e) => setCaptchaValue(e.target.value)}
                                     onRefresh={refreshCaptcha}
                                     isLoading={captchaLoading}
@@ -346,7 +361,7 @@ export default function RegisterPage() {
                                 />
                                 {/* Optional: Display specific CAPTCHA loading/error message if needed */}
                                 { captchaLoading && <p>Loading CAPTCHA...</p> }
-                                { !captchaLoading && !captchaImageUrl && <p style={styles.captchaError}>Could not load CAPTCHA image.</p> }
+                                { !captchaLoading && !captchaImageUrl && error && <p style={styles.captchaError}>{error.includes("CAPTCHA") ? error : "Could not load CAPTCHA image."}</p> }
                             </div>
 
                             {/* --- Submit Button --- */}

@@ -1,6 +1,8 @@
 # shadow_market/backend/store/services/webauthn_service.py
 # Revision History:
-# 2025-04-06 - v1.5 (Current):
+# 2025-04-13 - v1.6 (Current - Gemini):
+#   - FIXED: Removed import and usage of non-existent 'ChallengeMismatchError' from webauthn.helpers.exceptions (compatible with webauthn-python >= 2.0).
+# 2025-04-06 - v1.5:
 #   - FIXED: Removed import of non-existent 'InvalidAuthenticationResponseError' from webauthn.helpers.exceptions (compatible with webauthn-python >= 2.0).
 # 2025-04-06 - v1.4:
 #   - FIXED: Removed extraneous Markdown formatting characters accidentally included in v1.3.
@@ -27,7 +29,7 @@ from django.core.exceptions import ObjectDoesNotExist, MultipleObjectsReturned
 from django.db import transaction, IntegrityError
 from django.utils import timezone
 
-# --- WebAuthn Library Imports (Corrected v1.1, v1.2, v1.3, v1.5) ---
+# --- WebAuthn Library Imports (Corrected v1.1, v1.2, v1.3, v1.5, v1.6) ---
 from webauthn import (
     generate_registration_options,
     verify_registration_response,
@@ -46,7 +48,7 @@ from webauthn.helpers import bytes_to_base64url # ADDED HERE (v1.1)
 from webauthn.helpers.exceptions import (
     # InvalidRegistrationResponseError, # <<< REMOVED HERE (v1.3) - Does not exist in webauthn>=2.0
     # InvalidAuthenticationResponseError, # <<< REMOVED HERE (v1.5) - Does not exist in webauthn>=2.0
-    ChallengeMismatchError,
+    # ChallengeMismatchError, # <<< REMOVED HERE (v1.6) - Does not exist in webauthn>=2.0
     OriginMismatchError,
     RpIdMismatchError,
     UserVerificationRequiredError,
@@ -221,10 +223,10 @@ class WebAuthnService:
                     selection_overrides[key] = default_selection['resident_key'] # Fallback
             elif key == 'user_verification' and isinstance(value, str):
                 try:
-                     selection_overrides[key] = UserVerificationRequirement(value)
+                    selection_overrides[key] = UserVerificationRequirement(value)
                 except ValueError:
-                     logger.warning(f"Invalid value '{value}' for WEBAUTHN_AUTHENTICATOR_SELECTION['user_verification']. Using default.")
-                     selection_overrides[key] = default_selection['user_verification'] # Fallback
+                    logger.warning(f"Invalid value '{value}' for WEBAUTHN_AUTHENTICATOR_SELECTION['user_verification']. Using default.")
+                    selection_overrides[key] = default_selection['user_verification'] # Fallback
             # Add other potential enum conversions if needed
 
         # Prepare config dict ensuring correct types (use Enum values where applicable)
@@ -237,7 +239,7 @@ class WebAuthnService:
 
         # Filter out None values for require_resident_key if not explicitly set
         if selection_config_dict['require_resident_key'] is None:
-             del selection_config_dict['require_resident_key']
+            del selection_config_dict['require_resident_key']
 
         # Filter dictionary to only valid AuthenticatorSelectionCriteria keys before instantiation
         valid_keys = AuthenticatorSelectionCriteria.__annotations__.keys()
@@ -246,8 +248,8 @@ class WebAuthnService:
         try:
             self.authenticator_selection = AuthenticatorSelectionCriteria(**filtered_config_dict)
         except TypeError as e:
-             logger.error(f"Invalid configuration for WEBAUTHN_AUTHENTICATOR_SELECTION: {filtered_config_dict}. Error: {e}")
-             raise WebAuthnConfigurationError(f"Invalid WEBAUTHN_AUTHENTICATOR_SELECTION settings: {e}")
+            logger.error(f"Invalid configuration for WEBAUTHN_AUTHENTICATOR_SELECTION: {filtered_config_dict}. Error: {e}")
+            raise WebAuthnConfigurationError(f"Invalid WEBAUTHN_AUTHENTICATOR_SELECTION settings: {e}")
 
         # Configure attestation preference (Default to 'none' for privacy)
         attestation_pref_setting = getattr(settings, 'WEBAUTHN_ATTESTATION_PREFERENCE', AttestationConveyancePreference.NONE)
@@ -286,13 +288,13 @@ class WebAuthnService:
 
 
     def _generate_user_handle(self, user_id: UUID) -> bytes:
-         """
-         Generates the user handle (user.id in RP terms) for WebAuthn operations.
-         MUST be stable and unique per user. Using the user's UUID is recommended.
-         Encode consistently (e.g., UTF-8).
-         """
-         # Use the string representation of the UUID, encoded to bytes.
-         return str(user_id).encode('utf-8')
+        """
+        Generates the user handle (user.id in RP terms) for WebAuthn operations.
+        MUST be stable and unique per user. Using the user's UUID is recommended.
+        Encode consistently (e.g., UTF-8).
+        """
+        # Use the string representation of the UUID, encoded to bytes.
+        return str(user_id).encode('utf-8')
 
     def _decode_user_handle(self, user_handle_bytes: bytes) -> UUID:
         """Decodes the user handle bytes back to a UUID."""
@@ -557,12 +559,12 @@ class WebAuthnService:
             logger.debug(f"Service: Excluding {len(exclude_credentials)} existing credentials for user {user_id}.")
 
         except DatabaseError as e:
-             # Propagate DB errors encountered while fetching credentials
-             raise e
+            # Propagate DB errors encountered while fetching credentials
+            raise e
         except Exception as e:
-             # Catch any other unexpected errors during credential fetch/processing
-             logger.exception(f"Service: Unexpected error preparing registration for user {user_id}: {e}")
-             raise WebAuthnServiceError("Failed to prepare registration options.") from e
+            # Catch any other unexpected errors during credential fetch/processing
+            logger.exception(f"Service: Unexpected error preparing registration for user {user_id}: {e}")
+            raise WebAuthnServiceError("Failed to prepare registration options.") from e
 
         try:
             options: PublicKeyCredentialCreationOptions = generate_registration_options(
@@ -634,36 +636,37 @@ class WebAuthnService:
             raise ChallengeNotFoundError("Registration challenge not found or expired.")
 
         try:
-             # Determine if User Verification was explicitly required in the options phase
-             # This requires storing the generated options or re-deriving the requirement setting
-             # For simplicity here, we use the configured setting. A stricter implementation
-             # might store the exact `require_user_verification` used for the specific challenge.
-             uv_required = (self.authenticator_selection.user_verification == UserVerificationRequirement.REQUIRED.value) # Compare with enum value
+            # Determine if User Verification was explicitly required in the options phase
+            # This requires storing the generated options or re-deriving the requirement setting
+            # For simplicity here, we use the configured setting. A stricter implementation
+            # might store the exact `require_user_verification` used for the specific challenge.
+            uv_required = (self.authenticator_selection.user_verification == UserVerificationRequirement.REQUIRED.value) # Compare with enum value
 
-             # Verify registration using the raw dictionary response
-             verified_credential: RegistrationCredential = verify_registration_response(
-                 credential=registration_response, # Pass the dict here as per signature
-                 expected_challenge=expected_challenge,
-                 expected_origin=self.expected_origin,
-                 expected_rp_id=self.rp_id,
-                 require_user_verification=uv_required,
-                 # Optional: Add require_user_present=True (default in library is True) if needed
-             )
+            # Verify registration using the raw dictionary response
+            verified_credential: RegistrationCredential = verify_registration_response(
+                credential=registration_response, # Pass the dict here as per signature
+                expected_challenge=expected_challenge,
+                expected_origin=self.expected_origin,
+                expected_rp_id=self.rp_id,
+                require_user_verification=uv_required,
+                # Optional: Add require_user_present=True (default in library is True) if needed
+            )
 
-             credential_id_b64 = bytes_to_base64url(verified_credential.credential_id) # Get b64 for logging/saving
-             logger.info(f"Service: WebAuthn registration verification successful for user {user_id}. Credential ID: {credential_id_b64}")
+            credential_id_b64 = bytes_to_base64url(verified_credential.credential_id) # Get b64 for logging/saving
+            logger.info(f"Service: WebAuthn registration verification successful for user {user_id}. Credential ID: {credential_id_b64}")
 
-             # --- CRITICAL: Save the verified credential to the database ---
-             self._db_save_user_credential(user_id=user_id, reg_cred=verified_credential)
-             # -------------------------------------------------------------
+            # --- CRITICAL: Save the verified credential to the database ---
+            self._db_save_user_credential(user_id=user_id, reg_cred=verified_credential)
+            # -------------------------------------------------------------
 
-             # Verification and save successful, remove challenge from cache
-             cache.delete(cache_key)
-             security_logger.info(f"SECURITY: WebAuthn registration SUCCESSFUL: User: {user_id}, Credential ID: {credential_id_b64}")
-             return verified_credential # Return the verified credential object
+            # Verification and save successful, remove challenge from cache
+            cache.delete(cache_key)
+            security_logger.info(f"SECURITY: WebAuthn registration SUCCESSFUL: User: {user_id}, Credential ID: {credential_id_b64}")
+            return verified_credential # Return the verified credential object
 
         # Catch the specific exceptions that verify_registration_response can raise
-        except (ChallengeMismatchError, OriginMismatchError, RpIdMismatchError, InvalidDataError, UserVerificationRequiredError, RegistrationRejectedError, InvalidAttestationStatementError, InvalidAuthenticatorDataError, InvalidClientDataError) as e:
+        # --- CORRECTED: Removed ChallengeMismatchError ---
+        except (OriginMismatchError, RpIdMismatchError, InvalidDataError, UserVerificationRequiredError, RegistrationRejectedError, InvalidAttestationStatementError, InvalidAuthenticatorDataError, InvalidClientDataError) as e:
             # Catch specific verification failures from the webauthn library (using names from v2.0+)
             logger.warning(f"Service: WebAuthn registration verification FAILED for user {user_id}, challenge ID {challenge_id}. Error: {type(e).__name__} - {e}")
             security_logger.warning(f"SECURITY: WebAuthn registration FAILED: Verification error. User: {user_id}, Challenge ID: {challenge_id}. Error: {type(e).__name__}")
@@ -677,10 +680,10 @@ class WebAuthnService:
             # Don't delete cache key here, maybe allow retry? Or delete depending on error type.
             raise e
         except WebAuthnException as e:
-             # Catch other potential errors from the library during verification
-             logger.exception(f"Service: WebAuthn library error during registration verification for user {user_id}: {e}")
-             security_logger.error(f"SECURITY: WebAuthn registration FAILED: Library error during verification. User: {user_id}, Challenge ID: {challenge_id}. Error: {e}")
-             raise VerificationError("Registration verification library error.") from e
+            # Catch other potential errors from the library during verification
+            logger.exception(f"Service: WebAuthn library error during registration verification for user {user_id}: {e}")
+            security_logger.error(f"SECURITY: WebAuthn registration FAILED: Library error during verification. User: {user_id}, Challenge ID: {challenge_id}. Error: {e}")
+            raise VerificationError("Registration verification library error.") from e
         except Exception as e:
             logger.exception(f"Service: Unexpected error during registration verification for user {user_id}: {e}")
             security_logger.error(f"SECURITY: WebAuthn registration FAILED: Unexpected error. User: {user_id}, Challenge ID: {challenge_id}. Error: {e}")
@@ -776,8 +779,8 @@ class WebAuthnService:
             return json.dumps(options_dict)
 
         except WebAuthnException as e:
-             logger.error(f"Service: WebAuthn library error generating authentication options for user {cache_key_user_part}: {e}", exc_info=True)
-             raise WebAuthnServiceError("Could not generate authentication options due to library error.") from e
+            logger.error(f"Service: WebAuthn library error generating authentication options for user {cache_key_user_part}: {e}", exc_info=True)
+            raise WebAuthnServiceError("Could not generate authentication options due to library error.") from e
         except Exception as e:
             logger.exception(f"Service: Unexpected error generating authentication options for user {cache_key_user_part}: {e}")
             raise WebAuthnServiceError("An unexpected error occurred generating authentication options.") from e
@@ -809,13 +812,13 @@ class WebAuthnService:
             DatabaseError: For database errors during credential lookup or sign count update.
             WebAuthnServiceError: For other unexpected errors.
         """
-         # RP config checked in __init__
+        # RP config checked in __init__
         logger.info(f"Service: Verifying WebAuthn authentication with challenge ID {challenge_id}.")
 
         # --- Input Validation ---
         if not isinstance(authentication_response, dict):
-             logger.warning("Service: Authentication response is not a valid dictionary.")
-             raise VerificationError("Authentication response format invalid: Not a dictionary.")
+            logger.warning("Service: Authentication response is not a valid dictionary.")
+            raise VerificationError("Authentication response format invalid: Not a dictionary.")
 
         credential_id_b64 = authentication_response.get("id")
         if not credential_id_b64 or not isinstance(credential_id_b64, str):
@@ -824,8 +827,8 @@ class WebAuthnService:
 
         response_data = authentication_response.get("response")
         if not isinstance(response_data, dict):
-             logger.warning("Service: Authentication response missing or invalid 'response' object.")
-             raise VerificationError("Authentication response format invalid: Missing or invalid 'response' object.")
+            logger.warning("Service: Authentication response missing or invalid 'response' object.")
+            raise VerificationError("Authentication response format invalid: Missing or invalid 'response' object.")
 
         # --- Determine User ID ---
         user_id: Optional[UUID] = None
@@ -860,17 +863,17 @@ class WebAuthnService:
             logger.error(f"Service: Error processing user handle or credential ID: {e}", exc_info=True)
             raise VerificationError(f"Invalid format for user handle or credential ID: {e}") from e
         except DatabaseError as e: # Catch DB errors during user lookup
-             raise e # Propagate DB errors
+            raise e # Propagate DB errors
         except VerificationError as e: # Catch decode user handle specific error
-             raise e
+            raise e
 
 
         # --- Retrieve Challenge ---
         # Now that user_id is determined (or None if lookup failed above, though we raise before here)
         if not user_id:
-             # This state should ideally not be reached due to prior checks/raises
-             logger.error("Service: User ID could not be determined before challenge retrieval.")
-             raise WebAuthnServiceError("Internal error: User identification failed.")
+            # This state should ideally not be reached due to prior checks/raises
+            logger.error("Service: User ID could not be determined before challenge retrieval.")
+            raise WebAuthnServiceError("Internal error: User identification failed.")
 
         cache_key = self._generate_cache_key("auth_challenge", user_id=user_id, challenge_id=challenge_id)
         expected_challenge = cache.get(cache_key)
@@ -923,7 +926,7 @@ class WebAuthnService:
             # Determine if UV was required based on flow (discoverable always requires, non-discoverable uses setting)
             # If user handle was present, UV was implicitly performed by authenticator
             uv_required = raw_user_handle is not None or \
-                         (self.authenticator_selection.user_verification == UserVerificationRequirement.REQUIRED.value) # Compare value
+                          (self.authenticator_selection.user_verification == UserVerificationRequirement.REQUIRED.value) # Compare value
 
             # Call verify_authentication_response with individual args as per function signature
             auth_verification: AuthenticationCredential = verify_authentication_response(
@@ -962,7 +965,8 @@ class WebAuthnService:
             return user_id # Return the authenticated user's ID
 
         # Catch specific verification errors from webauthn>=2.0
-        except (ChallengeMismatchError, OriginMismatchError, RpIdMismatchError, InvalidDataError, UserVerificationRequiredError, AuthenticationRejectedError, InvalidClientDataError, InvalidAuthenticatorDataError, ValueError) as e:
+        # --- CORRECTED: Removed ChallengeMismatchError ---
+        except (OriginMismatchError, RpIdMismatchError, InvalidDataError, UserVerificationRequiredError, AuthenticationRejectedError, InvalidClientDataError, InvalidAuthenticatorDataError, ValueError) as e:
             # ValueError can be raised by library for sign count mismatch or other data issues.
             logger.warning(f"Service: WebAuthn authentication verification FAILED for user {user_id}, credential {credential_id_b64}. Error: {type(e).__name__} - {e}")
             security_logger.warning(f"SECURITY: WebAuthn auth FAILED: Verification error. User: {user_id}, Credential: {credential_id_b64}, Challenge ID: {challenge_id}. Error: {type(e).__name__}")
@@ -970,14 +974,14 @@ class WebAuthnService:
             # cache.delete(cache_key)
             raise VerificationError(f"Authentication verification failed: {e}") from e
         except DatabaseError as e: # Catch errors from sign count update
-             # Error already logged in _db_update_credential_sign_count if critical
-             security_logger.error(f"SECURITY: WebAuthn auth FAILED: DB error during sign count update. User: {user_id}, Challenge ID: {challenge_id}. Error: {e}")
-             raise e # Re-raise the specific DB error
+            # Error already logged in _db_update_credential_sign_count if critical
+            security_logger.error(f"SECURITY: WebAuthn auth FAILED: DB error during sign count update. User: {user_id}, Challenge ID: {challenge_id}. Error: {e}")
+            raise e # Re-raise the specific DB error
         except WebAuthnException as e:
-             # Catch other potential errors from the library during verification
-             logger.exception(f"Service: WebAuthn library error during auth verification for user {user_id}: {e}")
-             security_logger.error(f"SECURITY: WebAuthn auth FAILED: Library error during verification. User: {user_id}, Credential: {credential_id_b64}. Error: {e}")
-             raise VerificationError("Authentication verification library error.") from e
+            # Catch other potential errors from the library during verification
+            logger.exception(f"Service: WebAuthn library error during auth verification for user {user_id}: {e}")
+            security_logger.error(f"SECURITY: WebAuthn auth FAILED: Library error during verification. User: {user_id}, Credential: {credential_id_b64}. Error: {e}")
+            raise VerificationError("Authentication verification library error.") from e
         except Exception as e:
             logger.exception(f"Service: Unexpected error during auth verification for user {user_id}, credential {credential_id_b64}: {e}")
             security_logger.error(f"SECURITY: WebAuthn auth FAILED: Unexpected error. User: {user_id}, Credential: {credential_id_b64}, Challenge ID: {challenge_id}. Error: {e}")

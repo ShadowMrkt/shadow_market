@@ -1,13 +1,18 @@
 # backend/store/forms.py
+# <<< Revision: Integrate django-simple-captcha >>>
+
+import json # Added for shipping options validation
+from decimal import Decimal # Added for price validation
+
 import bleach
 from django import forms
 from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.contrib.auth import authenticate # For login form
-from captcha.fields import CaptchaField
+from captcha.fields import CaptchaField # <<<--- ADDED ---<<<
 
 # Local imports
-from .models import User, Product, Category, Feedback, SupportTicket, TicketMessage, CURRENCY_CHOICES
+from .models import User, Product, Category, Feedback, SupportTicket, TicketMessage, CURRENCY_CHOICES, Order # Added Order
 from .validators import validate_pgp_public_key, validate_monero_address, validate_bitcoin_address, validate_ethereum_address
 
 # --- Constants ---
@@ -38,7 +43,7 @@ class RegistrationForm(forms.ModelForm):
         validators=[validate_pgp_public_key], # Use the robust validator
         help_text="Required. Your full PGP public key block (including BEGIN/END markers). Used for 2FA and secure communication."
     )
-    captcha = CaptchaField()
+    captcha = CaptchaField() # <<<--- ADDED ---<<<
 
     class Meta:
         model = User
@@ -70,7 +75,7 @@ class LoginForm(forms.Form):
     """Standard login form with username and password."""
     username = forms.CharField(max_length=150)
     password = forms.CharField(widget=forms.PasswordInput)
-    captcha = CaptchaField()
+    captcha = CaptchaField() # <<<--- ADDED ---<<<
 
     # Note: PGP challenge/response handled in a subsequent step/view, not this initial form.
 
@@ -91,9 +96,9 @@ class ProductForm(forms.ModelForm):
     description = forms.CharField(widget=forms.Textarea(attrs={'rows': 10}), required=True)
 
     # Prices - make optional, validation ensures at least one is set
-    price_xmr = forms.DecimalField(max_digits=12, decimal_places=6, required=False, min_value=Decimal('0.0'))
-    price_btc = forms.DecimalField(max_digits=14, decimal_places=8, required=False, min_value=Decimal('0.0'))
-    price_eth = forms.DecimalField(max_digits=18, decimal_places=9, required=False, min_value=Decimal('0.0'))
+    price_xmr = forms.DecimalField(max_digits=18, decimal_places=12, required=False, min_value=Decimal('0.0')) # Adjusted precision based on model
+    price_btc = forms.DecimalField(max_digits=14, decimal_places=8, required=False, min_value=Decimal('0.0')) # Adjusted precision based on model
+    price_eth = forms.DecimalField(max_digits=24, decimal_places=18, required=False, min_value=Decimal('0.0')) # Adjusted precision based on model
 
     # Accepted Currencies
     accepted_currencies = forms.MultipleChoiceField(
@@ -145,14 +150,14 @@ class ProductForm(forms.ModelForm):
             # Further validation: check if each item is a dict with 'name' and 'price_xmr' (or multi-currency price)
             for item in options_list:
                 if not isinstance(item, dict) or 'name' not in item or 'price_xmr' not in item: # TODO: Adapt price key
-                     raise ValidationError('Each shipping option must be a JSON object with "name" and "price_xmr" keys.')
+                    raise ValidationError('Each shipping option must be a JSON object with "name" and "price_xmr" keys.')
                 # Validate price format?
                 Decimal(item['price_xmr']) # TODO: Adapt price key
             return options_list
         except json.JSONDecodeError:
             raise ValidationError("Invalid JSON format for shipping options.")
-        except (ValueError, TypeError) as e:
-             raise ValidationError(f"Invalid price format in shipping options: {e}")
+        except (ValueError, TypeError, KeyError) as e: # Added KeyError
+             raise ValidationError(f"Invalid format or missing key in shipping options: {e}")
 
     def clean(self):
         """Cross-field validation for prices and accepted currencies."""
@@ -170,7 +175,7 @@ class ProductForm(forms.ModelForm):
             if 'ETH' in accepted and price_eth is not None: has_price = True
 
             if not has_price:
-                 raise ValidationError("An active product must have a price set for at least one accepted currency.")
+                raise ValidationError("An active product must have a price set for at least one accepted currency.")
 
         # Ensure prices are only set if currency is accepted
         if price_xmr is not None and 'XMR' not in accepted:
@@ -192,7 +197,7 @@ class PlaceOrderForm(forms.Form):
     shipping_option_name = forms.CharField(required=False) # Name of the selected option
     # Shipping address info collected separately or encrypted here?
     # Encrypted PGP blob of shipping info might be passed here if done client-side.
-    # encrypted_shipping_blob = forms.CharField(widget=forms.Textarea, required=False)
+    encrypted_shipping_blob = forms.CharField(widget=forms.Textarea, required=False)
 
     def __init__(self, *args, **kwargs):
         # Accept product instance to validate choices against it
@@ -201,45 +206,48 @@ class PlaceOrderForm(forms.Form):
 
     def clean_selected_currency(self):
         currency = self.cleaned_data.get('selected_currency')
-        if self.product and currency not in self.product.accepted_currencies:
+        if self.product and currency not in self.product.get_accepted_currencies_list(): # Use model method
             raise ValidationError(f"This product does not accept payments in {currency}.")
         return currency
 
     def clean_quantity(self):
         quantity = self.cleaned_data.get('quantity')
-        if self.product and self.product.quantity > 0 and quantity > self.product.quantity:
+        # Ensure quantity is not None before comparison
+        if self.product and self.product.quantity is not None and quantity is not None and quantity > self.product.quantity:
             raise ValidationError(f"Only {self.product.quantity} items available in stock.")
         return quantity
 
     def clean_shipping_option_name(self):
         # Validate selected shipping option against product's options
         name = self.cleaned_data.get('shipping_option_name')
-        if self.product and not self.product.is_digital():
+        if self.product and not getattr(self.product,'is_digital', lambda:False)(): # Use model method if exists
             if not name: # Require selection for physical goods
                 raise ValidationError("Please select a shipping option.")
             options = self.product.shipping_options or []
-            if not any(opt.get('name') == name for opt in options):
+            if not isinstance(options, list): # Add type check
+                 raise ValidationError("Internal error: Invalid shipping options format.")
+            if not any(opt.get('name') == name for opt in options if isinstance(opt,dict)): # Add type check
                 raise ValidationError("Invalid shipping option selected.")
         return name
 
 
 class ShippingInfoForm(forms.Form):
-     """Form to collect cleartext shipping information (to be encrypted by the view)."""
-     # Define fields based on required shipping info (name, address, country, etc.)
-     recipient_name = forms.CharField(max_length=200)
-     street_address = forms.CharField(max_length=255)
-     address_line_2 = forms.CharField(max_length=255, required=False)
-     city = forms.CharField(max_length=100)
-     state_province_region = forms.CharField(max_length=100, required=False)
-     postal_code = forms.CharField(max_length=20)
-     country = forms.CharField(max_length=100) # Consider using django-countries
-     phone_number = forms.CharField(max_length=30, required=False)
+      """Form to collect cleartext shipping information (to be encrypted by the view)."""
+      # Define fields based on required shipping info (name, address, country, etc.)
+      recipient_name = forms.CharField(max_length=200)
+      street_address = forms.CharField(max_length=255)
+      address_line_2 = forms.CharField(max_length=255, required=False)
+      city = forms.CharField(max_length=100)
+      state_province_region = forms.CharField(max_length=100, required=False)
+      postal_code = forms.CharField(max_length=20)
+      country = forms.CharField(max_length=100) # Consider using django-countries
+      phone_number = forms.CharField(max_length=30, required=False)
 
-     def get_shipping_data_dict(self):
-        """Returns cleaned data as a dictionary for easy serialization/encryption."""
-        if self.is_valid():
-            return self.cleaned_data
-        return None
+      def get_shipping_data_dict(self):
+          """Returns cleaned data as a dictionary for easy serialization/encryption."""
+          if self.is_valid():
+              return self.cleaned_data
+          return None
 
 
 class FeedbackForm(forms.ModelForm):
@@ -334,3 +342,5 @@ class TicketMessageForm(forms.Form):
         label="Your Reply",
         help_text="Your message will be PGP encrypted for the recipient."
     )
+
+# --- END OF FILE ---

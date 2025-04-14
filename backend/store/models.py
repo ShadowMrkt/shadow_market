@@ -61,9 +61,9 @@ from django.utils.translation import gettext_lazy as _ # Added for VendorApplica
 try:
     from solo.models import SingletonModel
 except ImportError as e_solo:
-     logger_init = logging.getLogger(__name__)
-     logger_init.critical("CRITICAL IMPORT ERROR: Failed to import 'SingletonModel' from 'solo.models'. Is django-solo installed and configured correctly?")
-     raise ImportError("Failed to import SingletonModel from solo.models. Ensure django-solo is installed and in INSTALLED_APPS.") from e_solo
+    logger_init = logging.getLogger(__name__)
+    logger_init.critical("CRITICAL IMPORT ERROR: Failed to import 'SingletonModel' from 'solo.models'. Is django-solo installed and configured correctly?")
+    raise ImportError("Failed to import SingletonModel from solo.models. Ensure django-solo is installed and in INSTALLED_APPS.") from e_solo
 
 # Local Application Imports
 # CRITICAL: Ensure these validators are robustly implemented and thoroughly tested.
@@ -93,6 +93,9 @@ class Currency(models.TextChoices):
     XMR = 'XMR', 'Monero'
     BTC = 'BTC', 'Bitcoin'
     ETH = 'ETH', 'Ethereum'
+
+# *** ADDED THIS LINE TO FIX THE IMPORT ERROR ***
+CURRENCY_CHOICES = Currency.choices # Provides the expected choices tuple
 
 class FiatCurrency(models.TextChoices):
     """Supported fiat currencies for display/reference."""
@@ -383,12 +386,12 @@ class User(AbstractBaseUser, PermissionsMixin):
         # Validate multi-sig contribution fields if provided
         if self.btc_multisig_pubkey:
             if not isinstance(self.btc_multisig_pubkey, str) or len(self.btc_multisig_pubkey) != 66 or not self.btc_multisig_pubkey.lower().startswith(('02', '03')):
-                 raise ValidationError({'btc_multisig_pubkey': "Invalid compressed Bitcoin public key format (must be 66 hex chars starting with 02 or 03)."})
+                raise ValidationError({'btc_multisig_pubkey': "Invalid compressed Bitcoin public key format (must be 66 hex chars starting with 02 or 03)."})
             try: bytes.fromhex(self.btc_multisig_pubkey)
             except ValueError: raise ValidationError({'btc_multisig_pubkey': "Bitcoin public key must be a valid hex string."})
         if self.xmr_multisig_info:
             if not isinstance(self.xmr_multisig_info, str) or len(self.xmr_multisig_info) < 100: # Arbitrary minimum length check
-                 raise ValidationError({'xmr_multisig_info': "Monero multisig info appears too short or invalid."})
+                raise ValidationError({'xmr_multisig_info': "Monero multisig info appears too short or invalid."})
             try: bytes.fromhex(self.xmr_multisig_info)
             except ValueError: raise ValidationError({'xmr_multisig_info': "Monero multisig info must be a valid hex string."})
 
@@ -525,7 +528,7 @@ class Product(models.Model):
         valid_currency_codes = Currency.values
         for code in accepted_currencies_list:
             if code not in valid_currency_codes:
-                 raise ValidationError({'accepted_currencies': f"Invalid currency code '{code}' found."})
+                raise ValidationError({'accepted_currencies': f"Invalid currency code '{code}' found."})
 
         has_at_least_one_price = False
         for currency_code in accepted_currencies_list:
@@ -538,7 +541,7 @@ class Product(models.Model):
                 # Check if price field exists but is None while currency is accepted
                 price_field_name = f'price_{currency_code.lower()}'
                 if getattr(self, price_field_name, 'missing') is None:
-                     logger.warning(f"Product {self.id or 'NEW'}: Currency {currency_code} is accepted but its price field ({price_field_name}) is None.")
+                    logger.warning(f"Product {self.id or 'NEW'}: Currency {currency_code} is accepted but its price field ({price_field_name}) is None.")
 
 
         # Check for consistency: if price field is set, currency must be accepted
@@ -556,13 +559,13 @@ class Product(models.Model):
         # Validate shipping options structure
         if self.shipping_options:
             if not isinstance(self.shipping_options, list):
-                 raise ValidationError({'shipping_options': "Shipping options must be a list (JSON array)."})
+                raise ValidationError({'shipping_options': "Shipping options must be a list (JSON array)."})
             for i, option in enumerate(self.shipping_options):
-                 if not isinstance(option, dict):
-                       raise ValidationError({'shipping_options': f"Option at index {i} is not a valid JSON object."})
-                 if 'name' not in option or not isinstance(option['name'], str) or not option['name'].strip():
-                       raise ValidationError({'shipping_options': f"Option at index {i} must have a non-empty 'name' string."})
-                 # Optionally validate price keys exist and are numeric strings/numbers
+                if not isinstance(option, dict):
+                    raise ValidationError({'shipping_options': f"Option at index {i} is not a valid JSON object."})
+                if 'name' not in option or not isinstance(option['name'], str) or not option['name'].strip():
+                    raise ValidationError({'shipping_options': f"Option at index {i} must have a non-empty 'name' string."})
+                # Optionally validate price keys exist and are numeric strings/numbers
 
 # --- Crypto Payment Tracking ---
 class CryptoPayment(models.Model):
@@ -614,14 +617,12 @@ class CryptoPayment(models.Model):
         if self.received_amount_native < 0: raise ValidationError({'received_amount_native': "Received amount cannot be negative."})
         # Logic checks (might belong in service layer depending on desired enforcement)
         if self.confirmations_received >= self.confirmations_needed and not self.is_confirmed:
-                      if self.received_amount_native >= self.expected_amount_native:
-                           logger.warning(f"Payment {self.id}: Confs received >= needed and amount sufficient, but is_confirmed=False. Should be confirmed.")
-                      else:
-                           logger.info(f"Payment {self.id}: Confs received >= needed but amount insufficient ({self.received_amount_native} < {self.expected_amount_native}), is_confirmed=False (Correct).")
+                    if self.received_amount_native >= self.expected_amount_native:
+                        logger.warning(f"Payment {self.id}: Confs received >= needed and amount sufficient, but is_confirmed=False. Should be confirmed.")
+                    else:
+                        logger.info(f"Payment {self.id}: Confs received >= needed but amount insufficient ({self.received_amount_native} < {self.expected_amount_native}), is_confirmed=False (Correct).")
         if self.is_confirmed and self.received_amount_native < self.expected_amount_native:
-                      logger.warning(f"Payment {self.id}: is_confirmed=True but received amount ({self.received_amount_native}) is less than expected ({self.expected_amount_native}). Potential issue.")
-                      # backend/store/models.py
-# (Continued from previous response...)
+                    logger.warning(f"Payment {self.id}: is_confirmed=True but received amount ({self.received_amount_native}) is less than expected ({self.expected_amount_native}). Potential issue.")
 
 # --- Order ---
 class Order(models.Model):
@@ -757,8 +758,8 @@ class Order(models.Model):
                 if product_instance.get_price(self.selected_currency) is None:
                     raise ValidationError({'selected_currency': f"Product '{product_instance.name}' has no defined price for the selected currency '{self.selected_currency}'."})
             except Product.DoesNotExist:
-                 # This shouldn't happen if FK constraints are enforced, but handle defensively
-                 raise ValidationError({'product': f"Selected product (ID: {self.product_id}) does not exist."})
+                # This shouldn't happen if FK constraints are enforced, but handle defensively
+                raise ValidationError({'product': f"Selected product (ID: {self.product_id}) does not exist."})
 
         # --- NEW: Validate consistency between escrow_type and fields ---
         is_multisig = self.escrow_type == EscrowType.MULTISIG
@@ -775,15 +776,15 @@ class Order(models.Model):
             if multisig_fields_present:
                 raise ValidationError("Multi-signature specific fields (e.g., btc_redeem_script, xmr_multisig_wallet_name, release_signatures) must be empty for Basic Escrow.")
             if not self.simple_escrow_deposit_address:
-                 # Allow saving initially without address, but maybe log a warning or enforce later?
-                 logger.warning(f"Order {self.id or 'NEW'} is Basic Escrow but 'simple_escrow_deposit_address' is not yet set.")
+                # Allow saving initially without address, but maybe log a warning or enforce later?
+                logger.warning(f"Order {self.id or 'NEW'} is Basic Escrow but 'simple_escrow_deposit_address' is not yet set.")
             # Validate the simple address format if set
             if self.simple_escrow_deposit_address and self.selected_currency:
-                 try:
-                     if self.selected_currency == Currency.XMR: validate_monero_address(self.simple_escrow_deposit_address)
-                     elif self.selected_currency == Currency.BTC: validate_bitcoin_address(self.simple_escrow_deposit_address)
-                     elif self.selected_currency == Currency.ETH: validate_ethereum_address(self.simple_escrow_deposit_address)
-                 except ValidationError as e: raise ValidationError({'simple_escrow_deposit_address': e.message}) from e
+                try:
+                    if self.selected_currency == Currency.XMR: validate_monero_address(self.simple_escrow_deposit_address)
+                    elif self.selected_currency == Currency.BTC: validate_bitcoin_address(self.simple_escrow_deposit_address)
+                    elif self.selected_currency == Currency.ETH: validate_ethereum_address(self.simple_escrow_deposit_address)
+                except ValidationError as e: raise ValidationError({'simple_escrow_deposit_address': e.message}) from e
 
         elif is_multisig:
             if self.simple_escrow_deposit_address:
@@ -793,10 +794,10 @@ class Order(models.Model):
             # if self.selected_currency == Currency.BTC and not self.btc_escrow_address:
             #     logger.warning(f"Order {self.id or 'NEW'} is Multisig BTC but btc_escrow_address is missing.")
             # elif self.selected_currency == Currency.XMR and not self.xmr_multisig_wallet_name:
-            #      logger.warning(f"Order {self.id or 'NEW'} is Multisig XMR but xmr_multisig_wallet_name is missing.")
+            #     logger.warning(f"Order {self.id or 'NEW'} is Multisig XMR but xmr_multisig_wallet_name is missing.")
         else:
-             # Should not happen if choices are enforced
-             raise ValidationError(f"Invalid escrow_type: {self.escrow_type}")
+            # Should not happen if choices are enforced
+            raise ValidationError(f"Invalid escrow_type: {self.escrow_type}")
         # --- End NEW Validation ---
 
         # Validate calculated total price consistency only if relevant fields are present
@@ -807,7 +808,7 @@ class Order(models.Model):
             if calculated_total < 0: raise ValidationError("Calculated total order price cannot be negative.")
             # Warning during clean is okay, save() method enforces consistency
             if self.total_price_native_selected is not None and self.total_price_native_selected != calculated_total:
-                 logger.warning(f"Order {self.id or 'NEW'}: Stored total price ({self.total_price_native_selected}) differs from calculation based on current price/qty/shipping ({calculated_total}). Will be updated on save.")
+                logger.warning(f"Order {self.id or 'NEW'}: Stored total price ({self.total_price_native_selected}) differs from calculation based on current price/qty/shipping ({calculated_total}). Will be updated on save.")
 
     def calculate_total_price_native(self) -> Decimal:
         """Calculates total price in native atomic units based on current fields."""
@@ -817,8 +818,8 @@ class Order(models.Model):
 
         # Defensive check for negative values, though validators should prevent this
         if product_price < 0 or shipping_price < 0 or order_quantity < 0:
-             logger.error(f"Order {self.id or 'NEW'} calculate_total_price_native encountered negative inputs: price={product_price}, shipping={shipping_price}, qty={order_quantity}")
-             return Decimal(0) # Or raise error? Return 0 for safety.
+            logger.error(f"Order {self.id or 'NEW'} calculate_total_price_native encountered negative inputs: price={product_price}, shipping={shipping_price}, qty={order_quantity}")
+            return Decimal(0) # Or raise error? Return 0 for safety.
 
         product_total = product_price * order_quantity
         return product_total + shipping_price
@@ -883,12 +884,12 @@ class Feedback(models.Model):
                 if not self.reviewer_id: self.reviewer = order_instance.buyer # Set instance, not just ID
                 if not self.recipient_id: self.recipient = order_instance.vendor # Set instance, not just ID
             except Order.DoesNotExist:
-                 logger.error(f"Feedback save failed: Cannot populate reviewer/recipient as Order ID {self.order_id} not found.")
-                 # Depending on requirements, either raise or allow save if reviewer/recipient were somehow set manually
-                 # raise ValidationError("Cannot save feedback: Associated order not found.")
+                logger.error(f"Feedback save failed: Cannot populate reviewer/recipient as Order ID {self.order_id} not found.")
+                # Depending on requirements, either raise or allow save if reviewer/recipient were somehow set manually
+                # raise ValidationError("Cannot save feedback: Associated order not found.")
         elif not self.order_id and (not self.reviewer_id or not self.recipient_id):
-                 # Feedback must be linked to an order OR have reviewer/recipient set directly
-                 raise ValidationError("Feedback must be associated with an order OR have both reviewer and recipient explicitly set.")
+                # Feedback must be linked to an order OR have reviewer/recipient set directly
+                raise ValidationError("Feedback must be associated with an order OR have both reviewer and recipient explicitly set.")
 
         super().save(*args, **kwargs)
 
@@ -897,11 +898,11 @@ class Feedback(models.Model):
         super().clean()
         order_instance = None
         if self.order_id:
-             try:
-                 # Fetch related buyer/vendor once if order_id exists
-                 order_instance = Order.objects.select_related('buyer', 'vendor').get(pk=self.order_id)
-             except Order.DoesNotExist:
-                 raise ValidationError({'order': 'Associated order does not exist.'})
+            try:
+                # Fetch related buyer/vendor once if order_id exists
+                order_instance = Order.objects.select_related('buyer', 'vendor').get(pk=self.order_id)
+            except Order.DoesNotExist:
+                raise ValidationError({'order': 'Associated order does not exist.'})
 
         # Check reviewer matches order buyer
         if order_instance and self.reviewer_id and self.reviewer_id != order_instance.buyer_id:
@@ -925,9 +926,9 @@ class Feedback(models.Model):
                 Order.StatusChoices.DISPUTE_RESOLVED
             ]
             if order_instance.status not in allowed_statuses_for_feedback:
-                 logger.info(f"Validation check: Feedback attempted for order {self.order_id} status '{order_instance.status}'. Allowed: {allowed_statuses_for_feedback}")
-                 # Uncomment the line below to strictly enforce this rule
-                 # raise ValidationError(f"Feedback can only be submitted for orders that are Finalized or have a Dispute Resolved (current status: {order_instance.get_status_display()}).")
+                logger.info(f"Validation check: Feedback attempted for order {self.order_id} status '{order_instance.status}'. Allowed: {allowed_statuses_for_feedback}")
+                # Uncomment the line below to strictly enforce this rule
+                # raise ValidationError(f"Feedback can only be submitted for orders that are Finalized or have a Dispute Resolved (current status: {order_instance.get_status_display()}).")
 
 # --- NEW: Dispute Model ---
 class Dispute(models.Model):
@@ -1227,16 +1228,16 @@ class VendorApplication(models.Model):
         super().clean()
         # Check if user is already a vendor
         if self.user_id: # Check if user is set
-             # Access user instance safely
-             user_instance = getattr(self, 'user', None) or User.objects.filter(pk=self.user_id).first()
-             if user_instance and user_instance.is_vendor:
-                  raise ValidationError(_("This user is already a vendor."))
+            # Access user instance safely
+            user_instance = getattr(self, 'user', None) or User.objects.filter(pk=self.user_id).first()
+            if user_instance and user_instance.is_vendor:
+                raise ValidationError(_("This user is already a vendor."))
         # Ensure calculated crypto amount is positive if set
         if self.bond_amount_crypto is not None and self.bond_amount_crypto <= 0:
-             raise ValidationError({'bond_amount_crypto': _("Calculated bond amount must be positive.")})
+            raise ValidationError({'bond_amount_crypto': _("Calculated bond amount must be positive.")})
         # Ensure received amount is not negative
         if self.received_amount_crypto_atomic is not None and self.received_amount_crypto_atomic < 0:
-             raise ValidationError({'received_amount_crypto_atomic': _("Received amount cannot be negative.")})
+            raise ValidationError({'received_amount_crypto_atomic': _("Received amount cannot be negative.")})
         # Validate payment address format based on currency (if address is set)
         if self.bond_payment_address and self.bond_currency:
             try:

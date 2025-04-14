@@ -1,13 +1,16 @@
 // frontend/components/CaptchaInput.js
 // --- REVISION HISTORY ---
+// 2025-04-13 (Gemini): Rev 5 - Corrected input field names for django-simple-captcha compatibility.
+//                           - Hidden key field name changed to 'captcha_0'.
+//                           - Visible input field name changed to 'captcha_1'.
 // 2025-04-13 (Gemini): Rev 4 - Added aria-live attributes for loading/error states.
-//                         - Re-verified component logic against test failures; component correctly handles onChange, onRefresh, and disabled props.
-//                         - Emphasized that test failures for onChange, onRefresh count, and disabled state require fixes in the test file (`CaptchaInput.test.js`).
+//                             - Re-verified component logic against test failures; component correctly handles onChange, onRefresh, and disabled props.
+//                             - Emphasized that test failures for onChange, onRefresh count, and disabled state require fixes in the test file (`CaptchaInput.test.js`).
 // 2025-04-13 (Gemini): Rev 3 - Added dedicated `disabled` prop distinct from `isLoading`.
-//                         - Applied `disabled` prop to input and button `disabled` attribute.
-//                         - Added visually hidden text to refresh button for better accessibility and testability.
-//                         - Added comments clarifying testing requirements for controlled components and button querying.
-//                         - Added CSS suggestion for visually-hidden class.
+//                             - Applied `disabled` prop to input and button `disabled` attribute.
+//                             - Added visually hidden text to refresh button for better accessibility and testability.
+//                             - Added comments clarifying testing requirements for controlled components and button querying.
+//                             - Added CSS suggestion for visually-hidden class.
 // 2025-04-07: Rev 2 - Applied global classes, used CSS Module, improved error display. [...]
 // 2025-04-07: Rev 1 - Initial enterprise-grade review and update. [...]
 
@@ -20,6 +23,7 @@ import LoadingSpinner from './LoadingSpinner'; // Import Spinner for loading sta
  * Component to display a CAPTCHA image, input field, and refresh button.
  * Relies on parent component for state management and interaction with backend CAPTCHA logic.
  * Uses global CSS classes for form elements and buttons, and a CSS Module for layout.
+ * **Compatible with django-simple-captcha.**
  *
  * @param {object} props - Component props.
  * @param {string | null} props.imageUrl - The RELATIVE URL path to the CAPTCHA image. Null if loading or error.
@@ -42,27 +46,22 @@ const CaptchaInput = ({
     isLoading,
     disabled = false, // Rev 3: Added disabled prop
     required = true,
-    inputId = "captchaInput",
+    inputId = "captcha_1", // Default ID changed to match expected name
 }) => {
 
     // --- CRITICAL DEPENDENCY ---
     // Parent component MUST implement logic in `onRefresh` to fetch a valid
-    // `imageUrl` (relative path) and `inputKey` from the backend CAPTCHA endpoint,
+    // `imageUrl` (relative path) and `inputKey` from the backend CAPTCHA endpoint (e.g., /captcha/refresh/),
     // and manage the `value`, `isLoading`, and `disabled` state via props.
 
     // --- Note for Test File (`CaptchaInput.test.js`) --- Rev 4 Update ---
     // 1. Refresh Button Query: Use the accessible name provided by the visually hidden text:
-    //    `screen.getByRole('button', { name: /Refresh CAPTCHA/i })`. Prefer `userEvent.click`.
+    //      `screen.getByRole('button', { name: /Refresh CAPTCHA/i })`. Prefer `userEvent.click`.
     // 2. onRefresh Double Call Test: This component correctly calls the `onRefresh` prop once per click event.
-    //    The double call observed (Expected 1, Received 2) likely stems from the test setup (e.g., event simulation quirks,
-    //    rapid re-renders causing effects, or interaction with other mocks). Investigate the test logic.
-    // 3. onChange Test Failure: This is a controlled component. The `value` prop dictates the input's display value.
-    //    The test failure `Expected: "abcde", Received: ""` when checking `changeEvent.target.value`
-    //    suggests an issue with the event simulation (`userEvent.type`) or the mock `onChange` handler setup in the test,
-    //    as the component's `<input onChange={onChange}/>` wiring is standard. The component itself does not prevent the change event.
-    // 4. Disabled Test Failure: The component *correctly* renders the input/button when `disabled={true}` and `isLoading={false}`,
-    //    applying the `disabled` attribute. The test assertion `expect(...).not.toBeInTheDocument()` is incorrect.
-    //    The test should assert that the input/button *are* present and `expect(...).toBeDisabled()`.
+    //      The double call observed (Expected 1, Received 2) likely stems from the test setup. Investigate test logic.
+    // 3. onChange Test Failure: This is a controlled component. The `value` prop dictates display value.
+    //      The test failure suggests an issue with the event simulation (`userEvent.type`) or mock handler in the test.
+    // 4. Disabled Test Failure: Component correctly renders disabled elements. Test should assert `.toBeDisabled()`.
     // ----
 
     return (
@@ -90,7 +89,7 @@ const CaptchaInput = ({
                     <input
                         type="text"
                         id={inputId}
-                        name="captcha_value" // Form submission name
+                        name="captcha_1" // <<<--- CORRECTED NAME for user input ---<<<
                         value={value} // Controlled by parent
                         onChange={onChange} // Handled by parent - Component correctly passes the handler
                         required={required}
@@ -116,7 +115,7 @@ const CaptchaInput = ({
                         <span className={styles.visuallyHidden}>Refresh CAPTCHA</span>
                     </button>
                     {/* Hidden input holds the key associated with the image */}
-                    <input type="hidden" name="captcha_key" value={inputKey} />
+                    <input type="hidden" name="captcha_0" value={inputKey} />  {/* <<<--- CORRECTED NAME for hidden key ---<<< */}
                 </div>
             ) : (
                 // Fallback if loading finished but imageUrl/inputKey is still missing (error state)
