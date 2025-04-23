@@ -1,16 +1,17 @@
 // frontend/components/CaptchaInput.js
 // --- REVISION HISTORY ---
+// 2025-04-22 (Gemini): Rev 6 - Added data-testid to hidden input for testability.
 // 2025-04-13 (Gemini): Rev 5 - Corrected input field names for django-simple-captcha compatibility.
-//                           - Hidden key field name changed to 'captcha_0'.
-//                           - Visible input field name changed to 'captcha_1'.
+//                          - Hidden key field name changed to 'captcha_0'.
+//                          - Visible input field name changed to 'captcha_1'.
 // 2025-04-13 (Gemini): Rev 4 - Added aria-live attributes for loading/error states.
-//                             - Re-verified component logic against test failures; component correctly handles onChange, onRefresh, and disabled props.
-//                             - Emphasized that test failures for onChange, onRefresh count, and disabled state require fixes in the test file (`CaptchaInput.test.js`).
+//                          - Re-verified component logic against test failures; component correctly handles onChange, onRefresh, and disabled props.
+//                          - Emphasized that test failures for onChange, onRefresh count, and disabled state require fixes in the test file (`CaptchaInput.test.js`).
 // 2025-04-13 (Gemini): Rev 3 - Added dedicated `disabled` prop distinct from `isLoading`.
-//                             - Applied `disabled` prop to input and button `disabled` attribute.
-//                             - Added visually hidden text to refresh button for better accessibility and testability.
-//                             - Added comments clarifying testing requirements for controlled components and button querying.
-//                             - Added CSS suggestion for visually-hidden class.
+//                          - Applied `disabled` prop to input and button `disabled` attribute.
+//                          - Added visually hidden text to refresh button for better accessibility and testability.
+//                          - Added comments clarifying testing requirements for controlled components and button querying.
+//                          - Added CSS suggestion for visually-hidden class.
 // 2025-04-07: Rev 2 - Applied global classes, used CSS Module, improved error display. [...]
 // 2025-04-07: Rev 1 - Initial enterprise-grade review and update. [...]
 
@@ -115,7 +116,12 @@ const CaptchaInput = ({
                         <span className={styles.visuallyHidden}>Refresh CAPTCHA</span>
                     </button>
                     {/* Hidden input holds the key associated with the image */}
-                    <input type="hidden" name="captcha_0" value={inputKey} />  {/* <<<--- CORRECTED NAME for hidden key ---<<< */}
+                    <input 
+                        type="hidden" 
+                        name="captcha_0" 
+                        value={inputKey} 
+                        data-testid="captcha-key-input" // Added for easier testing
+                    />  {/* <<<--- CORRECTED NAME for hidden key ---<<< */}
                 </div>
             ) : (
                 // Fallback if loading finished but imageUrl/inputKey is still missing (error state)

@@ -1,7 +1,7 @@
 /* frontend/pages/Profile.module.css */
 /* --- REVISION HISTORY --- */
-/* 2025-04-07: Rev 1 - Initial CSS Module for ProfilePage component (Rev 2). */
-/* - Styles for sectionTitle, readOnlyValue, loginPhrase, modal elements. */
+/* 2025-04-16: Rev 2 - [Gemini] Added styles for Vendor Application section (statusBadge, bondInfoBox, depositAddress). */
+/* 2025-04-07: Rev 1 - Initial CSS Module for ProfilePage component. Styles for sectionTitle, readOnlyValue, loginPhrase, modal elements. */
 /* - Dark theme compatible styling using CSS variables. */
 
 /* TODO: Adjust colors/styles as needed to perfectly match design requirements. */
@@ -69,4 +69,48 @@
   display: flex;
   justify-content: flex-end; /* Align buttons to the right */
   gap: 1rem; /* Space between buttons */
+}
+
+/* --- <<< NEW: Vendor Application Styles >>> --- */
+
+.statusBadge {
+  display: inline-block;
+  padding: 0.3em 0.6em;
+  font-size: 0.9em;
+  font-weight: bold;
+  line-height: 1;
+  color: #fff; /* Default white text */
+  text-align: center;
+  white-space: nowrap;
+  vertical-align: baseline;
+  border-radius: 0.25rem;
+  background-color: #6c757d; /* Default grey for unknown statuses */
+  text-transform: capitalize; /* Nicely formats 'pending_bond' -> 'Pending Bond' */
+}
+
+/* Specific status colors - adjust as needed */
+.statusBadge-pending_bond { background-color: var(--accent-orange); color: var(--button-text-dark); } /* Use theme colors */
+.statusBadge-pending_review { background-color: var(--accent-blue); color: var(--button-text-light); } /* Use theme colors */
+.statusBadge-approved { background-color: var(--accent-green); color: var(--button-text-light); } /* Use theme colors */
+.statusBadge-rejected { background-color: var(--accent-red); color: var(--button-text-light); } /* Use theme colors */
+
+.bondInfoBox {
+  border: 1px solid var(--accent-orange); /* Warning color border */
+  background-color: var(--bg-warning-subtle); /* Subtle yellow background from theme */
+  color: var(--text-warning); /* Dark yellow text from theme */
+  padding: 1rem 1.5rem;
+  border-radius: 0.25rem;
+  margin-top: 1rem;
+}
+
+.bondInfoBox h4 {
+    margin-top: 0;
+    color: var(--text-warning); /* Ensure heading matches text color */
+    font-weight: 600;
+}
+
+.depositAddress {
+    word-break: break-all; /* Ensure long addresses wrap */
+    /* Consider slightly larger font size for readability */
+    /* font-size: 1.05em; */
 }

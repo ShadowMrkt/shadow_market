@@ -10,6 +10,11 @@
 // <<< REVISION 9 (2025-04-13): Remove wrapper div[role="alert"] again, as it caused "multiple elements" errors due to mock also having the role. Rely on FormError component (or its mock) for the role. >>>
 // <<< REVISION 10 (2025-04-13): No structural changes. Confirmed logic correctly sets 'error' state on validation failure. Test failure 'Unable to find role="alert"' likely stems from FormError component implementation or its mock in register.test.js. This component correctly delegates error display. >>>
 // <<< REVISION 11 (2025-04-13): Corrected CAPTCHA fetch URL to use absolute backend path via NEXT_PUBLIC_API_URL. Corrected onChange prop for CaptchaInput. >>>
+// <<< REVISION 12 (2025-04-22): Added debug console.log in handleRegister validation block. >>>
+// <<< REVISION 13 (2025-04-22): Added detailed debug logs inside validateForm. Removed previous debug log from handleRegister. >>>
+// <<< REVISION 14 (2025-04-22): Removed debug logs from validateForm. Added noValidate to form tag. >>>
+// <<< REVISION 15 (2025-04-23): Removed debugging console.log statements for CAPTCHA fetching/refresh. >>>
+
 
 import React, { useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/router';
@@ -82,7 +87,8 @@ export default function RegisterPage() {
             const timestamp = new Date().getTime();
             // --- FIX: Use absolute URL to the backend CAPTCHA refresh endpoint ---
             const refreshUrl = `${backendApiUrl}/captcha/refresh/?_=${timestamp}`;
-            console.log("Fetching CAPTCHA from:", refreshUrl); // Debugging log
+            // <<< REVISION 15: Removed console.log >>>
+            // console.log("Fetching CAPTCHA from:", refreshUrl);
 
             const response = await fetch(refreshUrl);
             if (!response.ok) {
@@ -99,19 +105,20 @@ export default function RegisterPage() {
             }
 
             // --- FIX: Construct absolute image URL ---
-            const absoluteImageUrl = `${backendApiUrl}${data.image_url}`; // Prepend backend URL
+            const absoluteImageUrl = `${backendApiUrl}${data.image_url}`;
             setCaptchaKey(data.key);
             setCaptchaImageUrl(absoluteImageUrl); // Use absolute URL
             setCaptchaValue(''); // Clear input field on refresh
-            console.log("CAPTCHA Refreshed. Key:", data.key, "Image URL:", absoluteImageUrl); // Debugging log
+             // <<< REVISION 15: Removed console.log >>>
+            // console.log("CAPTCHA Refreshed. Key:", data.key, "Image URL:", absoluteImageUrl);
 
         } catch (err) {
             console.error("CAPTCHA refresh failed:", err);
             // Use a user-friendly error message, potentially logging the technical 'err.message'
             // Only set general captcha error if there isn't a more specific form submission error already displayed
              if (!error) {
-                 // Set the error state so FormError displays it
-                 setError("Could not load CAPTCHA image. Please ensure the backend is running and reachable, then try refreshing.");
+                // Set the error state so FormError displays it
+                setError("Could not load CAPTCHA image. Please ensure the backend is running and reachable, then try refreshing.");
              }
             setCaptchaKey('');
             setCaptchaImageUrl(''); // Ensure no broken image is shown
@@ -132,6 +139,7 @@ export default function RegisterPage() {
 
     // Client-side form validation logic
     const validateForm = () => {
+        // Removed debug logs from REVISION 13
         if (!username.trim() || !password || !passwordConfirm || !pgpKey.trim() || !captchaValue.trim()) {
             return "All fields, including CAPTCHA, are required."; // This message should trigger the role="alert" in FormError
         }
@@ -274,7 +282,8 @@ export default function RegisterPage() {
                         {/* IMPORTANT: FormError component (or its mock) MUST render role="alert" when message is present */}
                         <FormError message={error} />
 
-                        <form onSubmit={handleRegister}>
+                        {/* --- ADDED noValidate --- */}
+                        <form onSubmit={handleRegister} noValidate>
                             {/* --- Username Field --- */}
                             <div className="form-group" style={styles.formGroup}>
                                 <label htmlFor="username" className="form-label" style={styles.formLabel}>Username</label>
@@ -343,7 +352,7 @@ export default function RegisterPage() {
                                      placeholder="-----BEGIN PGP PUBLIC KEY BLOCK-----&#10;...&#10;-----END PGP PUBLIC KEY BLOCK-----"
                                      disabled={isLoading}
                                      aria-describedby="pgpKeyHelp"
-                                 />
+                                  />
                                  <p id="pgpKeyHelp" className="form-help-text" style={styles.formHelpText}>Required for login (2FA). Paste your entire public key block here.</p>
                              </div>
 
