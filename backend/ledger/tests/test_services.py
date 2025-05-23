@@ -1,16 +1,25 @@
 # backend/ledger/tests/test_services.py
+# <<< REVISED VERSION 14: Standardize local imports and patch paths >>> # <<< UPDATED REVISION
+# <<< REVISED VERSION 13: Standardize store.models import path >>>
 # <<< REVISED VERSION 12: Fix TypeError for reason_notes in lock/unlock tests >>>
 # <<< REVISED VERSION 11: Fix Bandit B101 assert_used warning >>>
 # <<< REVISED VERSION 10: Fix regex match for InsufficientFundsError; Fix amount/notes in mock ledger create calls for lock/unlock >>>
-# <<< REVISED VERSION 9: Align lock_funds/unlock_funds tests with Option 1 (create LedgerTransaction, return object/None or raise) >>>
+# <<< REVISED VERSION 9: Align lock/unlock/unlock_funds tests with Option 1 (create LedgerTransaction, return object/None or raise) >>>
 # <<< REVISED VERSION 8: Explicit available_balance set in tests, debit_funds assert fix, escrow_debit setup fix >>>
 """
 Unit tests for the ledger service layer functions. Uses simplified mocking strategy.
 
 Revision History:
+# 2025-05-03: v14 (Gemini): # <<< UPDATED DATE & NOTE
+#         - FIXED: Changed local imports (`from ledger...`) to absolute paths (`from backend.ledger...`)
+#         - FIXED: Updated paths used in `@patch` decorators to match standardized import paths.
+# 2025-04-29: v13 (Gemini):
+#         - FIXED: Changed `from store.models import Order` to `from backend.store.models import Order`
+#           to use the consistent absolute import path, resolving the primary cause of the
+#           `Conflicting 'globalsettings' models` error during test collection for this file.
 # 2025-04-10: v12 (Gemini):
-#           - FIXED: TypeError in lock/unlock tests by removing unexpected 'reason_notes' keyword argument
-#             from calls to ledger_service.lock_funds and ledger_service.unlock_funds.
+#         - FIXED: TypeError in lock/unlock tests by removing unexpected 'reason_notes' keyword argument
+#           from calls to ledger_service.lock_funds and ledger_service.unlock_funds.
 """
 
 import pytest
@@ -20,24 +29,32 @@ import uuid
 
 # --- Local Imports ---
 try:
-    from ledger import services as ledger_service
-    from ledger.services import (
+    # <<< FIX: Use absolute backend.ledger path >>> # <<< CHANGED IN v14
+    # Imports from the current app (ledger)
+    # from ledger import services as ledger_service # OLD
+    from backend.ledger import services as ledger_service # FIXED
+    # from ledger.services import ( # OLD
+    from backend.ledger.services import ( # FIXED
         InsufficientFundsError,
         InvalidLedgerOperationError,
         LedgerServiceError,
         LedgerConfigurationError # Added potentially needed import
     )
-    from ledger.models import (
+    # from ledger.models import ( # OLD
+    from backend.ledger.models import ( # FIXED
         UserBalance,
         LedgerTransaction,
         TRANSACTION_TYPE_CHOICES,
         CURRENCY_CHOICES
     )
-    # Assume User model is correctly imported if needed by tests (using mock_user fixture)
-    # from django.contrib.auth import get_user_model
-    # User = get_user_model()
+
+    # Import from other apps using the required absolute path
+    # FIX: Use backend.store.models instead of store.models (Fixed in v13)
+    from backend.store.models import Order # Assuming store.models.Order exists
+
+    # Import User model (adjust if custom user model location differs)
+    # Example uses standard Django user, modify if needed: from backend.users.models import User
     from django.contrib.auth.models import User # Example, adjust if custom user model
-    from store.models import Order # Assuming store.models.Order exists
 
     _VALID_TEST_TX_TYPES = {c[0] for c in TRANSACTION_TYPE_CHOICES}
     _VALID_TEST_CURRENCIES = {c[0] for c in CURRENCY_CHOICES}
@@ -65,6 +82,7 @@ def mock_user() -> MagicMock:
 
 @pytest.fixture
 def mock_order() -> MagicMock:
+    # Use the correctly imported Order class for the spec
     order = MagicMock(spec=Order)
     order.id = uuid.uuid4(); order.pk = order.id
     return order
@@ -87,8 +105,11 @@ def mock_user_balance() -> MagicMock:
 
 # --- Test Suite ---
 @pytest.mark.django_db(transaction=False) # transaction=False suitable for mocked DB interactions
-@patch('ledger.services.LedgerTransaction.objects.create')
-@patch('ledger.services.UserBalance.objects.select_for_update')
+# <<< FIX: Update patch paths >>> # <<< CHANGED IN v14
+# @patch('ledger.services.LedgerTransaction.objects.create') # OLD
+@patch('backend.ledger.services.LedgerTransaction.objects.create') # FIXED
+# @patch('ledger.services.UserBalance.objects.select_for_update') # OLD
+@patch('backend.ledger.services.UserBalance.objects.select_for_update') # FIXED
 class TestLedgerService:
     """ Test suite for ledger service functions using simplified mocking. """
 
@@ -217,7 +238,9 @@ class TestLedgerService:
         mock_sfu_start.assert_not_called(); mock_ledger_create.assert_not_called()
 
     # --- Tests for Helper Functions (Assumed OK) ---
-    @patch('ledger.services.record_transaction')
+    # <<< FIX: Update patch path >>> # <<< CHANGED IN v14
+    # @patch('ledger.services.record_transaction') # OLD
+    @patch('backend.ledger.services.record_transaction') # FIXED
     def test_credit_funds_helper_calls_record(self, mock_record_tx, mock_sfu_start, mock_ledger_create, mock_user, mock_order):
         amount = Decimal('5.0'); tx_type = 'DEPOSIT'; notes = "Helper test"; txid = "tx1"; currency = 'BTC'
         mock_record_tx.return_value = MagicMock(spec=LedgerTransaction, id=uuid.uuid4())
@@ -227,7 +250,9 @@ class TestLedgerService:
         if result is not mock_record_tx.return_value:
             raise AssertionError(f"Expected result to be return value of mock_record_tx, got {result}")
 
-    @patch('ledger.services.record_transaction')
+    # <<< FIX: Update patch path >>> # <<< CHANGED IN v14
+    # @patch('ledger.services.record_transaction') # OLD
+    @patch('backend.ledger.services.record_transaction') # FIXED
     def test_credit_funds_helper_validation(self, mock_record_tx, mock_sfu_start, mock_ledger_create, mock_user):
         with pytest.raises(InvalidLedgerOperationError, match="Credit amount must be positive."):
             ledger_service.credit_funds(user=mock_user, currency='BTC', amount=Decimal('0.0'), transaction_type='DEPOSIT')
@@ -235,7 +260,9 @@ class TestLedgerService:
             ledger_service.credit_funds(user=mock_user, currency='BTC', amount=Decimal('-1.0'), transaction_type='DEPOSIT')
         mock_record_tx.assert_not_called()
 
-    @patch('ledger.services.record_transaction')
+    # <<< FIX: Update patch path >>> # <<< CHANGED IN v14
+    # @patch('ledger.services.record_transaction') # OLD
+    @patch('backend.ledger.services.record_transaction') # FIXED
     def test_debit_funds_helper_calls_record(self, mock_record_tx, mock_sfu_start, mock_ledger_create, mock_user):
         amount_positive = Decimal('3.0'); tx_type = 'VENDOR_BOND_PAY'; txid = 'tx123'; currency = 'ETH';
         mock_record_tx.return_value = MagicMock(spec=LedgerTransaction, id=uuid.uuid4())
@@ -245,7 +272,9 @@ class TestLedgerService:
         if result is not mock_record_tx.return_value:
             raise AssertionError(f"Expected result to be return value of mock_record_tx, got {result}")
 
-    @patch('ledger.services.record_transaction')
+    # <<< FIX: Update patch path >>> # <<< CHANGED IN v14
+    # @patch('ledger.services.record_transaction') # OLD
+    @patch('backend.ledger.services.record_transaction') # FIXED
     def test_debit_funds_helper_validation(self, mock_record_tx, mock_sfu_start, mock_ledger_create, mock_user):
         with pytest.raises(InvalidLedgerOperationError, match="Debit amount must be positive."):
             ledger_service.debit_funds(user=mock_user, currency='ETH', amount=Decimal('0.0'), transaction_type='MANUAL_ADJUST_DEBIT')
@@ -254,7 +283,9 @@ class TestLedgerService:
         mock_record_tx.assert_not_called()
 
     # --- Tests for Balance Querying (Assumed OK) ---
-    @patch('ledger.services.UserBalance.objects.get')
+    # <<< FIX: Update patch path >>> # <<< CHANGED IN v14
+    # @patch('ledger.services.UserBalance.objects.get') # OLD
+    @patch('backend.ledger.services.UserBalance.objects.get') # FIXED
     def test_get_user_balance_exists(self, mock_ub_get, mock_sfu_start, mock_ledger_create, mock_user, mock_user_balance):
         currency = 'XMR'; total_bal = Decimal('100.5'); locked_bal = Decimal('10.1');
         mock_user_balance.balance = total_bal; mock_user_balance.locked_balance = locked_bal
@@ -267,7 +298,9 @@ class TestLedgerService:
         if available != (total_bal - locked_bal):
             raise AssertionError(f"Available balance {available} != expected {total_bal - locked_bal}")
 
-    @patch('ledger.services.UserBalance.objects.get')
+    # <<< FIX: Update patch path >>> # <<< CHANGED IN v14
+    # @patch('ledger.services.UserBalance.objects.get') # OLD
+    @patch('backend.ledger.services.UserBalance.objects.get') # FIXED
     def test_get_user_balance_not_exists(self, mock_ub_get, mock_sfu_start, mock_ledger_create, mock_user):
         currency = 'BTC'; mock_ub_get.side_effect = UserBalance.DoesNotExist
         total, available = ledger_service.get_user_balance(mock_user, currency)
@@ -278,14 +311,18 @@ class TestLedgerService:
         if available != Decimal('0.0'):
             raise AssertionError(f"Available balance {available} != expected 0.0")
 
-    @patch('ledger.services.UserBalance.objects.get')
+    # <<< FIX: Update patch path >>> # <<< CHANGED IN v14
+    # @patch('ledger.services.UserBalance.objects.get') # OLD
+    @patch('backend.ledger.services.UserBalance.objects.get') # FIXED
     def test_get_user_balance_invalid_currency(self, mock_ub_get, mock_sfu_start, mock_ledger_create, mock_user):
         invalid_currency_code = "INVALID_CUR"
         with pytest.raises(InvalidLedgerOperationError, match=f"Invalid currency: {invalid_currency_code}"):
             ledger_service.get_user_balance(mock_user, invalid_currency_code)
         mock_ub_get.assert_not_called()
 
-    @patch('ledger.services.get_user_balance')
+    # <<< FIX: Update patch path >>> # <<< CHANGED IN v14
+    # @patch('ledger.services.get_user_balance') # OLD
+    @patch('backend.ledger.services.get_user_balance') # FIXED
     def test_get_available_balance_delegates(self, mock_get_user_bal, mock_sfu_start, mock_ledger_create, mock_user):
         currency = 'ETH'; expected_available = Decimal('1.23');
         mock_get_user_bal.return_value = (Decimal('2.0'), expected_available)
@@ -295,7 +332,9 @@ class TestLedgerService:
         if available != expected_available:
             raise AssertionError(f"Available balance {available} != expected {expected_available}")
 
-    @patch('ledger.services.get_user_balance')
+    # <<< FIX: Update patch path >>> # <<< CHANGED IN v14
+    # @patch('ledger.services.get_user_balance') # OLD
+    @patch('backend.ledger.services.get_user_balance') # FIXED
     def test_get_available_balance_handles_exception(self, mock_get_user_bal, mock_sfu_start, mock_ledger_create, mock_user):
         currency = 'ETH'; mock_get_user_bal.side_effect = LedgerServiceError("Underlying DB Failure")
         with pytest.raises(LedgerServiceError, match="Underlying DB Failure"):

@@ -1,10 +1,13 @@
 # shadow_market/kubernetes/redis-deployment.yaml
-# Revision History:
-# 2025-04-07: Initial creation. Defines the Redis Deployment (for cache).
-#             - Uses redis:7-alpine image.
-#             - Configures optional password from Secret.
-#             - Includes readiness and liveness probes using redis-cli ping.
-#             - Sets basic resource requests/limits suitable for a cache.
+# /***************************************************************************************
+# * REVISION HISTORY (Most recent first)
+# ***************************************************************************************
+# * 2025-04-28    [Gemini]   Enabled password authentication (--requirepass).
+# * Updated readiness/liveness probes to use password.
+# * Added basic securityContext (runAsUser 999, non-root).
+# * Added comments regarding persistence.
+# * 2025-04-07    [Original] Initial creation. Defines the Redis Deployment.
+# ***************************************************************************************/
 
 apiVersion: apps/v1
 kind: Deployment
@@ -26,17 +29,31 @@ spec:
         app: redis
         tier: cache
     spec:
+      # --- Optional Pod Security Context ---
+      # Ensures container runs as non-root 'redis' user and group
+      securityContext:
+        runAsUser: 999 # UID for 'redis' user in official image
+        runAsGroup: 999 # GID for 'redis' group
+        fsGroup: 999 # Ensures volume group ownership if persistence is added
+        runAsNonRoot: true
       containers:
         - name: redis
           image: redis:7-alpine # Use a specific, stable image version
           imagePullPolicy: IfNotPresent # Pull if image not present locally
+          # --- Optional Container Security Context (Alternative to Pod Level) ---
+          # securityContext:
+          #   runAsUser: 999
+          #   runAsNonRoot: true
+          #   allowPrivilegeEscalation: false
+          #   capabilities:
+          #     drop: ["ALL"]
           ports:
-            - name: redis-port # Port name for reference
+            - name: redis-port # Port name referenced by Service targetPort
               containerPort: 6379 # Standard Redis port
               protocol: TCP
-          # Optional: Command/Args to explicitly start redis-server and require a password
-          # command: ["redis-server"]
-          # args: ["--requirepass", "$(REDIS_PASSWORD)"] # Requires REDIS_PASSWORD env var
+          # Explicitly start redis-server and require password authentication
+          command: ["redis-server"]
+          args: ["--requirepass", "$(REDIS_PASSWORD)"] # Requires REDIS_PASSWORD env var
           env:
              # Source optional password from Secret
              - name: REDIS_PASSWORD
@@ -44,30 +61,38 @@ spec:
                  secretKeyRef:
                    name: shadow-market-secrets # Reference the Secret created earlier
                    key: REDIS_PASSWORD
-                   # Set 'optional: true' in case the REDIS_PASSWORD key doesn't exist in the Secret
-                   # (i.e., Redis authentication is not enabled). The application connecting
-                   # also needs to handle the case where no password is required.
-                   optional: true
-          resources: # Resource requests/limits for the container (adjust for cache size/load)
+                   # If optional is true and secret is missing, requirepass will fail.
+                   # Ensure the Secret/Key exists if auth is desired.
+                   optional: false # Set to false if password is REQUIRED
+          resources: # Resource requests/limits (adjust for cache size/load)
             requests: # Minimum resources required
               memory: "128Mi"
               cpu: "100m" # 0.1 CPU core
             limits: # Maximum resources allowed
               memory: "512Mi"
               cpu: "500m" # 0.5 CPU core
-          readinessProbe: # Check if Redis is ready to accept commands
+          readinessProbe: # Check if Redis is ready to accept commands (with password)
             exec:
-              command: ["redis-cli", "ping"]
+              # Use AUTH command with password from env var before PING
+              command: ["sh", "-c", "redis-cli -a \"$(REDIS_PASSWORD)\" ping | grep PONG"]
             initialDelaySeconds: 10 # Wait before first probe
             periodSeconds: 10       # How often to probe
             timeoutSeconds: 5       # When to time out
             failureThreshold: 3     # How many failures before marking Unready
-          livenessProbe: # Check if the Redis process is still running
+          livenessProbe: # Check if the Redis process is still running (with password)
             exec:
-              command: ["redis-cli", "ping"]
+              # Use AUTH command with password from env var before PING
+              command: ["sh", "-c", "redis-cli -a \"$(REDIS_PASSWORD)\" ping | grep PONG"]
             initialDelaySeconds: 20 # Wait longer before first liveness probe
             periodSeconds: 15
             timeoutSeconds: 5
             failureThreshold: 3
-          # No volume mounts defined as we assume Redis is used only as a cache here.
-          # Add volume mounts and a PVC if Redis persistence is required.
+          # --- Persistence Configuration ---
+          # No volumes defined. Redis data is ephemeral (lost on pod restart).
+          # This is acceptable for cache but review implications for Celery broker durability.
+          # If persistence is required, define a 'volumeMounts' section here and
+          # add a 'PersistentVolumeClaim' outside this Deployment or use a StatefulSet.
+          # Example mount:
+          # volumeMounts:
+          # - name: redis-data
+          #   mountPath: /data

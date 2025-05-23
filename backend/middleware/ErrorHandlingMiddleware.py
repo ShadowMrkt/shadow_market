@@ -1,13 +1,17 @@
 # --- MODIFICATION START ---
 # File: shadow_market/backend/middleware/ErrorHandlingMiddleware.py
 # Revision History:
-# 2025-04-07: Initial Refactor - Applied enterprise hardening concepts:
-#             - Added trusted proxy support for IP address identification via helper function. CRITICAL FIX.
-#             - Ensured consistent IP logging in both DRF handler and middleware.
-#             - Improved logging in middleware: uses logger.exception for traceback, logs concise error to security log.
-#             - Ensured DEBUG=False prevents leak of exception details in JSON response.
-#             - Added stronger TODO comment regarding using a proper 500.html template.
-#             - Added type hinting.
+# - v1.1.0 (2025-04-25):
+#   - SECURITY FIX: Corrected IP address extraction logic in `_get_client_ip_for_request`. Now correctly takes the *first* IP from the configured header (`REAL_IP_HEADER`) if the `REMOTE_ADDR` is trusted. Removed flawed `NUM_PROXIES` logic.
+#   - BEST PRACTICE: Added recommendation to move IP helper to utils if shared.
+#   - BEST PRACTICE: Strengthened comment about using a proper 500.html template.
+# - v1.0.0 (2025-04-07): Initial Refactor - Applied enterprise hardening concepts:
+#   - Added trusted proxy support for IP address identification via helper function. CRITICAL FIX. (Logic fixed in v1.1.0)
+#   - Ensured consistent IP logging in both DRF handler and middleware.
+#   - Improved logging in middleware: uses logger.exception for traceback, logs concise error to security log.
+#   - Ensured DEBUG=False prevents leak of exception details in JSON response.
+#   - Added stronger TODO comment regarding using a proper 500.html template.
+#   - Added type hinting.
 
 from django.http import HttpRequest, HttpResponse, JsonResponse, HttpResponseServerError
 from django.utils.deprecation import MiddlewareMixin
@@ -26,51 +30,66 @@ except ImportError:
     APIException = Exception # Fallback base class if DRF not installed
     DRF_AVAILABLE = False
 
-logger = logging.getLogger(__name__) # Use __name__
-security_logger = logging.getLogger('django.security')
+# Use specific logger for this middleware
+logger = logging.getLogger('mymarketplace.middleware.errorhandling')
+security_logger = logging.getLogger('django.security') # Standard security logger
 
 # --- IP Address Helper ---
-# TODO: Consider moving this to a shared middleware.utils module if used by multiple middleware.
+# <<< Recommendation: Consider moving this to a shared middleware.utils module if used elsewhere >>>
 def _get_client_ip_for_request(request: HttpRequest) -> Optional[str]:
     """
     Get the client's real IP address, trusting configured proxies.
-    Reads settings: TRUSTED_PROXY_IPS, REAL_IP_HEADER, NUM_PROXIES.
+    Reads settings: TRUSTED_PROXY_IPS, REAL_IP_HEADER.
+
+    If REMOTE_ADDR is in TRUSTED_PROXY_IPS, it trusts the *first* IP
+    in the REAL_IP_HEADER (e.g., X-Forwarded-For: client, proxy1, proxy2).
+    Otherwise, it uses REMOTE_ADDR directly.
     """
-    # Load settings within the function scope or pass them if preferred
+    # Load settings within the function scope
     trusted_proxies = set(getattr(settings, 'TRUSTED_PROXY_IPS', []))
+    # Default to 'HTTP_X_FORWARDED_FOR', the most common header
     real_ip_header = getattr(settings, 'REAL_IP_HEADER', 'HTTP_X_FORWARDED_FOR')
-    num_proxies = getattr(settings, 'NUM_PROXIES', 1)
 
     remote_addr = request.META.get('REMOTE_ADDR')
     if not remote_addr:
         logger.error("ErrorHandling: Could not determine REMOTE_ADDR.")
         return None
 
-    ip: Optional[str] = None
+    ip: Optional[str] = remote_addr # Default to REMOTE_ADDR
+
+    # <<< SECURITY FIX: Simplified and corrected logic >>>
     if remote_addr in trusted_proxies:
         header_value = request.META.get(real_ip_header)
         if header_value:
-            ips = [ip.strip() for ip in header_value.split(',')]
-            if len(ips) >= num_proxies:
-                client_ip_index = 0 # Assume first IP when set by trusted proxy
-                ip = ips[client_ip_index]
-            else:
-                logger.warning(
+            # X-Forwarded-For format is "client, proxy1, proxy2", so split and take the first one.
+            try:
+                # Take the first IP address in the list
+                client_ip = header_value.split(',')[0].strip()
+                if client_ip: # Ensure it's not an empty string
+                    ip = client_ip
+                else:
+                     logger.warning(
+                        f"ErrorHandling: Trusted proxy {remote_addr} provided {real_ip_header} header '{header_value}', "
+                        f"but the first value was empty. Falling back to REMOTE_ADDR."
+                    )
+            except IndexError:
+                 logger.warning(
                     f"ErrorHandling: Trusted proxy {remote_addr} provided {real_ip_header} header '{header_value}', "
-                    f"but not enough IPs found for NUM_PROXIES={num_proxies}. Falling back to REMOTE_ADDR."
+                    f"but it was empty or malformed after split. Falling back to REMOTE_ADDR."
                 )
-                ip = remote_addr
+            except Exception as e:
+                # Catch potential unexpected errors during split/strip
+                 logger.warning(
+                    f"ErrorHandling: Error processing {real_ip_header} header '{header_value}' from trusted proxy {remote_addr}: {e}. "
+                    f"Falling back to REMOTE_ADDR."
+                )
         else:
             logger.warning(
                 f"ErrorHandling: Trusted proxy {remote_addr} did not provide the expected {real_ip_header} header. "
                 f"Falling back to REMOTE_ADDR."
-                )
-            ip = remote_addr
-    else:
-        ip = remote_addr
+            )
 
-    # Log IP source only once per request if needed for debugging elsewhere
-    # logger.debug(f"ErrorHandling: Using client IP {ip} for request {request.path}")
+    # logger.debug(f"ErrorHandling: Determined client IP as {ip} for request {request.path}")
     return ip
 
 
@@ -80,12 +99,12 @@ def api_exception_handler(exc: Exception, context: Dict[str, Any]) -> Optional[H
     Custom API exception handler for Django REST Framework.
     Logs the error with context (incl. real IP) and returns a standardized JSON error response.
     To use this, set in settings.py:
-    REST_FRAMEWORK = { 'EXCEPTION_HANDLER': 'path.to.api_exception_handler' }
+    REST_FRAMEWORK = { 'EXCEPTION_HANDLER': 'mymarketplace.middleware.ErrorHandlingMiddleware.api_exception_handler' }
     """
     if not DRF_AVAILABLE:
-         logger.error("DRF components not found, cannot use api_exception_handler.")
-         # Fallback to generic error? Or let Django handle? Let Django handle for now.
-         return None # Allow default Django error handling
+        logger.error("DRF components not found, cannot use api_exception_handler.")
+        # Fallback to generic error? Or let Django handle? Let Django handle for now.
+        return None # Allow default Django error handling
 
     # Call REST framework's default exception handler first
     response = drf_exception_handler(exc, context)
@@ -102,10 +121,12 @@ def api_exception_handler(exc: Exception, context: Dict[str, Any]) -> Optional[H
         ip_info = f"IP: {client_ip}"
         path_info = f"Path: {request.path}"
 
-    log_message = f"DRF API Exception | {path_info} | {user_info}, {ip_info} | {exc.__class__.__name__}: {exc}"
+    log_message_prefix = f"DRF API Exception | {path_info} | {user_info}, {ip_info}"
+    log_message = f"{log_message_prefix} | {exc.__class__.__name__}: {exc}"
 
     # Log full traceback using logger.exception
-    logger.exception(log_message, exc_info=True) # exc_info=True is default for logger.exception
+    # Use the specific middleware logger for detailed tracebacks
+    logger.exception(log_message, exc_info=True)
 
     # --- Response Handling ---
     if response is None:
@@ -114,10 +135,9 @@ def api_exception_handler(exc: Exception, context: Dict[str, Any]) -> Optional[H
             "error": "Internal Server Error",
             "detail": "An unexpected server error occurred."
         }
-        # Log specifically as unhandled by DRF default
+        # Log specifically as unhandled by DRF default to security log
         security_logger.error(f"Unhandled DRF Exception: {log_message}", exc_info=False) # Avoid duplicate traceback in security log
-        response = JsonResponse(response_data, status=500)
-        return response # Return immediately for unhandled
+        return JsonResponse(response_data, status=500) # Return immediately for unhandled
 
     # Customize the response data for handled DRF exceptions
     if isinstance(response.data, dict): # Ensure response.data is a dict before modifying
@@ -126,7 +146,9 @@ def api_exception_handler(exc: Exception, context: Dict[str, Any]) -> Optional[H
             response.data['error_code'] = getattr(exc, 'default_code', exc.__class__.__name__)
 
         # Ensure 'detail' key exists for consistency, using DRF's standard representation
-        if 'detail' not in response.data:
+        # DRF usually puts detail under 'detail' key or field names for validation errors
+        if 'detail' not in response.data and not any(k != 'error_code' for k in response.data):
+            # If only 'error_code' is present, add a generic detail
              response.data['detail'] = str(exc.detail if hasattr(exc, 'detail') else exc)
 
         # **** Security Check: Ensure no sensitive details leak in production ****
@@ -134,10 +156,14 @@ def api_exception_handler(exc: Exception, context: Dict[str, Any]) -> Optional[H
             # If DRF includes non-safe details (e.g. validation errors are usually safe),
             # you might want to sanitize 'detail' further here for certain exception types.
             # Example: Replace generic 500 error details
-            if response.status_code == 500:
-                 response.data['detail'] = "An internal server error occurred."
-                 response.data['error'] = "Internal Server Error" # Ensure consistent key
+            if response.status_code >= 500: # Catch 500 and potentially others like 502, 503 if needed
+                response.data = {
+                    "error": "Internal Server Error",
+                    "detail": "An internal server error occurred.",
+                    "error_code": "ServerError" # Provide a generic code for 5xx errors
+                }
 
+    # Ensure response.data is serializable if we modified it extensively (should be fine here)
     return response
 
 
@@ -147,12 +173,12 @@ class ErrorHandlingMiddleware(MiddlewareMixin):
     Catches unhandled exceptions outside of DRF views, logs them with context,
     and returns a generic error response (JSON or basic HTML based on Accept header).
     Prevents sensitive information leakage when DEBUG=False.
+    Must be placed appropriately in the MIDDLEWARE setting (typically near the top/after security).
     """
-
-    # No __init__ needed unless we add middleware-specific config
 
     def process_exception(self, request: HttpRequest, exception: Exception) -> Optional[HttpResponse]:
         # Ignore APIExceptions if DRF is available, let api_exception_handler handle them
+        # This check prevents handling the same exception twice.
         if DRF_AVAILABLE and isinstance(exception, APIException):
             return None # Let DRF's handler process it via its mechanism
 
@@ -163,7 +189,8 @@ class ErrorHandlingMiddleware(MiddlewareMixin):
         ip_info = f"IP: {client_ip}"
         path_info = f"Path: {request.path}"
 
-        log_message = f"Unhandled Middleware/View Exception | {path_info} | {user_info}, {ip_info} | {exception.__class__.__name__}: {exception}"
+        log_message_prefix = f"Unhandled Middleware/View Exception | {path_info} | {user_info}, {ip_info}"
+        log_message = f"{log_message_prefix} | {exception.__class__.__name__}: {exception}"
 
         # Log the full traceback and message using logger.exception
         logger.exception(log_message, exc_info=True)
@@ -179,7 +206,8 @@ class ErrorHandlingMiddleware(MiddlewareMixin):
 
         # Check if JSON response is preferred
         accept_header = request.META.get('HTTP_ACCEPT', '')
-        is_json_preferred = 'application/json' in accept_header or request.path.startswith('/api/') # Assume /api/ paths want JSON
+         # Simple check, could be more robust (e.g., using mimeparse library)
+        is_json_preferred = 'application/json' in accept_header or request.path.startswith('/api/')
 
         if is_json_preferred:
             response_data = {
@@ -190,27 +218,38 @@ class ErrorHandlingMiddleware(MiddlewareMixin):
             if settings.DEBUG:
                 response_data['debug_exception_type'] = exception.__class__.__name__
                 response_data['debug_exception_detail'] = str(exception)
-                # Avoid sending full traceback in response even in debug mode usually
+                # Avoid sending full traceback in response even in debug mode
 
             return JsonResponse(response_data, status=500)
         else:
             # Return basic HTML response
-            # TODO: Implement a user-friendly 500.html template!
+            # <<< BEST PRACTICE: Implement a user-friendly 500.html template! >>>
+            # This provides a much better user experience than raw HTML.
+            # Ensure the template context only contains safe information.
             # from django.shortcuts import render
-            # return render(request, '500.html', {'error_message': error_message}, status=500)
+            # try:
+            #     return render(request, '500.html', {'error_message': error_message}, status=500)
+            # except Exception as render_exc:
+            #      logger.error(f"Error rendering 500.html template: {render_exc}")
+            #      # Fallback to raw HTML if template fails
 
-            # Basic fallback HTML
+            # Basic fallback HTML (only used if 500.html template is missing or fails)
             html_response = f"""
             <!DOCTYPE html>
-            <html>
-            <head><title>{error_title}</title></head>
+            <html lang="en">
+            <head>
+                <meta charset="UTF-8">
+                <meta name="viewport" content="width=device-width, initial-scale=1.0">
+                <title>{error_title}</title>
+                <style> body {{ font-family: sans-serif; padding: 20px; }} h1 {{ color: #cc0000; }} </style>
+            </head>
             <body>
                 <h1>{error_title}</h1>
                 <p>{error_message}</p>
-                {f'<p><pre>Debug Info: {exception.__class__.__name__}: {exception}</pre></p>' if settings.DEBUG else ''}
+                {'' if not settings.DEBUG else ''}
             </body>
             </html>
             """
-            return HttpResponseServerError(html_response, content_type='text/html')
+            return HttpResponseServerError(html_response.strip(), content_type='text/html')
 
 # --- MODIFICATION END ---

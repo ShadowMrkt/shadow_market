@@ -1,0 +1,110 @@
+# shadow_market/kubernetes/celery-worker-deployment.yml
+# /***************************************************************************************
+# * REVISION HISTORY (Most recent first)
+# ***************************************************************************************
+# * 2025-04-28    [Gemini]   Initial creation for Celery worker Deployment.
+# * - Based on backend-deployment.yml structure.
+# * - Runs 'celery worker' command.
+# * - Integrated with Vault Agent Injector (ASSUMES separate role needed).
+# * - Removed HTTP probes and ports (not applicable to workers).
+# * - Kept securityContext, resource limits (tune later), volumes.
+# * WARNING: Vault annotations (role, secrets) MUST be verified
+# * and adjusted for worker needs.
+# ***************************************************************************************/
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: shadow-market-celery-worker # Name of the Deployment
+  namespace: shadow-market         # Deployed into the application's namespace
+  labels:
+    app: shadow-market           # Labels for selecting/grouping
+    tier: celery-worker
+spec:
+  replicas: 2 # Start with 2 worker replicas (adjust based on task queue load)
+  selector:
+    matchLabels: # Selector to find Pods managed by this Deployment
+      app: shadow-market
+      tier: celery-worker
+  strategy: # Define deployment strategy
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1
+      maxSurge: 1
+  template: # Pod template used to create new Pods
+    metadata:
+      labels: # Labels applied to each Pod
+        app: shadow-market
+        tier: celery-worker
+      annotations:
+        # --- Vault Agent Injector Configuration ---
+        # MUST BE ADJUSTED TO MATCH YOUR VAULT SETUP & WORKER NEEDS
+        vault.hashicorp.com/agent-inject: 'true'
+        # Consider a specific role for workers if their secret needs differ from backend
+        vault.hashicorp.com/role: 'shadow-market-celery-worker' # ASSUMPTION: Separate role
+        # Pulling same secrets as backend initially; adjust if workers need different/fewer secrets
+        vault.hashicorp.com/agent-inject-secret-config: 'secret/data/shadow-market'
+        # Reusing backend template; adjust based on required env vars for workers
+        vault.hashicorp.com/agent-inject-template-config: |
+          {{- with secret "secret/data/shadow-market" -}}
+          export DJANGO_SECRET_KEY='{{ .Data.data.DJANGO_SECRET_KEY }}' # Needed for Django ORM access (e.g., result backend)
+          export POSTGRES_PASSWORD='{{ .Data.data.POSTGRES_PASSWORD }}' # Needed for result backend
+          {{ if .Data.data.REDIS_PASSWORD }}export REDIS_PASSWORD='{{ .Data.data.REDIS_PASSWORD }}'{{ end }} # Needed for broker
+          # Add other secrets needed specifically by worker tasks here...
+          {{- end }}
+        # --- End Vault Configuration ---
+    spec:
+      terminationGracePeriodSeconds: 60 # Allow longer grace period for tasks to finish
+      # Service Account Name if using specific K8s service account for permissions
+      # serviceAccountName: shadow-market-celery-sa # Ensure this SA is bound to the Vault AppRole
+      containers:
+        - name: celery-worker # Container name
+          # Use the same backend image built by CI/CD
+          image: ghcr.io/{{ GITHUB_OWNER_PLACEHOLDER }}/shadow_market_backend:{{ IMAGE_TAG_PLACEHOLDER }}
+          imagePullPolicy: IfNotPresent
+          # Removed ports section - workers don't listen on ports
+          envFrom: # Load non-sensitive config from ConfigMap
+            - configMapRef:
+                name: shadow-market-config # Includes CELERY_BROKER_URL etc.
+          # env: # Specific env vars if needed, e.g., pointing to Vault secret files
+          #   - name: VAULT_SECRETS_PATH
+          #     value: "/vault/secrets"
+          # Command to start the Celery worker
+          # Uses '-A mymarketplace' based on celery.py app definition
+          command: ["celery"]
+          args:
+            - "-A"
+            - "mymarketplace" # Name of the Celery app instance
+            - "worker"
+            - "--loglevel=info" # Adjust log level as needed
+            # Add other Celery options like --concurrency=, -Q queues, etc. if needed
+          resources: # Define resource requests and limits (tune based on worker load)
+            requests:
+              memory: "512Mi"
+              cpu: "500m"
+            limits:
+              memory: "1Gi" # Workers might need more memory depending on tasks
+              cpu: "1"
+          securityContext: # Apply same security best practices as backend
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            runAsUser: 1000 # MUST match the 'appuser' UID from the backend Dockerfile
+            readOnlyRootFilesystem: true # Enabled for security
+            capabilities:
+              drop:
+                - ALL
+          volumeMounts:
+            # Mount a writable /tmp required by readOnlyRootFilesystem
+            - name: tmp-volume
+              mountPath: /tmp
+            # Mount Vault secrets volume
+            - name: vault-secrets
+              mountPath: /vault/secrets
+              readOnly: true
+          # Removed readinessProbe and livenessProbe - Monitor via metrics/logs/Flower
+      # --- Volume Definitions ---
+      volumes:
+        - name: tmp-volume
+          emptyDir: {}
+        - name: vault-secrets
+          emptyDir: {} # Managed by Vault agent

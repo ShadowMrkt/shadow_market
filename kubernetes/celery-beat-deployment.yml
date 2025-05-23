@@ -1,0 +1,110 @@
+# shadow_market/kubernetes/celery-beat-deployment.yml
+# /***************************************************************************************
+# * REVISION HISTORY (Most recent first)
+# ***************************************************************************************
+# * 2025-04-28    [Gemini]   Initial creation for Celery Beat Deployment.
+# * - Based on celery-worker-deployment.yml structure.
+# * - Runs 'celery beat' command with DatabaseScheduler.
+# * - Replicas set to 1 (CRITICAL for Beat).
+# * - Integrated with Vault Agent Injector (ASSUMES separate role needed).
+# * - Adjusted resource requests/limits (typically lower than workers).
+# * - Kept securityContext, volumes.
+# * WARNING: Vault annotations (role, secrets) MUST be verified.
+# * WARNING: Ensure 'django-celery-beat' is installed and added to
+# * INSTALLED_APPS in Django settings.
+# ***************************************************************************************/
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: shadow-market-celery-beat # Name of the Deployment
+  namespace: shadow-market       # Deployed into the application's namespace
+  labels:
+    app: shadow-market         # Labels for selecting/grouping
+    tier: celery-beat
+spec:
+  # --- CRITICAL: Celery Beat MUST run as a singleton (1 replica) ---
+  replicas: 1
+  selector:
+    matchLabels: # Selector to find Pods managed by this Deployment
+      app: shadow-market
+      tier: celery-beat
+  strategy:
+    # Use Recreate strategy to ensure only one instance runs, even during updates.
+    # RollingUpdate could briefly result in two Beat instances.
+    type: Recreate
+  template: # Pod template used to create new Pods
+    metadata:
+      labels: # Labels applied to each Pod
+        app: shadow-market
+        tier: celery-beat
+      annotations:
+        # --- Vault Agent Injector Configuration ---
+        # MUST BE ADJUSTED TO MATCH YOUR VAULT SETUP & BEAT NEEDS
+        vault.hashicorp.com/agent-inject: 'true'
+        # Consider a specific role for beat if its secret needs differ
+        vault.hashicorp.com/role: 'shadow-market-celery-beat' # ASSUMPTION: Separate role
+        # Beat needs DB access (for scheduler) and Broker access (Redis)
+        vault.hashicorp.com/agent-inject-secret-config: 'secret/data/shadow-market'
+        vault.hashicorp.com/agent-inject-template-config: |
+          {{- with secret "secret/data/shadow-market" -}}
+          export DJANGO_SECRET_KEY='{{ .Data.data.DJANGO_SECRET_KEY }}' # Needed for Django ORM access (scheduler)
+          export POSTGRES_PASSWORD='{{ .Data.data.POSTGRES_PASSWORD }}' # Needed for scheduler DB
+          {{ if .Data.data.REDIS_PASSWORD }}export REDIS_PASSWORD='{{ .Data.data.REDIS_PASSWORD }}'{{ end }} # Needed for broker
+          # Add other secrets needed specifically by beat/scheduler here...
+          {{- end }}
+        # --- End Vault Configuration ---
+    spec:
+      terminationGracePeriodSeconds: 30 # Standard grace period
+      # Service Account Name if using specific K8s service account for permissions
+      # serviceAccountName: shadow-market-celery-sa # Ensure this SA is bound to the Vault AppRole
+      containers:
+        - name: celery-beat # Container name
+          # Use the same backend image built by CI/CD
+          image: ghcr.io/{{ GITHUB_OWNER_PLACEHOLDER }}/shadow_market_backend:{{ IMAGE_TAG_PLACEHOLDER }}
+          imagePullPolicy: IfNotPresent
+          envFrom: # Load non-sensitive config from ConfigMap
+            - configMapRef:
+                name: shadow-market-config
+          # Command to start the Celery Beat scheduler
+          # Uses '-A mymarketplace' based on celery.py app definition
+          # Uses DatabaseScheduler (requires django-celery-beat package & config)
+          command: ["celery"]
+          args:
+            - "-A"
+            - "mymarketplace" # Name of the Celery app instance
+            - "beat"
+            - "--loglevel=info" # Adjust log level as needed
+            - "--scheduler"
+            - "django_celery_beat.schedulers:DatabaseScheduler"
+            # PID file is often unnecessary in containers, let Celery handle it internally
+          resources: # Define resource requests/limits (Beat is usually lightweight, monitor and adjust)
+            requests:
+              memory: "256Mi"
+              cpu: "250m" # 0.25 CPU core
+            limits:
+              memory: "512Mi"
+              cpu: "500m" # 0.5 CPU core
+          securityContext: # Apply same security best practices
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            runAsUser: 1000 # MUST match the 'appuser' UID from the backend Dockerfile
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          volumeMounts:
+            # Mount a writable /tmp required by readOnlyRootFilesystem
+            - name: tmp-volume
+              mountPath: /tmp
+            # Mount Vault secrets volume
+            - name: vault-secrets
+              mountPath: /vault/secrets
+              readOnly: true
+          # No readiness/liveness probes needed for Beat. Monitor via logs/metrics.
+      # --- Volume Definitions ---
+      volumes:
+        - name: tmp-volume
+          emptyDir: {}
+        - name: vault-secrets
+          emptyDir: {} # Managed by Vault agent

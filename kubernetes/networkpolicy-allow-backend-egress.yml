@@ -1,9 +1,17 @@
 # shadow_market/kubernetes/networkpolicy-allow-backend-egress.yaml
-# Revision History:
-# 2025-04-07: Initial creation. Allows necessary egress from backend pods.
-#             - Allows egress to Postgres pods on port 5432.
-#             - Allows egress to Redis pods on port 6379.
-#             - Re-allows DNS egress specifically for backend pods.
+# /***************************************************************************************
+# * REVISION HISTORY (Most recent first)
+# ***************************************************************************************
+# * 2025-04-28    [Gemini]   FIXED: Corrected YAML structure/indentation in egress
+# * rules for Crypto Nodes and Sentry to resolve linter errors.
+# * Switched to placing 'ports' and 'to' as keys under each list item.
+# * 2025-04-28    [Gemini]   Added egress rules for internal Vault, external
+# * Crypto Nodes (BTC, XMR, ETH), and Sentry using placeholders.
+# * Verified existing DB, Cache, DNS rules.
+# * WARNING: Vault selectors/ports are ASSUMED. All external
+# * IP/CIDR/DNS placeholders MUST be replaced.
+# * 2025-04-07    [Original] Initial creation. Allows egress to DB, Cache, DNS.
+# ***************************************************************************************/
 
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
@@ -20,58 +28,98 @@ spec:
     - Egress # This policy only defines egress rules
   egress:
     # --- Rule 1: Allow traffic TO Database (Postgres) Pods ---
-    - to:
-      - podSelector: # Select pods based on labels
-          matchLabels:
-            app: postgres # Labels of the Postgres StatefulSet pods
-            tier: database
-      ports:
+    - ports:
         - protocol: TCP
           port: 5432 # Standard PostgreSQL port
+      to:
+        - podSelector: # Select pods based on labels
+            matchLabels:
+              app: postgres # Labels of the Postgres StatefulSet pods
+              tier: database
 
     # --- Rule 2: Allow traffic TO Cache (Redis) Pods ---
-    - to:
-      - podSelector: # Select pods based on labels
-          matchLabels:
-            app: redis # Labels of the Redis Deployment pods
-            tier: cache
-      ports:
+    - ports:
         - protocol: TCP
           port: 6379 # Standard Redis port
+      to:
+        - podSelector: # Select pods based on labels
+            matchLabels:
+              app: redis # Labels of the Redis Deployment pods
+              tier: cache
 
-    # --- Rule 3: Re-allow DNS Egress specifically for Backend Pods ---
-    # Since this podSelector is now targeted by an Egress policy,
-    # we need to explicitly allow DNS again here.
-    - to:
-      - namespaceSelector:
-          matchLabels:
-            kubernetes.io/metadata.name: kube-system
-        podSelector:
-          matchLabels:
-            k8s-app: kube-dns
-      ports:
+    # --- Rule 3: Allow traffic TO Vault Service (Internal) ---
+    # ASSUMPTION: Vault runs in 'vault' namespace with standard Helm labels. ADJUST AS NEEDED.
+    - ports:
+        - protocol: TCP
+          port: 8200 # Standard Vault API port
+        # - protocol: TCP
+        #   port: 8201 # Optional: Vault Agent Ctl port if used directly
+      to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: vault # Or your Vault namespace name
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: vault # Common Vault Helm chart label
+
+    # --- Rule 4: Re-allow DNS Egress specifically for Backend Pods ---
+    - ports:
         - protocol: UDP
           port: 53
         - protocol: TCP
           port: 53
+      to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
 
-    # --- Rule 4 (Optional): Allow Egress to External Services ---
-    # Uncomment and modify if backend needs to reach services outside the cluster.
-    # Example: Allow egress to Vault running outside the cluster on specific IP/Port
-    # - to:
-    #   - ipBlock:
-    #       cidr: 192.168.1.100/32 # Replace with actual Vault IP/CIDR
-    #   ports:
-    #   - protocol: TCP
-    #     port: 8200 # Vault port
-    # Example: Allow egress to any external IP on port 443 (HTTPS) - Less Secure!
-    # - to:
-    #   - ipBlock:
-    #       cidr: 0.0.0.0/0
-    #       except: # Block traffic to private RFC1918 ranges
-    #         - 10.0.0.0/8
-    #         - 172.16.0.0/12
-    #         - 192.168.0.0/16
-    #   ports:
-    #   - protocol: TCP
-    #     port: 443
+    # --- Rule 5: Allow Egress to Crypto Nodes (External - REPLACE PLACEHOLDERS!) ---
+    # Bitcoin Node
+    - ports:
+        - protocol: TCP
+          port: {{ BITCOIN_NODE_PORT_PLACEHOLDER }} # e.g., 8332 (RPC)
+      to:
+        - ipBlock:
+            cidr: {{ BITCOIN_NODE_CIDR_PLACEHOLDER }} # e.g., 1.2.3.4/32
+
+    # Monero Node
+    - ports:
+        - protocol: TCP
+          port: {{ MONERO_NODE_PORT_PLACEHOLDER }} # e.g., 18081 (RPC)
+      to:
+        - ipBlock:
+            cidr: {{ MONERO_NODE_CIDR_PLACEHOLDER }} # e.g., 5.6.7.8/32
+
+    # Ethereum Node
+    - ports:
+        - protocol: TCP # Or UDP depending on connection type (WSS usually TCP)
+          port: {{ ETHEREUM_NODE_PORT_PLACEHOLDER }} # e.g., 8546 (WSS)
+      to:
+        - ipBlock:
+            cidr: {{ ETHEREUM_NODE_CIDR_PLACEHOLDER }} # e.g., 9.10.11.12/32
+
+    # --- Rule 6: Allow Egress to Sentry (External - REPLACE PLACEHOLDER!) ---
+    # Option 1: Specific IPs (Preferred) - Example commented out
+    # - ports:
+    #     - protocol: TCP
+    #       port: 443
+    #   to:
+    #     - ipBlock:
+    #         cidr: <SENTRY_INGEST_IP_1>/32
+    # # Add more 'to' blocks or separate rules if multiple IPs/CIDRs needed
+    # --- OR --- Option 2: General External HTTPS (Less Secure) ---
+    - ports:
+        - protocol: TCP
+          port: 443 # Standard HTTPS port (covers Sentry and potentially others)
+      to:
+        - ipBlock:
+            cidr: 0.0.0.0/0 # Allow external traffic
+            except: # But block traffic to private RFC1918 ranges
+              - 10.0.0.0/8
+              - 172.16.0.0/12
+              - 192.168.0.0/16
+
+    # Add other specific egress rules as needed (e.g., external exchange rate APIs)

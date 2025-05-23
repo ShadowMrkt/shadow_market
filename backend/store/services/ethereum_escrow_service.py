@@ -3,18 +3,20 @@
 # Detailed Skeleton - Requires implementation of ethereum_service interactions.
 #
 # REVISIONS:
+# - 2025-05-03 (Gemini Rev 11): Standardized internal project imports to use absolute paths
+#                                starting with 'backend.' to resolve conflicting model errors.
 # - 2025-04-11 (Gemini Rev 10): Removed NotImplementedError in create_escrow and uncommented
-#                              placeholder call to ethereum_service.create_eth_multisig_contract
-#                              to resolve "Service not implemented" error during testing.
+#                                placeholder call to ethereum_service.create_eth_multisig_contract
+#                                to resolve "Service not implemented" error during testing.
 # - 2025-04-09 (The Void): v1.24.0 - Detailed Skeleton Implementation.
-#    - Added logic structure mirroring monero_escrow_service.
-#    - Included fetching models, state checks, calculations, model updates.
-#    - Added specific comments and NotImplementedError where ethereum_service calls
-#      and ledger updates are required.
-#    - Maintained correct function names for dispatcher compatibility.
+#   - Added logic structure mirroring monero_escrow_service.
+#   - Included fetching models, state checks, calculations, model updates.
+#   - Added specific comments and NotImplementedError where ethereum_service calls
+#     and ledger updates are required.
+#   - Maintained correct function names for dispatcher compatibility.
 # - 2025-04-09 (The Void): v1.23.0 - Renamed functions to align with common_escrow_utils dispatcher.
-#    - Renamed `create_escrow_for_order` to `create_escrow`.
-#    - Renamed `broadcast_release_transaction` to `broadcast_release`.
+#   - Renamed `create_escrow_for_order` to `create_escrow`.
+#   - Renamed `broadcast_release_transaction` to `broadcast_release`.
 # - (Original version provided by user contained placeholders)
 
 import logging
@@ -28,7 +30,7 @@ from django.db import transaction, IntegrityError
 from django.conf import settings
 from django.core.exceptions import ValidationError as DjangoValidationError, ObjectDoesNotExist
 
-# --- Service & Utility Imports ---
+# --- Service & Utility Imports (Standardized) ---
 from .common_escrow_utils import (
     get_market_user, _get_currency_precision, _get_atomic_to_standard_converter,
     _convert_atomic_to_standard, _get_market_fee_percentage, _get_withdrawal_address,
@@ -39,24 +41,24 @@ from .common_escrow_utils import (
     LEDGER_TX_DISPUTE_RESOLUTION_VENDOR, LEDGER_TX_MARKET_FEE,
     ATTR_ETH_MULTISIG_OWNER_ADDRESS, ATTR_ETH_WITHDRAWAL_ADDRESS, ATTR_ETH_ESCROW_ADDRESS, # ETH specific attrs
 )
-# Import the specific crypto service for Ethereum
+# Import the specific crypto service for Ethereum (Relative import is OK here)
 from . import ethereum_service # Assumed to exist and implement CryptoServiceInterface methods for ETH
-# Import other necessary services
-from ledger import services as ledger_service
-from ledger.services import InsufficientFundsError, InvalidLedgerOperationError
-from notifications.services import create_notification
-from store.exceptions import EscrowError, CryptoProcessingError
-from ledger.exceptions import LedgerError
-from notifications.exceptions import NotificationError
+# Import other necessary services (Standardized to use backend.*)
+from backend.ledger import services as ledger_service
+from backend.ledger.services import InsufficientFundsError, InvalidLedgerOperationError # Assuming these are exposed in services or exceptions
+from backend.notifications.services import create_notification # FIXED Import Path
+from backend.store.exceptions import EscrowError, CryptoProcessingError # FIXED Import Path
+from backend.ledger.exceptions import LedgerError # FIXED Import Path
+from backend.notifications.exceptions import NotificationError # FIXED Import Path
 
-# --- Model Imports ---
-from store.models import Order, CryptoPayment, GlobalSettings, Product, OrderStatus as OrderStatusChoices
+# --- Model Imports (Standardized) ---
+from backend.store.models import Order, CryptoPayment, GlobalSettings, Product, OrderStatus as OrderStatusChoices # FIXED Import Path
 User = get_user_model()
 
 # --- Type Hinting ---
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
-    from store.models import GlobalSettings as GlobalSettingsModel, Product as ProductModel
+    from backend.store.models import GlobalSettings as GlobalSettingsModel, Product as ProductModel # FIXED Import Path
     from django.contrib.auth.models import AbstractUser
     UserModel = AbstractUser
 
@@ -163,9 +165,9 @@ def create_escrow(order: 'Order') -> None:
         # It MUST return at least the 'contract_address'. It might also return tx_hash, abi, etc.
         # --- UNCOMMENTED PLACEHOLDER CALL ---
         contract_details = ethereum_service.create_eth_multisig_contract(
-             owner_addresses=participant_addresses,
-             threshold=threshold,
-             order_id=str(order.id) # Pass order ID for linking/logging if needed
+            owner_addresses=participant_addresses,
+            threshold=threshold,
+            order_id=str(order.id) # Pass order ID for linking/logging if needed
         )
         # --- REMOVED raise NotImplementedError ---
         # raise NotImplementedError("ethereum_service.create_eth_multisig_contract is not implemented.")
@@ -186,8 +188,8 @@ def create_escrow(order: 'Order') -> None:
         logger.info(f"{log_prefix}: Generated ETH Escrow Address (Multisig Contract): {escrow_address}")
 
     except NotImplementedError: # Keep this catch block in case the ethereum_service function itself raises it
-         logger.error(f"{log_prefix}: Required ethereum_service function is not implemented.")
-         raise CryptoProcessingError("ETH escrow creation failed: Service function not implemented.")
+        logger.error(f"{log_prefix}: Required ethereum_service function is not implemented.")
+        raise CryptoProcessingError("ETH escrow creation failed: Service function not implemented.")
     except (AttributeError, ValueError, KeyError, CryptoProcessingError) as crypto_err:
         logger.error(f"{log_prefix}: Failed to generate ETH escrow details: {crypto_err}", exc_info=True)
         raise CryptoProcessingError(f"Failed to generate ETH escrow details: {crypto_err}") from crypto_err
@@ -252,7 +254,8 @@ def create_escrow(order: 'Order') -> None:
 
     except Exception as e:
         raise EscrowError("Failed to save order updates during ETH escrow creation.") from e
-    
+
+
 @transaction.atomic
 def check_and_confirm_payment(payment_id: Any) -> None:
     """
@@ -345,14 +348,14 @@ def check_and_confirm_payment(payment_id: Any) -> None:
         # check_result: Optional[Tuple[bool, Decimal, int, Optional[str]]] = scan_function(payment)
         raise NotImplementedError(f"ethereum_service.{scan_function_name} is not implemented.")
 
-        if check_result:
-            is_crypto_confirmed, received_atomic, confirmations, txid_found = check_result
-            if txid_found and not external_txid: # Store TX hash if found
-                external_txid = txid_found
-            logger.debug(f"{log_prefix}: Scan Result - Confirmed={is_crypto_confirmed}, Rcvd{NATIVE_UNIT}={received_atomic}, Confs={confirmations}, TX={external_txid}")
-        else:
-            is_crypto_confirmed = False
-            logger.debug(f"{log_prefix}: Scan Result - No confirmed ETH transaction found yet for address {payment.payment_address}.")
+        # if check_result: # UNCOMMENT when implemented
+        #     is_crypto_confirmed, received_atomic, confirmations, txid_found = check_result
+        #     if txid_found and not external_txid: # Store TX hash if found
+        #         external_txid = txid_found
+        #     logger.debug(f"{log_prefix}: Scan Result - Confirmed={is_crypto_confirmed}, Rcvd{NATIVE_UNIT}={received_atomic}, Confs={confirmations}, TX={external_txid}")
+        # else:
+        #     is_crypto_confirmed = False
+        #     logger.debug(f"{log_prefix}: Scan Result - No confirmed ETH transaction found yet for address {payment.payment_address}.")
 
     except NotImplementedError:
          logger.error(f"{log_prefix}: Required ethereum_service function is not implemented.")
@@ -377,7 +380,7 @@ def check_and_confirm_payment(payment_id: Any) -> None:
         if not isinstance(payment.expected_amount_native, Decimal):
             raise ValueError(f"Expected amount ({NATIVE_UNIT}) on Payment {payment.id} is not Decimal")
         if not isinstance(received_atomic, Decimal):
-             received_atomic = Decimal(str(received_atomic))
+            received_atomic = Decimal(str(received_atomic))
 
         expected_atomic = payment.expected_amount_native
         is_amount_sufficient = received_atomic >= expected_atomic
@@ -462,11 +465,11 @@ def check_and_confirm_payment(payment_id: Any) -> None:
         # Credit deposit fee to market user
         if deposit_fee_eth > Decimal('0.0'):
             # ledger_service.credit_funds(market_user, CURRENCY_CODE, deposit_fee_eth, LEDGER_TX_MARKET_FEE, related_order=order, notes=f"Deposit Fee Order {order.id}")
-             pass # Placeholder
+            pass # Placeholder
         # Credit net deposit to buyer
         if net_deposit_eth > Decimal('0.0'):
             # ledger_service.credit_funds(buyer, CURRENCY_CODE, net_deposit_eth, LEDGER_TX_DEPOSIT, external_txid=external_txid, related_order=order, notes=ledger_deposit_notes)
-             pass # Placeholder
+            pass # Placeholder
         elif received_eth > Decimal('0.0'): # Handle case where fee consumes everything
             logger.warning(f"{log_prefix}: Entire deposit {received_eth} ETH consumed by fee {deposit_fee_eth}. Buyer receives 0 net credit.")
             # ledger_service.credit_funds(buyer, CURRENCY_CODE, Decimal('0.0'), LEDGER_TX_DEPOSIT, external_txid=external_txid, related_order=order, notes=f"{ledger_deposit_notes} (Net Zero after fee)")
@@ -547,6 +550,7 @@ def check_and_confirm_payment(payment_id: Any) -> None:
 # --- End of Part 1 of Skeleton ---
 # <<< Part 2: Continues from ethereum_escrow_service.py Skeleton Part 1 >>>
 # REVISIONS:
+# - 2025-05-03 (Gemini Rev 11): Standardized internal project imports to use absolute paths.
 # - 2025-04-09 (The Void): v1.24.0 - Detailed Skeleton Implementation.
 #   - Added detailed structure to mark_order_shipped, sign_order_release, _prepare_eth_release.
 #   - Pinpointed ethereum_service/ledger calls needed.
@@ -695,7 +699,7 @@ def mark_order_shipped(order: 'Order', vendor: 'UserModel', tracking_info: Optio
         else:
             logger.error(f"{log_prefix}: Cannot send shipped notification: Buyer missing on order.")
     except NotificationError as notify_e:
-        logger.error(f"{log_prefix}: Failed to create shipped notification for Buyer {getattr(order_locked.buyer,'id','N/A')}: {notify_e}", exc_info=True)
+         logger.error(f"{log_prefix}: Failed to create shipped notification for Buyer {getattr(order_locked.buyer,'id','N/A')}: {notify_e}", exc_info=True)
     except Exception as notify_e:
         logger.error(f"{log_prefix}: Unexpected error creating shipped notification for Buyer {getattr(order_locked.buyer,'id','N/A')}: {notify_e}", exc_info=True)
 
@@ -810,15 +814,15 @@ def sign_order_release(order: 'Order', user: 'UserModel', private_key_info: str)
         # )
         raise NotImplementedError("ethereum_service.sign_eth_multisig_tx is not implemented.")
 
-        if not isinstance(sign_result, dict):
-            raise CryptoProcessingError("ETH signing function returned invalid result type.")
+        # if not isinstance(sign_result, dict): # UNCOMMENT when implemented
+        #     raise CryptoProcessingError("ETH signing function returned invalid result type.")
 
-        signature_data = sign_result.get('signature') # The actual signature generated
-        is_complete = sign_result.get('is_complete', False) # Did service determine completion?
-        # updated_metadata_data = sign_result.get('updated_tx_data') # Optional: if tx data itself changed
+        # signature_data = sign_result.get('signature') # The actual signature generated
+        # is_complete = sign_result.get('is_complete', False) # Did service determine completion?
+        # # updated_metadata_data = sign_result.get('updated_tx_data') # Optional: if tx data itself changed
 
-        if not signature_data: # Basic check
-             raise CryptoProcessingError("ETH signing function did not return valid signature data.")
+        # if not signature_data: # Basic check
+        #      raise CryptoProcessingError("ETH signing function did not return valid signature data.")
 
         # Store the signature keyed by the user's ETH address
         current_sigs[user_eth_address] = signature_data # Store the signature
@@ -1003,8 +1007,8 @@ def _prepare_eth_release(order: 'Order') -> Dict[str, Any]:
         raise NotImplementedError(f"ethereum_service.{prepare_func_name} is not implemented.")
 
 
-        if not prepared_tx_data or not isinstance(prepared_tx_data, dict):
-            raise CryptoProcessingError(f"Failed to get valid prepared ETH transaction parameters (Result: '{prepared_tx_data}').")
+        # if not prepared_tx_data or not isinstance(prepared_tx_data, dict): # UNCOMMENT when implemented
+        #     raise CryptoProcessingError(f"Failed to get valid prepared ETH transaction parameters (Result: '{prepared_tx_data}').")
 
         logger.info(f"{log_prefix}: Successfully prepared ETH transaction parameters.")
 
@@ -1033,6 +1037,7 @@ def _prepare_eth_release(order: 'Order') -> Dict[str, Any]:
 # --- End of Part 2 of Skeleton ---
 # <<< Part 3: Continues from ethereum_escrow_service.py Skeleton Part 2 >>>
 # REVISIONS:
+# - 2025-05-03 (Gemini Rev 11): Standardized internal project imports to use absolute paths.
 # - 2025-04-09 (The Void): v1.24.0 - Detailed Skeleton Implementation.
 #   - Added detailed structure to broadcast_release, resolve_dispute, get_unsigned_release_tx.
 #   - Pinpointed ethereum_service/ledger calls needed.
@@ -1178,10 +1183,10 @@ def broadcast_release(order_id: Any) -> bool:
         raise NotImplementedError(f"ethereum_service.{broadcast_func_name} is not implemented.")
 
 
-        # Basic check on the returned transaction hash
-        broadcast_success = bool(tx_hash) and isinstance(tx_hash, str) and tx_hash.startswith('0x') and len(tx_hash) == 66
-        if not broadcast_success:
-            raise CryptoProcessingError(f"Ethereum broadcast failed for Order {order_locked.id} (service returned invalid tx_hash: '{tx_hash}').")
+        # Basic check on the returned transaction hash - UNCOMMENT when implemented
+        # broadcast_success = bool(tx_hash) and isinstance(tx_hash, str) and tx_hash.startswith('0x') and len(tx_hash) == 66
+        # if not broadcast_success:
+        #     raise CryptoProcessingError(f"Ethereum broadcast failed for Order {order_locked.id} (service returned invalid tx_hash: '{tx_hash}').")
 
         logger.info(f"{log_prefix}: ETH Broadcast successful. Transaction Hash: {tx_hash}")
 
@@ -1229,7 +1234,7 @@ def broadcast_release(order_id: Any) -> bool:
             #     transaction_type=LEDGER_TX_ESCROW_RELEASE_VENDOR, related_order=order_locked,
             #     external_txid=tx_hash, notes=f"{ledger_notes_base} Vendor Payout"
             # )
-             pass # Placeholder
+            pass # Placeholder
         if fee_eth > Decimal('0.0'):
             # ledger_service.credit_funds(
             #     user=market_user, currency=CURRENCY_CODE, amount=fee_eth,
@@ -1400,13 +1405,13 @@ def resolve_dispute(
         sum_check = buyer_share_eth + vendor_share_eth
         tolerance = Decimal(f'1e-{prec-1}')
         if abs(sum_check - total_escrowed_eth) > tolerance:
-            logger.warning(f"{log_prefix}: Dispute Share Calc: Buyer({buyer_share_eth}) + Vendor({vendor_share_eth}) = {sum_check} != Total({total_escrowed_eth}). Dust likely. Adjust logic if needed.")
-            # Depending on policy, assign dust to market, vendor, or burn? For now, proceed.
+             logger.warning(f"{log_prefix}: Dispute Share Calc: Buyer({buyer_share_eth}) + Vendor({vendor_share_eth}) = {sum_check} != Total({total_escrowed_eth}). Dust likely. Adjust logic if needed.")
+             # Depending on policy, assign dust to market, vendor, or burn? For now, proceed.
 
         logger.info(f"{log_prefix}: Calculated ETH Shares - Total: {total_escrowed_eth}, Buyer: {buyer_share_eth}, Vendor: {vendor_share_eth}.")
 
     except (InvalidOperation, ValueError, TypeError, EscrowError) as e:
-        # Catch conversion errors too
+         # Catch conversion errors too
         raise ValueError("Failed to calculate ETH dispute payout shares.") from e
 
     # --- Get Payout Addresses ---
@@ -1456,10 +1461,10 @@ def resolve_dispute(
         # )
         raise NotImplementedError(f"ethereum_service.{broadcast_func_name} is not implemented.")
 
-        # Basic check on the returned transaction hash
-        broadcast_success = bool(tx_hash) and isinstance(tx_hash, str) and tx_hash.startswith('0x') and len(tx_hash) == 66
-        if not broadcast_success:
-            raise CryptoProcessingError(f"Ethereum dispute broadcast failed for Order {order_locked.id} (service returned invalid tx_hash: '{tx_hash}').")
+        # Basic check on the returned transaction hash - UNCOMMENT when implemented
+        # broadcast_success = bool(tx_hash) and isinstance(tx_hash, str) and tx_hash.startswith('0x') and len(tx_hash) == 66
+        # if not broadcast_success:
+        #     raise CryptoProcessingError(f"Ethereum dispute broadcast failed for Order {order_locked.id} (service returned invalid tx_hash: '{tx_hash}').")
 
         logger.info(f"{log_prefix}: ETH Dispute transaction broadcast successful. TX: {tx_hash}")
 
@@ -1516,7 +1521,7 @@ def resolve_dispute(
             #     related_order=order_locked, external_txid=tx_hash,
             #     notes=f"{notes_base} Buyer Share ({release_to_buyer_percent}%)"
             # )
-             pass # Placeholder
+            pass # Placeholder
         if vendor_share_eth > Decimal('0.0'):
             # ledger_service.credit_funds(
             #     user=vendor, currency=CURRENCY_CODE, amount=vendor_share_eth,
@@ -1524,7 +1529,7 @@ def resolve_dispute(
             #     related_order=order_locked, external_txid=tx_hash,
             #     notes=f"{notes_base} Vendor Share ({release_to_vendor_percent}%)"
             # )
-             pass # Placeholder
+            pass # Placeholder
         # Note: Market fee during dispute resolution? Depends on policy. Add if needed.
 
         # Raise if ledger is placeholder
@@ -1575,8 +1580,8 @@ def resolve_dispute(
     except Exception as final_e:
         logger.critical(f"{log_prefix}: CRITICAL UNEXPECTED ERROR: ETH Dispute Broadcast OK (TX: {tx_hash}) but unexpected error during final update. Error: {final_e}. MANUAL INTERVENTION REQUIRED!", exc_info=True)
         raise PostBroadcastUpdateError(
-             message=f"Unexpected post-broadcast error for ETH dispute resolution Order {order.id}",
-             original_exception=final_e, tx_hash=tx_hash
+            message=f"Unexpected post-broadcast error for ETH dispute resolution Order {order.id}",
+            original_exception=final_e, tx_hash=tx_hash
         ) from final_e
 
 
@@ -1650,8 +1655,8 @@ def get_unsigned_release_tx(order: 'Order', user: 'UserModel') -> Optional[Dict[
     user_eth_address = getattr(user, ATTR_ETH_MULTISIG_OWNER_ADDRESS, None)
     if 'signatures' in release_metadata and isinstance(release_metadata['signatures'], dict):
          if user_eth_address and user_eth_address in release_metadata['signatures']:
-             already_signed = True
-             logger.info(f"{log_prefix}: User {user.username} ({user_eth_address}) has already signed this ETH release according to metadata.")
+              already_signed = True
+              logger.info(f"{log_prefix}: User {user.username} ({user_eth_address}) has already signed this ETH release according to metadata.")
 
     logger.info(f"{log_prefix}: Returning prepared ETH transaction data for signing. Already Signed: {already_signed}")
 

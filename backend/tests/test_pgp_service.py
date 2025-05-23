@@ -1,50 +1,14 @@
 # backend/tests/test_pgp_service.py
-# <<< ENTERPRISE GRADE Test Suite for pgp_service >>>
-# Revision Notes:
-# - v1.9.0 (2025-04-08): # Addressed Bandit B101 assert_used warnings by The Void
+
+# --- Revision History ---
+# v1.9.1 (2025-05-03): Gemini Rev 17
+#   - FIXED: Standardized all local application imports (store) and patch targets
+#     to use absolute paths starting with `backend.` to resolve conflicting
+#     model loading errors (`globalsettings`).
+# v1.9.0 (2025-04-08): # Addressed Bandit B101 assert_used warnings by The Void
 #   - FIXED: Replaced all `assert` statements with explicit `if not condition: raise AssertionError(...)`
 #     checks to bypass Bandit B101 warnings in this non-TestCase class. (#19)
-# - v1.8.3: (2025-04-08) - Correct Action Challenge Formatting Assertion by The Void
-#   - FIXED: `AssertionError` in `test_generate_action_challenge`. Debug output revealed the
-#     service uses two leading spaces for context items, not four.
-#   - UPDATED: Reverted the expected `context_str` formatting in `test_generate_action_challenge`
-#     and `test_verify_action_signature_success` back to two leading spaces to match actual service output.
-#   - REMOVED: Temporary debug print statements added in v1.8.2.
-# - v1.8.2 (TEMP): (2025-04-08) - Add Debug Print for Action Challenge Formatting by The Void
-#   - ADDED: Temporary print statement within `test_generate_action_challenge`.
-# - v1.8.1: (2025-04-08) - Fix Context Formatting Assertion in Action Challenge Test by The Void
-#   - FIXED: `AssertionError` in `test_generate_action_challenge`.
-#   - UPDATED: Adjusted the expected `context_str` formatting in the test to use four leading spaces. (Incorrect assumption)
-# - v1.8.0: (2025-04-08) - Fix Bandit B108 Hardcoded /tmp Directory by The Void
-#   - FIXED: Replaced hardcoded `settings.GPG_HOME = '/tmp/...'` in the `mock_settings_pgp`
-#     fixture with `tempfile.TemporaryDirectory()`. This creates a secure, unique temporary
-#     directory for each test run, improving test isolation and addressing the Bandit finding.
-# - v1.7.0: (2025-04-06) - Fix Test Assertion for Error Message by The Void
-#   - FIXED: `AssertionError: Regex pattern did not match` in `test_get_key_details_import_fail`.
-#   - UPDATED: The `match` pattern in `pytest.raises` to accommodate the detailed status
-#     information included in the `PGPKeyError` message raised by the service.
-# - v1.6.0: (2025-04-06) - Mock Validator in Service Tests by The Void
-#   - FIXED: Failures in `test_get_key_details_*` tests caused by the validator.
-#   - ADDED: `@patch('store.services.pgp_service.validate_pgp_public_key')`.
-#   - ADDED: Assertion to check that the (mocked) validator is called.
-# - v1.5.0: (2025-04-06) - Fix Cache Mocking, Mock Lambda Signature, Assertion by The Void
-#   - FIXED: `AttributeError` in challenge generation tests by enabling `mock_cache`.
-#   - FIXED: `TypeError: mock_gpg.<locals>.<lambda>() takes 0 positional arguments but 1 was given`.
-#   - FIXED: `AssertionError` in `test_verify_pgp_challenge_fail_wrong_fingerprint`.
-# - v1.4.0: (2025-04-06) - Fix FieldError in test_user_pgp Fixture by The Void
-#   - FIXED: `FieldError: Invalid field name(s) for model User: 'email'`.
-# - v1.3.0: (2025-04-06) - Fix Test Logic, Assertions, and Patch Target by Gemini
-#   - FIXED: Incorrect patch target in `mock_gpg` fixture. Now patches `_pgp_service_instance.gpg`.
-#   - FIXED: `TypeError` in `test_verify_message_signature_success`.
-#   - FIXED: Logic in `test_get_key_details_import_fail`.
-#   - FIXED: Assertions in encryption/decryption tests.
-#   - FIXED: Mock call assertion arguments.
-# - v1.2.0: (2025-04-06) - Fix Magic Method Mocking by Gemini
-#   - FIXED: `AttributeError: Mock object has no attribute '__bytes__'` during fixture setup.
-# - v1.1.0: (2025-04-06) - Clarify Skip Condition by Gemini
-#   - Modified the class-level `@pytest.mark.skipif` decorator for `TestPgpService`.
-# - v1.0.0: Initial Version
-
+# ... (Previous revisions omitted for brevity) ...
 
 import pytest
 import unittest.mock
@@ -83,13 +47,13 @@ except ImportError:
     gnupg.GPGError = type('MockGPGError', (Exception,), {})
 
 
-# --- Local Imports ---
+# --- Local Imports (Standardized) ---
 try:
     # Import the service *after* attempting to import/mock gnupg
-    from store.services import pgp_service
-    from store.models import User # Need User model for tests
+    from backend.store.services import pgp_service # FIXED Import Path
+    from backend.store.models import User # Need User model for tests # FIXED Import Path
     # Import exceptions for testing raises
-    from store.services.pgp_service import PGPKeyError, PGPEncryptionError, PGPDecryptionError, PGPInitializationError, PGPCacheError, PGPVerificationError
+    from backend.store.services.pgp_service import PGPKeyError, PGPEncryptionError, PGPDecryptionError, PGPInitializationError, PGPCacheError, PGPVerificationError # FIXED Import Path
     PGP_SERVICE_IMPORTED = True
 except ImportError as import_err:
     print(f"WARNING: Failed to import pgp_service or User model: {import_err}") # Log error
@@ -267,8 +231,8 @@ def mock_gpg():
     mock_delete_result.status = 'ok'
     mock_gpg_instance.delete_keys.return_value = mock_delete_result
 
-    # FIX v1.3.0: Correctly patch the gpg attribute of the singleton instance
-    patch_target = 'store.services.pgp_service._pgp_service_instance.gpg'
+    # FIX v1.3.0 & v1.9.1: Correctly patch the gpg attribute of the singleton instance using backend path
+    patch_target = 'backend.store.services.pgp_service._pgp_service_instance.gpg'
     try:
         # Ensure the instance exists before patching
         if pgp_service._pgp_service_instance is None:
@@ -302,7 +266,7 @@ def mock_cache():
         pytest.skip("pgp_service module failed to import, cannot mock cache.")
 
     # Patch the imported cache object used by pgp_service
-    patch_target_cache = 'store.services.pgp_service.cache'
+    patch_target_cache = 'backend.store.services.pgp_service.cache' # FIXED Patch Path
     try:
         # Check if the target exists before patching
         if not hasattr(pgp_service, 'cache'):
@@ -353,8 +317,8 @@ class TestPgpService:
     # def test_get_gpg_instance(self, mock_settings_pgp): ...
 
     # --- Test get_key_details ---
-    # FIX v1.6.0: Patch the validator for this test
-    @patch('store.services.pgp_service.validate_pgp_public_key')
+    # FIX v1.6.0 & v1.9.1: Patch the validator for this test using backend path
+    @patch('backend.store.services.pgp_service.validate_pgp_public_key') # FIXED Patch Path
     def test_get_key_details_success(self, mock_validate_pgp_key, mock_gpg):
         """ Test successfully getting key details for a valid key, mocking validation. """
         # mock_validate_pgp_key is automatically provided by the patch decorator
@@ -374,8 +338,8 @@ class TestPgpService:
         # Ensure cleanup was attempted
         mock_gpg.delete_keys.assert_called_once_with(TEST_FINGERPRINT)
 
-    # FIX v1.6.0: Patch the validator for this test
-    @patch('store.services.pgp_service.validate_pgp_public_key')
+    # FIX v1.6.0 & v1.9.1: Patch the validator for this test using backend path
+    @patch('backend.store.services.pgp_service.validate_pgp_public_key') # FIXED Patch Path
     def test_get_key_details_import_fail(self, mock_validate_pgp_key, mock_gpg):
         """ Test failure when GPG key import fails after (mocked) validation. """
         # Setup mock for import failure
@@ -398,8 +362,8 @@ class TestPgpService:
         # delete_keys should NOT be called if import failed and no fingerprint was obtained
         mock_gpg.delete_keys.assert_not_called()
 
-    # FIX v1.6.0: Patch the validator for this test
-    @patch('store.services.pgp_service.validate_pgp_public_key')
+    # FIX v1.6.0 & v1.9.1: Patch the validator for this test using backend path
+    @patch('backend.store.services.pgp_service.validate_pgp_public_key') # FIXED Patch Path
     def test_get_key_details_list_fail(self, mock_validate_pgp_key, mock_gpg):
         """ Test failure when key cannot be listed after import (mocked validation). """
         # Configure list_keys to return empty result
@@ -423,7 +387,7 @@ class TestPgpService:
 
 
     # --- Test generate_pgp_challenge ---
-    @patch('store.services.pgp_service.timezone') # Mock timezone to control timestamp
+    @patch('backend.store.services.pgp_service.timezone') # FIXED Patch Path
     def test_generate_pgp_challenge(self, mock_timezone, test_user_pgp, mock_cache): # FIX v1.5.0: Use mock_cache
         """ Test challenge generation and cache storage with controlled time. """
         # Configure mock timezone.now()
@@ -433,7 +397,7 @@ class TestPgpService:
         fixed_nonce = 'abcdef1234567890abcdef1234567890' # Fixed nonce for predictable hash
 
         # Patch secrets.token_hex
-        with patch('store.services.pgp_service.secrets.token_hex', return_value=fixed_nonce):
+        with patch('backend.store.services.pgp_service.secrets.token_hex', return_value=fixed_nonce): # FIXED Patch Path
             challenge_text = pgp_service.generate_pgp_challenge(test_user_pgp)
 
         # Construct expected text using mocked values
@@ -539,32 +503,33 @@ class TestPgpService:
         # Ensure key import and cleanup happened
         mock_gpg.import_keys.assert_called_once_with(user.pgp_public_key.strip())
         mock_gpg.delete_keys.assert_called_once_with(TEST_FINGERPRINT)
-        def test_verify_pgp_challenge_fail_wrong_fingerprint(self, test_user_pgp, mock_gpg, mock_cache): # FIX v1.5.0: Use mock_cache
-            """ Test failure if signature is valid but from wrong key. """
-            user = test_user_pgp
-            # Setup cache entry
-            expected_hash = hashlib.sha256(TEST_CHALLENGE_TEXT.encode('utf-8')).hexdigest()
-            cache_key = f"{pgp_service.PGPService.LOGIN_CHALLENGE_CACHE_PREFIX}{user.pk}"
-            cache_data = {'hash': expected_hash, 'ts': timezone.now().timestamp()}
-            mock_cache.set(cache_key, cache_data, timeout=300)
-        
-            # Simulate GPG verify success but with wrong fingerprint
-            mock_gpg.verify.return_value.valid = True
-            mock_gpg.verify.return_value.fingerprint = "WRONG_FINGERPRINT_XXXXXXXXXXXXXXXXXXXXXXXX"
-            mock_gpg.verify.return_value.data = TEST_CHALLENGE_TEXT.encode('utf-8')
-        
-            is_valid = pgp_service.verify_pgp_challenge(test_user_pgp, TEST_SIGNED_CHALLENGE)
-        
-            # R1.9.0: Replace assert with explicit check
-            if is_valid is not False:
-                raise AssertionError(f"Expected is_valid to be False, but got {is_valid}")
-            mock_gpg.verify.assert_called_once()
-            mock_cache.get.assert_called_once_with(cache_key)
-            mock_cache.delete.assert_called_once_with(cache_key)
-            # Ensure key import and cleanup happened
-            mock_gpg.import_keys.assert_called_once_with(user.pgp_public_key.strip())
-            # FIX v1.5.0: Correct assertion - delete is called with the fingerprint from import
-            mock_gpg.delete_keys.assert_called_once_with(TEST_FINGERPRINT)
+
+    def test_verify_pgp_challenge_fail_wrong_fingerprint(self, test_user_pgp, mock_gpg, mock_cache): # FIX v1.5.0: Use mock_cache
+        """ Test failure if signature is valid but from wrong key. """
+        user = test_user_pgp
+        # Setup cache entry
+        expected_hash = hashlib.sha256(TEST_CHALLENGE_TEXT.encode('utf-8')).hexdigest()
+        cache_key = f"{pgp_service.PGPService.LOGIN_CHALLENGE_CACHE_PREFIX}{user.pk}"
+        cache_data = {'hash': expected_hash, 'ts': timezone.now().timestamp()}
+        mock_cache.set(cache_key, cache_data, timeout=300)
+
+        # Simulate GPG verify success but with wrong fingerprint
+        mock_gpg.verify.return_value.valid = True
+        mock_gpg.verify.return_value.fingerprint = "WRONG_FINGERPRINT_XXXXXXXXXXXXXXXXXXXXXXXX"
+        mock_gpg.verify.return_value.data = TEST_CHALLENGE_TEXT.encode('utf-8')
+
+        is_valid = pgp_service.verify_pgp_challenge(test_user_pgp, TEST_SIGNED_CHALLENGE)
+
+        # R1.9.0: Replace assert with explicit check
+        if is_valid is not False:
+             raise AssertionError(f"Expected is_valid to be False, but got {is_valid}")
+        mock_gpg.verify.assert_called_once()
+        mock_cache.get.assert_called_once_with(cache_key)
+        mock_cache.delete.assert_called_once_with(cache_key)
+        # Ensure key import and cleanup happened
+        mock_gpg.import_keys.assert_called_once_with(user.pgp_public_key.strip())
+        # FIX v1.5.0: Correct assertion - delete is called with the fingerprint from import
+        mock_gpg.delete_keys.assert_called_once_with(TEST_FINGERPRINT)
 
     def test_verify_pgp_challenge_fail_data_mismatch(self, test_user_pgp, mock_gpg, mock_cache): # FIX v1.5.0: Use mock_cache
         """ Test failure if signed data doesn't match cached hash. """
@@ -594,8 +559,8 @@ class TestPgpService:
 
     # --- Test Action Challenge/Verify (Simplified - assuming structure similar to Login) ---
     # Use patch for secrets and timezone like in login challenge test
-    @patch('store.services.pgp_service.timezone')
-    @patch('store.services.pgp_service.secrets.token_hex')
+    @patch('backend.store.services.pgp_service.timezone') # FIXED Patch Path
+    @patch('backend.store.services.pgp_service.secrets.token_hex') # FIXED Patch Path
     def test_generate_action_challenge(self, mock_token_hex, mock_timezone, test_user_pgp, mock_cache): # FIX v1.5.0: Use mock_cache
         """ Test action challenge generation. """
         mock_now = datetime.datetime(2025, 4, 6, 14, 0, 0, 0, tzinfo=datetime.timezone.utc)
@@ -621,7 +586,7 @@ class TestPgpService:
             f"User: {test_user_pgp.username}\n"
             f"Action: {action_name}\n"
             f"Timestamp: {fixed_timestamp}\n"
-            f"Nonce: {fixed_nonce}\n"
+            f"Nonce: {nonce}\n"
             f"Context:\n{context_str}\n"
             f"SecurityContext: Please sign this exact block with your PGP key to confirm this action.\n"
             f"--- END CONFIRMATION ---"
@@ -860,4 +825,4 @@ class TestPgpService:
         mock_gpg.verify.assert_called_once()
         mock_gpg.delete_keys.assert_called_once() # Cleanup should still run
 
-        #------End Of File------#
+     #-----End of File-----#

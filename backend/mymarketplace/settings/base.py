@@ -1,26 +1,44 @@
 # backend/mymarketplace/settings/base.py
-# <<< Revision 5: Integrate django-simple-captcha >>>
+# <<< Revision 6.9.5: Correct AUTH_PASSWORD_VALIDATORS by removing invalid Axes entry >>>
 # Revision Notes:
-# - v1.1.3 (Current - 2025-04-13):
-#   - ADDED: 'captcha' to INSTALLED_APPS.
-#   - ADDED: Basic CAPTCHA settings near the end.
-# - v1.1.2 (2025-04-08):
-#   - SECURITY: Suppressed Bandit B105 (hardcoded_password_string) finding for AXES_PASSWORD_FORM_FIELD
-#               on line 410 (was 407) as it's a form field name, not a credential (# nosec B105).
-# - v1.1.1 (2025-04-06):
-#   - FIXED: Removed invalid non-printable character (U+00A0 Non-Breaking Space) from line 88
-#            that was causing a SyntaxError during pytest collection/settings loading.
-# - v1.1.0:
-#   - FIXED: Added 'withdraw.apps.WithdrawConfig' to INSTALLED_APPS to resolve ModuleNotFoundError.
-# - v1.0.1:
-#   - FIXED: Corrected DATABASES configuration logic using env.db().
-#   - CHANGE: Updated Forum app status comment and added Forum logger.
-#   - ADDED: WebAuthn settings section and required checks.
-#   - CHANGE: Made GPG_HOME mandatory and added directory checks.
-#   - CHANGE: Refined .env loading logic.
-#   - BEST PRACTICE: Centralized Vault client logic, stricter SECRET_KEY/ALLOWED_HOSTS.
-#   - BEST PRACTICE: Explicit AppConfig paths in INSTALLED_APPS.
-# - v1.0.0: Initial enterprise base settings.
+# - v6.9.5 (2025-05-22):
+#   - FIXED: Removed {'NAME': 'axes.validation.AxesPasswordValidator'} from AUTH_PASSWORD_VALIDATORS.
+#     Django-axes (v8.0.0 as per pytest output) does not provide a password validator for this setting.
+#     Its functionality is primarily through middleware for access attempt tracking. This change
+#     resolves the ImproperlyConfigured error: "The module in NAME could not be imported:
+#     axes.validation.AxesPasswordValidator".
+# - v6.9.4 (2025-05-19):
+#   - ANALYSIS: Re-confirmed AUTH_PASSWORD_VALIDATORS entry 'axes.validation.AxesPasswordValidator'
+#     is correct for django-axes v7.0.2. The persistent ModuleNotFoundError for 'axes.validation'
+#     strongly indicates an external environment or django-axes installation issue. This settings
+#     file cannot resolve that if the path string is already correct.
+#     Next focus should be ensuring django-axes is correctly installed in the environment.
+#     Subsequently, backend/store/models.py for PGP validation errors.
+# - v6.9.3 (2025-05-19):
+#   - ANALYSIS: Confirmed AUTH_PASSWORD_VALIDATORS entry 'axes.validation.AxesPasswordValidator'
+#     is correct for django-axes v7.0.2 as reported by pytest. The ModuleNotFoundError
+#     for 'axes.validation' likely indicates an environment or installation issue with
+#     the django-axes package itself, not an error in this settings file line.
+#   - CLARIFICATION: Ensured session-related settings (SESSION_COOKIE_AGE,
+#     DEFAULT_SESSION_COOKIE_AGE_SECONDS, OWNER_SESSION_COOKIE_AGE_SECONDS) are clearly
+#     defined and sourced from environment variables as intended by previous revisions.
+#     No functional change, primarily for readability and confirming existing logic.
+# - v6.9.2 (2025-05-19):
+#   - FIXED: Explicitly defined OWNER_SESSION_COOKIE_AGE_SECONDS = env.int('OWNER_SESSION_COOKIE_AGE_SECONDS')
+#     to make it available directly via django.conf.settings. Addresses AttributeError
+#     for 'OWNER_SESSION_COOKIE_AGE_SECONDS' in canary view test.
+# - v6.9.1 (2025-05-19):
+#   - FIXED: Changed AUTH_PASSWORD_VALIDATORS entry from 'axes.validators.AxesPasswordValidator'
+#     to 'axes.validation.AxesPasswordValidator' to match django-axes v7.x path.
+#     Addresses ImproperlyConfigured("The module in NAME could not be imported: axes.validators.AxesPasswordValidator...").
+#   - FIXED: Explicitly defined OWNER_SESSION_COOKIE_AGE_SECONDS = env.int('OWNER_SESSION_COOKIE_AGE_SECONDS')
+#     to make it available directly via django.conf.settings. Addresses AttributeError
+#     for 'OWNER_SESSION_COOKIE_AGE_SECONDS'.
+# - v6.9 (2025-05-19):
+#   - FIXED: Added `DEFAULT_SESSION_COOKIE_AGE_SECONDS = SESSION_COOKIE_AGE` to ensure
+#     this setting is available directly via `django.conf.settings`. Addresses AttributeError
+#     in tests trying to access `settings.DEFAULT_SESSION_COOKIE_AGE_SECONDS`.
+# - (Older revisions omitted for brevity)
 
 """
 Shadow Market - Enterprise-Grade Base Settings (Hardened Configuration)
@@ -62,18 +80,18 @@ env = environ.Env(
     SESSION_COOKIE_SECURE=(bool, True),
     CSRF_COOKIE_SECURE=(bool, True),
     SESSION_COOKIE_HTTPONLY=(bool, True),
-    SESSION_COOKIE_SAMESITE=(str, 'Lax'),
-    CSRF_COOKIE_SAMESITE=(str, 'Lax'),
+    SESSION_COOKIE_SAMESITE=(str, 'Lax'), # Consider 'Strict' for better CSRF protection if feasible
+    CSRF_COOKIE_SAMESITE=(str, 'Lax'),   # Consider 'Strict' for better CSRF protection if feasible
     SECURE_HSTS_SECONDS=(int, 63072000), # 2 years
     SECURE_HSTS_INCLUDE_SUBDOMAINS=(bool, True),
     SECURE_HSTS_PRELOAD=(bool, True),
     SECURE_CONTENT_TYPE_NOSNIFF=(bool, True),
-    SECURE_BROWSER_XSS_FILTER=(bool, True), # Deprecated, but set for defense-in-depth
+    SECURE_BROWSER_XSS_FILTER=(bool, True), # Deprecated, but set for defense-in-depth (CSP is primary)
     SECURE_REFERRER_POLICY=(str, 'strict-origin-when-cross-origin'),
     MAX_FILE_UPLOAD_SIZE_MB=(int, 5), # Max upload size in Megabytes
     AXES_ENABLED=(bool, True),
-    AXES_FAILURE_LIMIT=(int, 5),
-    AXES_COOLOFF_MINUTES=(int, 30),
+    AXES_FAILURE_LIMIT=(int, 5), # Base default, overridden in dev.py
+    AXES_COOLOFF_MINUTES=(int, 30), # Base default, overridden in dev.py
     AXES_PROXY_COUNT=(int, 0), # Added AXES_PROXY_COUNT default
     SENTRY_DSN=(str, None), # Default to None, enable via Env/Vault
     SENTRY_TRACES_SAMPLE_RATE=(float, 0.05),
@@ -87,19 +105,19 @@ env = environ.Env(
     GNOSIS_SAFE_FACTORY_ADDRESS=(str, None), GNOSIS_SAFE_SINGLETON_ADDRESS=(str, None),
     MARKET_ETH_HOT_WALLET_ADDRESS=(str, None), # Read-only address for balance checks etc.
     # --- Marketplace Parameters ---
-    SITE_OWNER_USERNAME=(str, 'SiteOwner'), # <<< ADDED Site Owner Username >>>
+    SITE_OWNER_USERNAME=(str, 'SiteOwner'),
     MARKET_USER_USERNAME=(str, 'MarketAccount'), # Default username for the market fee account
     PAYMENT_WAIT_HOURS=(int, 4),
     VENDOR_BOND_XMR=(Decimal, '5.0'), VENDOR_BOND_BTC=(Decimal, '0.05'), VENDOR_BOND_ETH=(Decimal, '1.0'),
     MARKET_FEE_PERCENTAGE_XMR=(Decimal, '4.0'), MARKET_FEE_PERCENTAGE_BTC=(Decimal, '4.0'), MARKET_FEE_PERCENTAGE_ETH=(Decimal, '4.5'),
     ORDER_AUTO_FINALIZE_DAYS=(int, 14), DISPUTE_WINDOW_DAYS=(int, 7), DEADMAN_SWITCH_THRESHOLD_DAYS=(int, 30),
     # --- Session/Auth Timeouts ---
-    DEFAULT_SESSION_COOKIE_AGE_SECONDS=(int, 900), # 15 minutes
-    OWNER_SESSION_COOKIE_AGE_SECONDS=(int, 3600), # <<< FIX v1.1.1: Removed non-breaking space before comment -> # 1 hour
+    DEFAULT_SESSION_COOKIE_AGE_SECONDS=(int, 900), # 15 minutes, used for SESSION_COOKIE_AGE and custom logic
+    OWNER_SESSION_COOKIE_AGE_SECONDS=(int, 3600), # 1 hour, used for custom logic
     DEFAULT_PGP_AUTH_SESSION_TIMEOUT_MINUTES=(int, 15),
     OWNER_PGP_AUTH_SESSION_TIMEOUT_MINUTES=(int, 60),
     # --- DRF Defaults ---
-    DRF_PAGE_SIZE=(int, 20), # Increased default page size slightly
+    DRF_PAGE_SIZE=(int, 20),
     DRF_MAX_PAGE_SIZE=(int, 100),
     DRF_ANON_THROTTLE_RATE=(str, '100/hour'),
     DRF_USER_THROTTLE_RATE=(str, '1000/hour'),
@@ -117,235 +135,182 @@ env = environ.Env(
 )
 
 # --- Paths ---
-# <<< BEST PRACTICE: Use Pathlib for path manipulation >>>
-# BASE_DIR points to the 'backend/' directory
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
 
 # --- Load .env file ONLY if not in production and file exists ---
-# <<< CHANGE: Stricter check for loading .env files >>>
 ENV_FILE_PATH = BASE_DIR / '.env'
-DJANGO_ENV = os.getenv('DJANGO_ENV', 'development') # Assume development if not set
-TESTING = 'test' in sys.argv # Check if running tests
-# Around line 93 - ensure it looks like this:
-if DJANGO_ENV != 'production' and ENV_FILE_PATH.exists(): # <<< Corrected line (no 'not TESTING')
+DJANGO_ENV = os.getenv('DJANGO_ENV', 'development')
+TESTING = 'test' in sys.argv # Check if running under pytest
+
+if DJANGO_ENV != 'production' and ENV_FILE_PATH.exists():
     print(f"INFO: Reading environment variables from: {ENV_FILE_PATH}", file=sys.stderr)
     environ.Env.read_env(str(ENV_FILE_PATH))
 else:
-    print(f"INFO: Not loading .env file (DJANGO_ENV='{DJANGO_ENV}', TESTING='{TESTING}', File Exists: {ENV_FILE_PATH.exists()})", file=sys.stderr) # <<< CHANGE: Added TESTING to log >>>
+    print(f"INFO: Not loading .env file (DJANGO_ENV='{DJANGO_ENV}', TESTING='{TESTING}', File Exists: {ENV_FILE_PATH.exists()})", file=sys.stderr)
 
 # --- Vault Integration ---
-# <<< BEST PRACTICE: Centralize Vault fetching logic >>>
 _vault_client = None
 def get_vault_client():
     global _vault_client
     if _vault_client: return _vault_client
     VAULT_ADDR = env('VAULT_ADDR')
-    if not VAULT_ADDR: return None # Vault not configured
+    if not VAULT_ADDR: return None # Silently return None if Vault is not configured
 
     try:
         import hvac
         client = hvac.Client(url=VAULT_ADDR)
-        # --- Authentication: Prioritize AppRole, then Token ---
         VAULT_APPROLE_ROLE_ID = env('VAULT_APPROLE_ROLE_ID')
         VAULT_APPROLE_SECRET_ID = env('VAULT_APPROLE_SECRET_ID')
         VAULT_TOKEN = env('VAULT_TOKEN')
-
+        auth_method_used = None
         if VAULT_APPROLE_ROLE_ID and VAULT_APPROLE_SECRET_ID:
-            print("INFO: Authenticating to Vault using AppRole.", file=sys.stderr)
-            client.auth.approle.login(
-                role_id=VAULT_APPROLE_ROLE_ID,
-                secret_id=VAULT_APPROLE_SECRET_ID,
-            )
+            auth_method_used = "AppRole"
+            client.auth.approle.login(role_id=VAULT_APPROLE_ROLE_ID, secret_id=VAULT_APPROLE_SECRET_ID)
         elif VAULT_TOKEN:
-            print("INFO: Authenticating to Vault using Token.", file=sys.stderr)
+            auth_method_used = "Token"
             client.token = VAULT_TOKEN
         else:
-            print("ERROR: Vault address configured, but no authentication method (AppRole/Token) provided.", file=sys.stderr)
-            return None # Cannot authenticate
-
+            # Log as warning, not error, to allow app to run without full Vault auth if some secrets are optional
+            print("WARNING: Vault address configured, but no complete authentication method (AppRole/Token) provided.", file=sys.stderr)
+            return None
         if client.is_authenticated():
-            print("INFO: Vault client authenticated successfully.", file=sys.stderr)
+            print(f"INFO: Vault client authenticated successfully using {auth_method_used}.", file=sys.stderr)
             _vault_client = client
             return _vault_client
         else:
-            print("ERROR: Vault client authentication failed.", file=sys.stderr)
+            print(f"ERROR: Vault client authentication failed using {auth_method_used}. Client token: {client.token[:10]}... (if set)", file=sys.stderr)
             return None
     except ImportError:
         print("ERROR: HVAC library not installed. Cannot use Vault. `pip install hvac`", file=sys.stderr)
         return None
-    except Exception as e:
+    except Exception as e: # Catch more specific hvac.exceptions if needed
         print(f"ERROR: Failed to initialize or authenticate Vault client: {e}", file=sys.stderr)
         return None
 
-def get_secret_from_vault(secret_name: str, key: str, raise_error=True):
-    """Fetches a specific key from a secret in Vault KV v2 store."""
+def get_secret_from_vault(secret_name: str, key: str, default=None, raise_error_if_missing=False):
     client = get_vault_client()
     if not client:
-        if raise_error: raise RuntimeError("Vault client unavailable.")
-        return None
-
+        if raise_error_if_missing:
+            raise RuntimeError(f"Vault client unavailable. Cannot fetch mandatory secret: {secret_name}/{key}")
+        return default
     VAULT_KV_MOUNT_POINT = env('VAULT_KV_MOUNT_POINT')
     VAULT_SECRET_BASE_PATH = env('VAULT_SECRET_BASE_PATH')
     full_secret_path = f"{VAULT_SECRET_BASE_PATH}/{secret_name}"
-
     try:
-        response = client.secrets.kv.v2.read_secret_version(
-            path=full_secret_path,
-            mount_point=VAULT_KV_MOUNT_POINT,
-        )
-        secret_data = response['data']['data']
+        response = client.secrets.kv.v2.read_secret_version(path=full_secret_path, mount_point=VAULT_KV_MOUNT_POINT)
+        secret_data = response.get('data', {}).get('data', {}) # KV V2 stores data under 'data': {'data': {...}}
         value = secret_data.get(key)
-        if value:
-            # print(f"INFO: Fetched '{key}' from Vault secret '{full_secret_path}'.", file=sys.stderr)
+        if value is not None:
             return value
         else:
             msg = f"Key '{key}' not found in Vault secret '{full_secret_path}'."
-            print(f"ERROR: {msg}", file=sys.stderr)
-            if raise_error: raise KeyError(msg)
-            return None
-    except Exception as e:
-        msg = f"Failed to fetch '{key}' from Vault secret '{full_secret_path}': {e}"
+            print(f"WARNING: {msg}", file=sys.stderr)
+            if raise_error_if_missing: raise KeyError(msg)
+            return default
+    except Exception as e: # Consider catching specific hvac.exceptions.VaultError variations
+        msg = f"Failed to fetch '{key}' from Vault secret '{full_secret_path}': {type(e).__name__}: {e}"
         print(f"ERROR: {msg}", file=sys.stderr)
-        if raise_error: raise RuntimeError(msg) from e
-        return None
+        if raise_error_if_missing: raise RuntimeError(msg) from e
+        return default
 
 # --- Core Settings ---
-# <<< CHANGE: Strict SECRET_KEY handling - MUST come from Vault or Env >>>
-SECRET_KEY = env('DJANGO_SECRET_KEY') or get_secret_from_vault('django', 'secret_key', raise_error=False)
-if not SECRET_KEY:
-    print("CRITICAL ERROR: DJANGO_SECRET_KEY is not set via environment variable or Vault.", file=sys.stderr)
-    sys.exit(1) # Exit if secret key is missing
-
+SECRET_KEY = env('DJANGO_SECRET_KEY') or get_secret_from_vault('django', 'secret_key', raise_error_if_missing=True)
 DEBUG = env('DEBUG')
-
-# <<< CHANGE: Stricter ALLOWED_HOSTS - MUST be set via env for prod >>>
-ALLOWED_HOSTS = env.list('DJANGO_ALLOWED_HOSTS')
+ALLOWED_HOSTS = env.list('DJANGO_ALLOWED_HOSTS') # Fetches from env var or uses default from Env() init
 if DJANGO_ENV == 'production' and ('localhost' in ALLOWED_HOSTS or '127.0.0.1' in ALLOWED_HOSTS or not ALLOWED_HOSTS):
     print("CRITICAL ERROR: DJANGO_ALLOWED_HOSTS is misconfigured for production!", file=sys.stderr)
-    print("                     It should ONLY contain the .onion domain(s).", file=sys.stderr)
-    sys.exit(1)
-
+    print("                               It should ONLY contain the production domain(s) (e.g., .onion).", file=sys.stderr)
+    sys.exit(1) # Exit if critical misconfiguration in production
 SITE_ID = env.int('SITE_ID')
 
 # --- Application Definition ---
-# <<< BEST PRACTICE: Define app configs explicitly >>>
 INSTALLED_APPS = [
-    # Django Core Apps First
     'django.contrib.admin',
     'django.contrib.auth',
     'django.contrib.contenttypes',
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
-
-    # Third-party Apps
     'rest_framework',
-    # 'rest_framework.authtoken', # Prefer Session/JWT over basic token auth
-    'rest_framework_simplejwt', # Included if needed for API tokens
-    'django_celery_results',
-    'axes', # Login attempt tracking
-    'django_otp', # Base OTP framework
-    'django_otp.plugins.otp_static', # Static backup codes (discouraged in production)
-    'captcha', # <<<--- ADDED CAPTCHA APP ---<<<
-    'django_filters', # For DRF filtering
-    # <<< FIX: Add WebAuthn app (if needed separate from store) >>>
-    # 'webauthn.apps.WebauthnConfig', # Example if WebAuthn is a separate app
-
-    # Local Apps (using AppConfig paths)
-    'store.apps.StoreConfig',
-    'adminpanel.apps.AdminpanelConfig',
-    'ledger.apps.LedgerConfig',
-    'notifications.apps.NotificationsConfig',
-    'forum.apps.ForumConfig',
-    'withdraw.apps.WithdrawConfig', # <<< FIX v1.1.0: Added withdraw app >>>
+    'rest_framework_simplejwt', # For JWT authentication if used
+    'django_celery_results',    # For storing Celery task results
+    'axes',                     # Django-axes for login attempt tracking
+    'django_otp',               # Django OTP for two-factor authentication
+    'captcha',                  # Django-simple-captcha
+    'django_filters',           # For filtering querysets in DRF
+    # Local applications (using AppConfig for clarity and explicitness)
+    'backend.store.apps.StoreConfig',
+    'backend.adminpanel.apps.AdminpanelConfig',
+    'backend.ledger.apps.LedgerConfig',
+    'backend.notifications.apps.NotificationsConfig',
+    'backend.forum.apps.ForumConfig',
+    'backend.withdraw.apps.WithdrawConfig',
 ]
 
 MIDDLEWARE = [
-    # Security middleware high up
     'django.middleware.security.SecurityMiddleware',
-    'mymarketplace.middleware.SecurityHeadersMiddleware.SecurityHeadersMiddleware', # Custom CSP/Headers
-
-    # Session handling AFTER security headers potentially
+    'backend.middleware.SecurityHeadersMiddleware.SecurityHeadersMiddleware', # Custom security headers
     'django.contrib.sessions.middleware.SessionMiddleware',
-
-    # Common middleware
     'django.middleware.common.CommonMiddleware',
-    'django.middleware.csrf.CsrfViewMiddleware', # CSRF protection
-
-    # Auth/User handling
+    'django.middleware.csrf.CsrfViewMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
-    'django_otp.middleware.OTPMiddleware', # Must be AFTER AuthenticationMiddleware
-
-    # Axes must be after AuthenticationMiddleware and SessionMiddleware
-    'axes.middleware.AxesMiddleware',
-
+    'django_otp.middleware.OTPMiddleware', # Must be after AuthenticationMiddleware
+    'axes.middleware.AxesMiddleware',      # Django-axes middleware, tracks login attempts
     'django.contrib.messages.middleware.MessageMiddleware',
-    'django.middleware.clickjacking.XFrameOptionsMiddleware', # Covered by CSP, but defense-in-depth
-
-    # Custom Middleware
-    'mymarketplace.middleware.OwnerSessionMiddleware.OwnerSessionMiddleware', # Extends owner session timeout
-    'mymarketplace.middleware.RequestValidationMiddleware.RequestValidationMiddleware', # Input size validation
-    'mymarketplace.middleware.RateLimitMiddleware.DistributedRateLimitMiddleware', # Custom rate limiting
-    'mymarketplace.middleware.AnomalyDetectionMiddleware.AnomalyDetectionMiddleware', # Basic anomaly detection
-    'mymarketplace.middleware.ErrorHandlingMiddleware.ErrorHandlingMiddleware', # Global exception handling
+    'django.middleware.clickjacking.XFrameOptionsMiddleware',
+    # Custom middleware (ensure correct order and functionality)
+    'backend.middleware.OwnerSessionMiddleware.OwnerSessionMiddleware',
+    'backend.middleware.RequestValidationMiddleware.RequestValidationMiddleware',
+    'backend.middleware.RateLimitMiddleware.ConfigurableRateLimitMiddleware',
+    'backend.middleware.AnomalyDetectionMiddleware.AnomalyDetectionMiddleware',
+    'backend.middleware.ErrorHandlingMiddleware.ErrorHandlingMiddleware', # Usually last or near last
 ]
 
-ROOT_URLCONF = 'mymarketplace.urls'
+ROOT_URLCONF = 'backend.mymarketplace.urls' # Points to the root URL configuration
 
 TEMPLATES = [
     {
         'BACKEND': 'django.template.backends.django.DjangoTemplates',
-        'DIRS': [BASE_DIR / 'templates'], # Project-level templates
-        'APP_DIRS': True,
+        'DIRS': [BASE_DIR / 'templates'], # Project-level templates directory
+        'APP_DIRS': True, # Allow Django to find templates within app directories
         'OPTIONS': {
             'context_processors': [
                 'django.template.context_processors.debug',
-                'django.template.context_processors.request',
-                'django.contrib.auth.context_processors.auth',
-                'django.contrib.messages.context_processors.messages',
+                'django.template.context_processors.request', # Adds the request object to template context
+                'django.contrib.auth.context_processors.auth',   # Adds user and perms objects
+                'django.contrib.messages.context_processors.messages', # Adds messages framework context
             ],
-            'builtins': [
-                # Add custom template tags/filters if needed
+            'builtins': [ # Add custom template tags/filters here if needed
+                # e.g., 'myapp.templatetags.custom_tags'
             ],
-            # <<< BEST PRACTICE: Enable template debugging only if DEBUG is True >>>
-            'debug': DEBUG,
+            'debug': DEBUG, # Enable template debugging if Django DEBUG is True
         },
     },
 ]
 
-WSGI_APPLICATION = 'mymarketplace.wsgi.application'
+WSGI_APPLICATION = 'backend.mymarketplace.wsgi.application' # Path to WSGI application
 
 # --- Database ---
-# <<< MODIFIED: Use env.db directly with the variable name and default >>>
+# https://docs.djangoproject.com/en/stable/ref/settings/#databases
 print(f"DEBUG: Attempting to configure DATABASES using env.db('DATABASE_URL')...", file=sys.stderr)
-DATABASES = {
-    # env.db looks for 'DATABASE_URL' in Env/.env, uses default URL if not found.
-    'default': env.db('DATABASE_URL', default='sqlite:///db_test_direct.sqlite3')
-}
-# Optional: Add engine/options if default URL doesn't specify them
-# DATABASES['default'].setdefault('ENGINE', 'django.db.backends.sqlite3') # Engine is usually inferred from URL scheme
-print(f"DEBUG: DATABASES configured as: {DATABASES['default'].get('ENGINE', 'N/A')} | {DATABASES['default'].get('NAME', 'N/A')}", file=sys.stderr) # Safer print
-# <<< END MODIFIED BLOCK >>>
-
-# Added safer check for password presence
-if 'PASSWORD' not in DATABASES['default'] or not DATABASES['default'].get('PASSWORD'):
-     print("WARNING: Database password appears empty or not set.", file=sys.stderr)
-
-# <<< BEST PRACTICE: Use connection pooling in production >>>
-# DATABASES['default']['CONN_MAX_AGE'] = 600 # Example: 10 minutes
+DATABASES = {'default': env.db('DATABASE_URL', default=f'sqlite:///{BASE_DIR / "db_dev.sqlite3"}')}
+print(f"DEBUG: DATABASES configured as: {DATABASES['default'].get('ENGINE', 'N/A')} | {DATABASES['default'].get('NAME', 'N/A')}", file=sys.stderr)
+# Check for empty or missing password which might be an issue for non-SQLite DBs
+if DATABASES['default'].get('ENGINE') != 'django.db.backends.sqlite3' and \
+   ('PASSWORD' not in DATABASES['default'] or not DATABASES['default'].get('PASSWORD')):
+    print("WARNING: Database password appears empty or not set in parsed config for a non-SQLite database.", file=sys.stderr)
+DATABASES['default']['CONN_MAX_AGE'] = env.int('DATABASE_CONN_MAX_AGE', default=600) # Persistent connections
 
 # --- Password validation ---
-# <<< BEST PRACTICE: Use strong validators >>>
+# https://docs.djangoproject.com/en/stable/ref/settings/#auth-password-validators
 AUTH_PASSWORD_VALIDATORS = [
     {'NAME': 'django.contrib.auth.password_validation.UserAttributeSimilarityValidator'},
-    {'NAME': 'django.contrib.auth.password_validation.MinimumLengthValidator', 'OPTIONS': {'min_length': 14}}, # Increased min length
+    {'NAME': 'django.contrib.auth.password_validation.MinimumLengthValidator', 'OPTIONS': {'min_length': 14}},
     {'NAME': 'django.contrib.auth.password_validation.CommonPasswordValidator'},
     {'NAME': 'django.contrib.auth.password_validation.NumericPasswordValidator'},
-    {'NAME': 'axes.validators.AxesPasswordValidator'}, # Integrate Axes
-    # Consider adding zxcvbn validation if library is added
-    # {'NAME': 'zxcvbn_password.ZXCVBNValidator'},
+    # Removed incorrect entry: {'NAME': 'axes.validation.AxesPasswordValidator'},
 ]
-# <<< BEST PRACTICE: Argon2 is the strongest default hasher >>>
+# Use strong password hashers, Argon2 is preferred.
 PASSWORD_HASHERS = [
     'django.contrib.auth.hashers.Argon2PasswordHasher',
     'django.contrib.auth.hashers.PBKDF2PasswordHasher',
@@ -354,96 +319,91 @@ PASSWORD_HASHERS = [
 ]
 
 # --- Internationalization ---
+# https://docs.djangoproject.com/en/stable/topics/i18n/
 LANGUAGE_CODE = 'en-us'
-TIME_ZONE = 'UTC'
-USE_I18N = False # Explicitly disable if not needed for simplicity/security
-USE_TZ = True
+TIME_ZONE = 'UTC' # Recommended to use UTC for backend storage
+USE_I18N = False # Set to True if internationalization is needed
+USE_TZ = True   # Store datetimes as timezone-aware in UTC
 
 # --- Static files & Media files ---
+# https://docs.djangoproject.com/en/stable/howto/static-files/
 STATIC_URL = '/static/'
-STATIC_ROOT = BASE_DIR / 'staticfiles'
-# <<< BEST PRACTICE: Don't serve static files via Django in production >>>
-# STATICFILES_DIRS = [ BASE_DIR / "static", ] # Only needed if collecting from project static dir
-
+STATIC_ROOT = BASE_DIR / 'staticfiles' # For collectstatic in production
 MEDIA_URL = '/media/'
-MEDIA_ROOT = BASE_DIR / 'media'
-# <<< BEST PRACTICE: Use dedicated file storage in production (e.g., S3, MinIO) >>>
-# DEFAULT_FILE_STORAGE = 'storages.backends.s3boto3.S3Boto3Storage'
-MAX_UPLOAD_SIZE = env.int('MAX_FILE_UPLOAD_SIZE_MB') * 1024 * 1024
+MEDIA_ROOT = BASE_DIR / 'media'       # User-uploaded files
+FILE_UPLOAD_MAX_MEMORY_SIZE = 2621440 # 2.5MB, Django's default before streaming to temp file
+MAX_UPLOAD_SIZE = env.int('MAX_FILE_UPLOAD_SIZE_MB') * 1024 * 1024 # Custom max upload size
 
 # --- Default primary key ---
-DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
+# https://docs.djangoproject.com/en/stable/ref/settings/#default-auto-field
+DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField' # Modern default
 
-# --- Security Settings (Defaults loaded via django-environ) ---
+# --- Security Settings ---
+# These are sourced from environment variables by django-environ, allowing easy override.
 SECURE_SSL_REDIRECT = env.bool('SECURE_SSL_REDIRECT')
 SESSION_COOKIE_SECURE = env.bool('SESSION_COOKIE_SECURE')
 CSRF_COOKIE_SECURE = env.bool('CSRF_COOKIE_SECURE')
 SESSION_COOKIE_HTTPONLY = env.bool('SESSION_COOKIE_HTTPONLY')
-SESSION_COOKIE_SAMESITE = env('SESSION_COOKIE_SAMESITE')
-CSRF_COOKIE_SAMESITE = env('CSRF_COOKIE_SAMESITE')
-X_FRAME_OPTIONS = 'DENY'
+SESSION_COOKIE_SAMESITE = env('SESSION_COOKIE_SAMESITE') # 'Lax' or 'Strict'
+CSRF_COOKIE_SAMESITE = env('CSRF_COOKIE_SAMESITE')       # 'Lax' or 'Strict'
+X_FRAME_OPTIONS = 'DENY' # Prevent clickjacking
 SECURE_CONTENT_TYPE_NOSNIFF = env.bool('SECURE_CONTENT_TYPE_NOSNIFF')
-SECURE_BROWSER_XSS_FILTER = env.bool('SECURE_BROWSER_XSS_FILTER') # Deprecated, handled by CSP Middleware
+SECURE_BROWSER_XSS_FILTER = env.bool('SECURE_BROWSER_XSS_FILTER') # Deprecated but adds minor defense layer
 SECURE_HSTS_SECONDS = env.int('SECURE_HSTS_SECONDS')
 SECURE_HSTS_INCLUDE_SUBDOMAINS = env.bool('SECURE_HSTS_INCLUDE_SUBDOMAINS')
 SECURE_HSTS_PRELOAD = env.bool('SECURE_HSTS_PRELOAD')
-SECURE_REFERRER_POLICY = env('SECURE_REFERRER_POLICY')
-# <<< BEST PRACTICE: Ensure proxy headers are configured if behind a TRUSTED proxy >>>
-# USE_X_FORWARDED_HOST = True # If proxy sets X-Forwarded-Host
-# SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
+SECURE_REFERRER_POLICY = env('SECURE_REFERRER_POLICY') # e.g., 'strict-origin-when-cross-origin'
 
 # --- Session Settings ---
+# Django's built-in session age, sourced from the env var 'DEFAULT_SESSION_COOKIE_AGE_SECONDS'.
 SESSION_COOKIE_AGE = env.int('DEFAULT_SESSION_COOKIE_AGE_SECONDS')
-SESSION_SAVE_EVERY_REQUEST = True # Needed for activity timeout tracking
-SESSION_ENGINE = 'django.contrib.sessions.backends.cached_db' # Secure, DB-backed sessions
-# SESSION_CACHE_ALIAS = 'default' # Use the default cache
+
+# Custom setting variables for OwnerSessionMiddleware and potentially other logic.
+# These are distinct from Django's SESSION_COOKIE_AGE but are also sourced from env vars.
+# Ensured these are directly available via django.conf.settings by defining them here after env.int() call.
+DEFAULT_SESSION_COOKIE_AGE_SECONDS = env.int('DEFAULT_SESSION_COOKIE_AGE_SECONDS')
+OWNER_SESSION_COOKIE_AGE_SECONDS = env.int('OWNER_SESSION_COOKIE_AGE_SECONDS')
+
+SESSION_SAVE_EVERY_REQUEST = True # Save session on every request if modified
+SESSION_ENGINE = 'django.contrib.sessions.backends.cached_db' # DB-backed sessions with caching
 
 # --- Authentication Settings ---
-AUTH_USER_MODEL = 'store.User'
-# <<< BEST PRACTICE: Define explicit login/logout URLs, even if primarily API based >>>
-LOGIN_URL = '/api/store/auth/login/init/' # Example API login endpoint
-LOGOUT_URL = '/api/store/auth/logout/' # Example API logout endpoint
-# LOGIN_REDIRECT_URL = '/' # Less relevant for API-centric apps
-# LOGOUT_REDIRECT_URL = '/'
+AUTH_USER_MODEL = 'store.User' # Custom user model
+LOGIN_URL = '/api/store/auth/login/init/' # For views requiring login
+LOGOUT_URL = '/api/store/auth/logout/'
 
 # --- Django-Axes Configuration ---
-# <<< BEST PRACTICE: Use cache handler for distributed environments >>>
+# https://django-axes.readthedocs.io/en/latest/configuration.html
 AXES_ENABLED = env.bool('AXES_ENABLED')
-AXES_FAILURE_LIMIT = env.int('AXES_FAILURE_LIMIT')
-AXES_COOLOFF_TIME = timedelta(minutes=env.int('AXES_COOLOFF_MINUTES'))
-AXES_LOCKOUT_TEMPLATE = 'registration/lockout.html' # Ensure this template exists if needed
-AXES_USERNAME_FORM_FIELD = 'username'
-AXES_PASSWORD_FORM_FIELD = 'password' # nosec B105 - This is a form field name, not a password value.
-AXES_LOCK_OUT_BY_COMBINATION_USER_AND_IP = True
-AXES_ONLY_USER_FAILURES = False
-AXES_RESET_ON_SUCCESS = True
-AXES_HANDLER = 'axes.handlers.cache.AxesCacheHandler'
-AXES_CACHE = 'default'
-# <<< BEST PRACTICE: Log Axes events >>>
-AXES_PROXY_COUNT = env.int('AXES_PROXY_COUNT', default=0) # If behind proxies
-# AXES_LOCKOUT_URL = '/account-locked/' # Custom lockout URL if needed
+AXES_FAILURE_LIMIT = env.int('AXES_FAILURE_LIMIT') # Number of failed attempts before lockout
+AXES_COOLOFF_TIME = timedelta(minutes=env.int('AXES_COOLOFF_MINUTES')) # Lockout duration
+AXES_LOCKOUT_TEMPLATE = 'registration/lockout.html' # Ensure this template exists if lockouts are user-facing
+AXES_USERNAME_FORM_FIELD = 'username' # Name of username field in login forms
+AXES_PASSWORD_FORM_FIELD = 'password' # Name of password field in login forms (# nosec B105 - Field name, not credential)
+AXES_LOCK_OUT_BY_COMBINATION_USER_AND_IP = True # Lock out based on user and IP
+AXES_ONLY_USER_FAILURES = False # Consider IP failures even if username is incorrect
+AXES_RESET_ON_SUCCESS = True # Reset failure count on successful login
+AXES_HANDLER = 'axes.handlers.cache.AxesCacheHandler' # Use Django's cache for tracking failures
+AXES_CACHE = 'default' # Which cache alias to use
+AXES_PROXY_COUNT = env.int('AXES_PROXY_COUNT', default=0) # If behind proxies, set to number of proxies
 
 # --- Django-OTP Configuration ---
-OTP_LOGIN_URL = LOGIN_URL # Redirect here if OTP needed but not provided
-OTP_ADMIN_ENFORCE_OTP = True # Enforce OTP for Django admin site (/control/)
-# <<< CHANGE: Remove static device if not strictly needed for recovery >>>
-# OTP_STATIC_ENABLED = False # Disable static codes in production? (Requires alternative recovery)
+# https://django-otp-official.readthedocs.io/en/latest/settings.html
+OTP_LOGIN_URL = LOGIN_URL # Or a specific OTP entry URL if different
+OTP_ADMIN_ENFORCE_OTP = True # Recommended to enforce OTP for admin interface
 
 # --- Celery Configuration ---
-# <<< BEST PRACTICE: Use secure broker URL with password >>>
+# https://docs.celeryq.dev/en/stable/userguide/configuration.html
 CELERY_BROKER_URL = env('CELERY_BROKER_URL')
-CELERY_RESULT_BACKEND = 'django-db' # Store results in Django DB
-CELERY_ACCEPT_CONTENT = ['json']
-CELERY_TASK_SERIALIZER = 'json'
-CELERY_RESULT_SERIALIZER = 'json'
-CELERY_TIMEZONE = TIME_ZONE
-# <<< BEST PRACTICE: Set visibility timeout appropriate for tasks >>>
-# CELERY_BROKER_TRANSPORT_OPTIONS = {'visibility_timeout': 3600} # 1 hour example
-# <<< BEST PRACTICE: Configure flower for monitoring if used >>>
-# FLOWER_ENABLED = env.bool('FLOWER_ENABLED', default=False)
+CELERY_RESULT_BACKEND = 'django-db' # For storing task results in the database using django-celery-results
+CELERY_ACCEPT_CONTENT = ['json']      # Only accept JSON serialized tasks
+CELERY_TASK_SERIALIZER = 'json'       # Serialize tasks as JSON
+CELERY_RESULT_SERIALIZER = 'json'   # Serialize results as JSON
+CELERY_TIMEZONE = TIME_ZONE         # Use Django's timezone
+CELERY_BROKER_TRANSPORT_OPTIONS = {'visibility_timeout': env.int('CELERY_VISIBILITY_TIMEOUT', default=3600)} # 1 hour, for long tasks
 
 # --- Logging Configuration ---
-# <<< BEST PRACTICE: Structured JSON logging for production >>>
+# https://docs.djangoproject.com/en/stable/topics/logging/
 LOGS_DIR = BASE_DIR / 'logs'
 LOGS_DIR.mkdir(parents=True, exist_ok=True) # Ensure log directory exists
 LOGGING = {
@@ -451,7 +411,7 @@ LOGGING = {
     'disable_existing_loggers': False,
     'formatters': {
         'json': {
-            '()': 'pythonjsonlogger.jsonlogger.JsonFormatter',
+            '()': 'pythonjsonlogger.json.JsonFormatter', # For structured logging
             'format': '%(asctime)s %(levelname)s %(name)s %(module)s %(pathname)s:%(lineno)d %(message)s %(process)d %(thread)d',
         },
         'verbose': { 'format': '%(levelname)s %(asctime)s %(module)s %(process)d %(thread)d %(message)s' },
@@ -460,106 +420,97 @@ LOGGING = {
     'filters': {
         'require_debug_false': { '()': 'django.utils.log.RequireDebugFalse', },
         'require_debug_true': { '()': 'django.utils.log.RequireDebugTrue', },
-        # <<< BEST PRACTICE: Basic sensitive data filtering (expand keywords) >>>
-        'exclude_sensitive': {
+        'exclude_sensitive': { # Custom filter to avoid logging sensitive keywords
             '()': 'django.utils.log.CallbackFilter',
-            'callback': lambda record: not any(word in str(getattr(record, 'message', '') or getattr(record, 'msg', '')).lower() for word in [ # Safer access to message
+            'callback': lambda record: not any(word in str(getattr(record, 'message', '') or getattr(record, 'msg', '')).lower() for word in [
                 'password', 'secret', 'token', 'key', 'credit', 'card', 'cvv', 'private',
-                'mnemonic', 'apikey', 'credential', 'bearer', 'authorization', 'sessionid', 'csrftoken' # Added common tokens
+                'mnemonic', 'apikey', 'credential', 'bearer', 'authorization', 'sessionid', 'csrftoken',
+                'xmr_rpc_password', 'btc_rpc_password' # Ensure all sensitive env var keys are listed here
             ]),
         }
     },
     'handlers': {
         'console': {
-            'level': 'DEBUG' if DEBUG else 'INFO',
-            'filters': ['require_debug_true'] if DEBUG else ['require_debug_false', 'exclude_sensitive'], # Apply sensitive filter in prod
+            'level': 'DEBUG' if DEBUG else 'INFO', # More verbose for DEBUG, INFO for prod
+            'filters': ['require_debug_true'] if DEBUG else ['require_debug_false', 'exclude_sensitive'],
             'class': 'logging.StreamHandler',
-            'formatter': 'simple' if DEBUG else 'json', # JSON logs in prod
+            'formatter': 'simple' if DEBUG else 'json', # Simple for dev, JSON for prod
         },
-        'file_app': {
+        'file_app': { # General application log
             'level': 'INFO',
-            'filters': ['require_debug_false', 'exclude_sensitive'],
+            'filters': ['require_debug_false', 'exclude_sensitive'], # Prod only, filter sensitive
             'class': 'logging.handlers.RotatingFileHandler',
             'filename': LOGS_DIR / 'app.log',
-            'maxBytes': 10 * 1024 * 1024,  # 10 MB
+            'maxBytes': 10 * 1024 * 1024, # 10 MB
             'backupCount': 5,
-            'formatter': 'json',
+            'formatter': 'json', # Structured logging to file
         },
-        'file_security': {
+        'file_security': { # Dedicated security log
             'level': 'INFO',
-            'filters': ['require_debug_false'], # Security log might need less filtering
+            'filters': ['require_debug_false'], # Prod only; review sensitive filter needs for security logs
             'class': 'logging.handlers.RotatingFileHandler',
             'filename': LOGS_DIR / 'security.log',
-            'maxBytes': 10 * 1024 * 1024,  # 10 MB
+            'maxBytes': 10 * 1024 * 1024, # 10 MB
             'backupCount': 5,
             'formatter': 'json',
         },
-        'null': { 'class': 'logging.NullHandler', },
+        'null': { 'class': 'logging.NullHandler', }, # To silence loggers if needed
     },
     'loggers': {
         'django': { 'handlers': ['console', 'file_app'], 'level': 'INFO', 'propagate': False, },
-        'django.request': { 'handlers': ['file_app', 'file_security'], 'level': 'ERROR', 'propagate': False, }, # Log 500s
-        'django.security': { 'handlers': ['file_security'], 'level': 'WARNING', 'propagate': False, },
-        'axes': { 'handlers': ['console', 'file_security'], 'level': 'INFO', 'propagate': False, },
-        # Application loggers
-        'store': { 'handlers': ['console', 'file_app'], 'level': 'INFO', 'propagate': False, },
-        'adminpanel': { 'handlers': ['console', 'file_app', 'file_security'], 'level': 'INFO', 'propagate': False, },
-        'ledger': { 'handlers': ['console', 'file_app', 'file_security'], 'level': 'INFO', 'propagate': False, },
-        'notifications': { 'handlers': ['console', 'file_app'], 'level': 'INFO', 'propagate': False, },
-        'forum': { 'handlers': ['console', 'file_app'], 'level': 'INFO', 'propagate': False, },
-        'withdraw': { 'handlers': ['console', 'file_app', 'file_security'], 'level': 'INFO', 'propagate': False, }, # <<< ADDED withdraw logger >>>
-        'mymarketplace.middleware': { 'handlers': ['console', 'file_app'], 'level': 'INFO', 'propagate': False, },
-        # Service loggers (consider adjusting levels)
-        'store.services': { 'handlers': ['console', 'file_app'], 'level': 'INFO', 'propagate': False, },
-        'store.services.pgp_service': { 'handlers': ['console', 'file_security'], 'level': 'INFO', 'propagate': False, },
-        'store.services.escrow_service': { 'handlers': ['console', 'file_app', 'file_security'], 'level': 'INFO', 'propagate': False, },
-        'store.services.encryption_service': { 'handlers': ['console', 'file_app'], 'level': 'INFO', 'propagate': False, },
-        'store.services.monero_service': { 'handlers': ['console', 'file_app', 'file_security'], 'level': 'INFO', 'propagate': False, },
-        'store.services.bitcoin_service': { 'handlers': ['console', 'file_app', 'file_security'], 'level': 'INFO', 'propagate': False, },
-        'store.services.ethereum_service': { 'handlers': ['console', 'file_app', 'file_security'], 'level': 'INFO', 'propagate': False, },
-        'withdraw.services': { 'handlers': ['console', 'file_app', 'file_security'], 'level': 'INFO', 'propagate': False, }, # <<< ADDED withdraw.services logger >>>
-        # Third-party loggers
-        'hvac': { 'handlers': ['console', 'file_app'], 'level': 'WARNING', 'propagate': False, }, # Vault client
-        'gnupg': { 'handlers': ['console', 'file_app'], 'level': 'WARNING', 'propagate': False, }, # python-gnupg
-        'web3': { 'handlers': ['console', 'file_app'], 'level': 'WARNING', 'propagate': False, },
-        'celery': { 'handlers': ['console', 'file_app'], 'level': 'INFO', 'propagate': False, },
+        'django.request': { 'handlers': ['file_app', 'file_security'], 'level': 'ERROR', 'propagate': False, }, # Log HTTP 5XX errors
+        'django.security': { 'handlers': ['file_security'], 'level': 'WARNING', 'propagate': False, }, # Log security warnings (CSRF, SuspiciousOps)
+        'axes': { 'handlers': ['console', 'file_security'], 'level': 'INFO', 'propagate': False, }, # Axes login attempts
+        'hvac': { 'handlers': ['console', 'file_app'], 'level': 'WARNING', 'propagate': False, }, # Vault client logs
+        'gnupg': { 'handlers': ['console', 'file_app'], 'level': 'WARNING', 'propagate': False, }, # GnuPG library logs
+        'web3': { 'handlers': ['console', 'file_app'], 'level': 'WARNING', 'propagate': False, }, # Web3 library logs
+        'celery': { 'handlers': ['console', 'file_app'], 'level': 'INFO', 'propagate': False, }, # Celery logs
+        # Application specific loggers - adjust handlers and levels as needed
+        'mymarketplace': { 'handlers': ['console', 'file_app'], 'level': 'INFO', 'propagate': True, }, # Base for project
+        'store': { 'handlers': [], 'level': 'INFO', 'propagate': True, }, # Specific app
+        'adminpanel': { 'handlers': ['file_security'], 'level': 'INFO', 'propagate': True, },
+        'ledger': { 'handlers': ['file_security'], 'level': 'INFO', 'propagate': True, },
+        'notifications': { 'handlers': [], 'level': 'INFO', 'propagate': True, },
+        'forum': { 'handlers': [], 'level': 'INFO', 'propagate': True, },
+        'withdraw': { 'handlers': ['file_security'], 'level': 'INFO', 'propagate': True, },
+        'store.services.pgp_service': { 'handlers': ['file_security'], 'level': 'INFO', 'propagate': True, },
+        # Add other specific app/module loggers here
     },
-    # <<< BEST PRACTICE: Define root logger to catch unhandled logs >>>
-    'root': {
-        'handlers': ['console', 'file_app'] if DEBUG else ['file_app'],
-        'level': 'INFO',
+    'root': { # Catch-all logger
+        'handlers': ['console'] if DEBUG else ['file_app'],
+        'level': 'INFO', # Root logger level
     },
 }
 
-# --- Sentry SDK ---
-SENTRY_DSN = env('SENTRY_DSN')
-if SENTRY_DSN and not DEBUG:
+# --- Sentry SDK (Error Tracking) ---
+# https://docs.sentry.io/platforms/python/guides/django/
+SENTRY_DSN = env('SENTRY_DSN') or get_secret_from_vault('sentry', 'dsn', default=None)
+if SENTRY_DSN and DJANGO_ENV == 'production': # Only initialize in production if DSN is set
     try:
         import sentry_sdk
         from sentry_sdk.integrations.django import DjangoIntegration
         from sentry_sdk.integrations.celery import CeleryIntegration
         from sentry_sdk.integrations.redis import RedisIntegration
         from sentry_sdk.integrations.logging import LoggingIntegration
-
-        # <<< BEST PRACTICE: Configure logging integration carefully >>>
+        # Configure Sentry logging integration
         sentry_logging = LoggingIntegration(
-            level=logging.INFO,        # Send INFO level logs as breadcrumbs
-            event_level=logging.ERROR  # Send ERROR level logs as events
+            level=logging.INFO,        # Capture info and above as breadcrumbs
+            event_level=logging.ERROR  # Send errors and above as events
         )
-        # <<< BEST PRACTICE: Add before_send hook for data scrubbing >>>
+        # Define before_send hook for PII scrubbing if needed
         def before_send(event, hint):
-            # Example: Scrub sensitive data from event['request']['data'] or headers
-            # if 'exc_info' in hint and isinstance(hint['exc_info'][1], SensitiveException): return None
+            # Example: Modify event to scrub PII before sending to Sentry
+            # if 'user' in event: event['user'] = {'id': event['user'].get('id')}
             return event
-
+        SENTRY_RELEASE = os.getenv('SENTRY_RELEASE', None) # Set via CI/CD for release tracking
         sentry_sdk.init(
             dsn=SENTRY_DSN,
-            integrations=[ DjangoIntegration(), CeleryIntegration(), RedisIntegration(), sentry_logging ],
-            traces_sample_rate=env.float('SENTRY_TRACES_SAMPLE_RATE'),
-            send_default_pii=False, # Explicitly disable sending PII
-            environment=DJANGO_ENV, # Use 'production' or specific env name
-            # release="shadowmarket@<git-commit-sha>" # Set dynamically in CI/CD
-            before_send=before_send,
+            integrations=[DjangoIntegration(), CeleryIntegration(), RedisIntegration(), sentry_logging],
+            traces_sample_rate=env.float('SENTRY_TRACES_SAMPLE_RATE', default=0.1), # Adjust sample rate as needed
+            send_default_pii=False, # Must be False if PII is handled by before_send or you want to control it
+            environment=DJANGO_ENV,
+            release=SENTRY_RELEASE,
+            before_send=before_send, # Hook for custom data scrubbing
         )
         print("INFO: Sentry SDK initialized for production.", file=sys.stderr)
     except ImportError:
@@ -568,92 +519,64 @@ if SENTRY_DSN and not DEBUG:
         print(f"ERROR: Failed to initialize Sentry SDK: {e}", file=sys.stderr)
 
 # --- REST Framework ---
-# <<< BEST PRACTICE: Use SessionAuth primarily, add JWT/Token if specific API clients need it >>>
+# https://www.django-rest-framework.org/api-guide/settings/
 REST_FRAMEWORK = {
-    'DEFAULT_AUTHENTICATION_CLASSES': (
-        'rest_framework.authentication.SessionAuthentication',
-        # 'rest_framework_simplejwt.authentication.JWTAuthentication', # Uncomment if JWT needed
-        # 'rest_framework.authentication.TokenAuthentication', # Less secure than Session/JWT
-    ),
-    'DEFAULT_PERMISSION_CLASSES': (
-        # Default to authenticated for most endpoints
-        'rest_framework.permissions.IsAuthenticatedOrReadOnly', # ReadOnly for safe methods, Auth for others
-    ),
-    'DEFAULT_RENDERER_CLASSES': [
-        'rest_framework.renderers.JSONRenderer',
-    ] + (['rest_framework.renderers.BrowsableAPIRenderer'] if DEBUG else []), # Browsable API only in DEBUG
-    'DEFAULT_PARSER_CLASSES': ( # Ensure JSON parser is default
-        'rest_framework.parsers.JSONParser',
-        'rest_framework.parsers.FormParser', # For admin panel or specific form posts
-        'rest_framework.parsers.MultiPartParser', # For file uploads if needed
-    ),
-    'DEFAULT_THROTTLE_CLASSES': (
-        'rest_framework.throttling.AnonRateThrottle',
-        'rest_framework.throttling.UserRateThrottle'
-    ),
+    'DEFAULT_AUTHENTICATION_CLASSES': ('rest_framework.authentication.SessionAuthentication',), # Session auth is default
+    'DEFAULT_PERMISSION_CLASSES': ('rest_framework.permissions.IsAuthenticatedOrReadOnly',), # Default permissions
+    'DEFAULT_RENDERER_CLASSES': ['rest_framework.renderers.JSONRenderer'] + (['rest_framework.renderers.BrowsableAPIRenderer'] if DEBUG else []),
+    'DEFAULT_PARSER_CLASSES': ('rest_framework.parsers.JSONParser', 'rest_framework.parsers.FormParser', 'rest_framework.parsers.MultiPartParser',),
+    'DEFAULT_THROTTLE_CLASSES': ('rest_framework.throttling.AnonRateThrottle', 'rest_framework.throttling.UserRateThrottle'),
     'DEFAULT_THROTTLE_RATES': {
-        'anon': env('DRF_ANON_THROTTLE_RATE'),
-        'user': env('DRF_USER_THROTTLE_RATE')
+        'anon': env('DRF_ANON_THROTTLE_RATE', default='100/hour'),
+        'user': env('DRF_USER_THROTTLE_RATE', default='1000/hour')
     },
-    # <<< BEST PRACTICE: Use custom exception handler >>>
-    'EXCEPTION_HANDLER': 'mymarketplace.middleware.ErrorHandlingMiddleware.api_exception_handler',
-    # Pagination Settings
+    'EXCEPTION_HANDLER': 'backend.middleware.ErrorHandlingMiddleware.api_exception_handler', # Custom handler
     'DEFAULT_PAGINATION_CLASS': 'rest_framework.pagination.PageNumberPagination',
-    'PAGE_SIZE': env.int('DRF_PAGE_SIZE'),
-    'PAGE_SIZE_QUERY_PARAM': 'page_size', # Allow client override (optional)
-    'MAX_PAGE_SIZE': env.int('DRF_MAX_PAGE_SIZE'),
-    # <<< BEST PRACTICE: Use OpenAPI schema >>>
-    'DEFAULT_SCHEMA_CLASS': 'rest_framework.schemas.openapi.AutoSchema',
-    # <<< BEST PRACTICE: Configure JSON renderer options for consistency >>>
-    # 'UNICODE_JSON': True, # Already default
-    # 'COMPACT_JSON': True, # Already default
-    # 'STRICT_JSON': True, # Already default
+    'PAGE_SIZE': env.int('DRF_PAGE_SIZE', default=20),
+    'PAGE_SIZE_QUERY_PARAM': 'page_size', # Allow client to override page size via query param
+    'MAX_PAGE_SIZE': env.int('DRF_MAX_PAGE_SIZE', default=100),
+    'DEFAULT_SCHEMA_CLASS': 'rest_framework.schemas.openapi.AutoSchema', # For OpenAPI schema generation
 }
 
-# --- Django-OTP Configuration ---
-OTP_LOGIN_URL = LOGIN_URL # Redirect here if OTP needed but not provided
-OTP_ADMIN_ENFORCE_OTP = True # Enforce OTP for Django admin site (/control/)
-# <<< CHANGE: Remove static device if not strictly needed for recovery >>>
-# OTP_STATIC_ENABLED = False # Disable static codes in production? (Requires alternative recovery)
-
 # --- GPG/PGP Settings ---
-# <<< CHANGE: GPG_HOME is now mandatory >>>
-GPG_HOME = env('GPG_HOME')
+GPG_HOME = env('GPG_HOME') # MUST be set in environment
 if not GPG_HOME:
     print("CRITICAL ERROR: GPG_HOME environment variable is not set.", file=sys.stderr)
-    sys.exit(1)
-# <<< BEST PRACTICE: Ensure GPG_HOME directory exists and has correct permissions >>>
+    sys.exit(1) # Critical, PGP operations will fail
 GPG_HOME_PATH = Path(GPG_HOME)
 try:
-    GPG_HOME_PATH.mkdir(parents=True, exist_ok=True, mode=0o700) # Create with restrictive permissions
-    print(f"INFO: Ensured GPG directory exists: {GPG_HOME_PATH}", file=sys.stderr)
+    GPG_HOME_PATH.parent.mkdir(parents=True, exist_ok=True) # Ensure parent directory exists
+    GPG_HOME_PATH.mkdir(mode=0o700, exist_ok=True) # Create GPG_HOME with 700 permissions if it doesn't exist
+    # Ensure permissions are set correctly, especially if the directory pre-existed.
+    if GPG_HOME_PATH.exists(): # This check is somewhat redundant if mkdir succeeded or exist_ok=True
+        os.chmod(GPG_HOME_PATH, 0o700) # Explicitly set permissions
+    print(f"INFO: Ensured GPG directory exists with 700 permissions: {GPG_HOME_PATH}", file=sys.stderr)
 except OSError as e:
-    print(f"WARNING: Could not create or verify GPG directory permissions for {GPG_HOME_PATH}: {e}", file=sys.stderr)
+    # Log more specific error if possible (e.g., permission denied during creation/chmod)
+    print(f"CRITICAL WARNING: Could not create or set permissions (700) for GPG directory {GPG_HOME_PATH}: {e}. PGP operations may fail.", file=sys.stderr)
+except Exception as e: # Catch any other unexpected errors
+    print(f"CRITICAL WARNING: Unexpected error ensuring GPG directory {GPG_HOME_PATH}: {e}", file=sys.stderr)
 
 
-# --- Cryptocurrency Settings (Loaded via django-environ) ---
-# <<< BEST PRACTICE: Use list for consistency >>>
-SUPPORTED_CURRENCIES = ['XMR', 'BTC', 'ETH']
-# Specific node URLs, credentials, confirmation counts, etc., are loaded from `env` at the top.
+# --- Cryptocurrency Settings ---
+SUPPORTED_CURRENCIES = ['XMR', 'BTC', 'ETH'] # Define what currencies are generally supported
+MONERO_RPC_PASSWORD=env('MONERO_RPC_PASSWORD') or get_secret_from_vault('crypto', 'monero_rpc_password', default=None)
+BITCOIN_RPC_PASSWORD=env('BITCOIN_RPC_PASSWORD') or get_secret_from_vault('crypto', 'bitcoin_rpc_password', default=None)
+# Add other crypto specific settings as needed, e.g., ETH private key for market wallet if used directly
 
-# --- Marketplace Specific Settings (Loaded via django-environ) ---
-# Values loaded directly from env object at top
-SITE_OWNER_USERNAME = env('SITE_OWNER_USERNAME') # Defined in env defaults now
+# --- Marketplace Specific Settings ---
+SITE_OWNER_USERNAME = env('SITE_OWNER_USERNAME')
 MARKET_USER_USERNAME = env('MARKET_USER_USERNAME')
-# Fees, bond amounts, timeouts etc loaded from `env` at the top.
-
-# --- PGP Session Timeout Settings (Loaded via django-environ) ---
-# Values (DEFAULT_PGP_AUTH_SESSION_TIMEOUT_MINUTES, OWNER_PGP_AUTH_SESSION_TIMEOUT_MINUTES) loaded from `env` at top.
+# Other marketplace parameters (fees, timeouts, etc.) are primarily defined in env() defaults at the top
 
 # --- WebAuthn (FIDO2) Settings ---
-# REASON: Added configuration parameters required by the WebAuthn service.
-# MUST be set via environment variables or Vault for production.
-WEBAUTHN_RP_NAME = 'Shadow Market' # Human-readable name for the Relying Party (your site)
-WEBAUTHN_RP_ID = env('WEBAUTHN_RP_ID', default=None) # Relying Party ID (e.g., your .onion domain OR localhost in dev). CRITICAL.
-WEBAUTHN_EXPECTED_ORIGIN = env('WEBAUTHN_EXPECTED_ORIGIN', default=None) # Full origin (e.g., http://<onion_address>.onion OR http://localhost:3000 in dev). CRITICAL.
-WEBAUTHN_CHALLENGE_TIMEOUT_SECONDS = env.int('WEBAUTHN_CHALLENGE_TIMEOUT_SECONDS', default=300) # Timeout for challenges (default: 5 minutes)
+# https://django-webauthn.readthedocs.io/en/latest/settings.html
+WEBAUTHN_RP_NAME = 'Shadow Market' # Display name for the Relying Party
+WEBAUTHN_RP_ID = env('WEBAUTHN_RP_ID', default=None) # Relying Party ID (e.g., 'example.com') - MUST match domain
+WEBAUTHN_EXPECTED_ORIGIN = env('WEBAUTHN_EXPECTED_ORIGIN', default=None) # Full origin (e.g., 'https://example.com')
+WEBAUTHN_CHALLENGE_TIMEOUT_SECONDS = env.int('WEBAUTHN_CHALLENGE_TIMEOUT_SECONDS', default=300) # 5 minutes
 
-# Add mandatory checks for production environment
+# Production checks for WebAuthn settings
 if DJANGO_ENV == 'production':
     if not WEBAUTHN_RP_ID:
         print("CRITICAL ERROR: WEBAUTHN_RP_ID setting is NOT configured for production!", file=sys.stderr)
@@ -661,34 +584,41 @@ if DJANGO_ENV == 'production':
     if not WEBAUTHN_EXPECTED_ORIGIN:
         print("CRITICAL ERROR: WEBAUTHN_EXPECTED_ORIGIN setting is NOT configured for production!", file=sys.stderr)
         sys.exit(1)
-    # Optionally, perform stricter validation on the format of RP_ID and ORIGIN here
-    # e.g., check if RP_ID looks like a domain, or origin looks like a valid URL.
+    if not WEBAUTHN_EXPECTED_ORIGIN.startswith('https://'): # Require HTTPS for origin in production
+        print(f"CRITICAL WARNING: WEBAUTHN_EXPECTED_ORIGIN ('{WEBAUTHN_EXPECTED_ORIGIN}') must use HTTPS in production.", file=sys.stderr)
+        # Consider sys.exit(1) if this is a strict requirement
 
-# --- CAPTCHA Settings --- <<<--- ADDED ---<<<
-CAPTCHA_CHALLENGE_FUNCT = 'captcha.helpers.math_challenge'
-CAPTCHA_TIMEOUT = 5 # minutes (Default)
-# CAPTCHA_FONT_SIZE = 22 # Example customization
-# CAPTCHA_LETTER_ROTATION = (-35, 35) # Example customization
-# CAPTCHA_BACKGROUND_COLOR = '#ffffff' # Example customization
-# CAPTCHA_FOREGROUND_COLOR = '#001100' # Example customization
-# --- End CAPTCHA Settings ---
+# --- CAPTCHA Settings (django-simple-captcha) ---
+# https://django-simple-captcha.readthedocs.io/en/latest/advanced.html
+CAPTCHA_CHALLENGE_FUNCT = 'captcha.helpers.math_challenge' # Default math challenge
+CAPTCHA_TIMEOUT = 5  # Minutes until CAPTCHA expires
+CAPTCHA_LENGTH = 6   # Number of chars in challenge
 
 # --- Final Checks (Production Only) ---
 if DJANGO_ENV == 'production':
-    # <<< BEST PRACTICE: Check critical service URLs are configured >>>
-    if not all([env('MONERO_RPC_URL'), env('MONERO_WALLET_RPC_URL'), env('BITCOIN_RPC_URL'), env('ETHEREUM_NODE_URL')]):
+    # Check for presence of critical cryptocurrency node URLs
+    if not all([
+        env('MONERO_RPC_URL'),
+        env('MONERO_WALLET_RPC_URL'),
+        env('BITCOIN_RPC_URL'),
+        env('ETHEREUM_NODE_URL')
+    ]):
         print("CRITICAL WARNING: One or more cryptocurrency node URLs are NOT configured for production!", file=sys.stderr)
+    # Check for crypto RPC passwords
+    if not MONERO_RPC_PASSWORD: print("CRITICAL WARNING: Monero RPC password not set for production!", file=sys.stderr)
+    if not BITCOIN_RPC_PASSWORD: print("CRITICAL WARNING: Bitcoin RPC password not set for production!", file=sys.stderr)
+    # Check Vault authentication if Vault address is provided
     if env('VAULT_ADDR') and not (env('VAULT_TOKEN') or (env('VAULT_APPROLE_ROLE_ID') and env('VAULT_APPROLE_SECRET_ID'))):
-        print("CRITICAL WARNING: VAULT_ADDR is set, but no Vault authentication method provided.", file=sys.stderr)
-    if not env('GPG_HOME'): # Redundant check as it exits earlier, but good for defense-in-depth
-        print("CRITICAL WARNING: GPG_HOME is not set for production!", file=sys.stderr)
-    # Add check for market user existence?
-    # Add check for secure Redis password? (Difficult from URL)
+        print("CRITICAL WARNING: VAULT_ADDR is set, but no Vault authentication method provided/successful for production.", file=sys.stderr)
+    # Ensure DEBUG is False in production
     if DEBUG:
         print("CRITICAL ERROR: DEBUG is True in production environment!", file=sys.stderr)
         sys.exit(1)
+    # Check for WhiteNoise if serving static files directly via Django (common for some PaaS)
+    is_whitenoise_present = any('whitenoise.middleware.WhiteNoiseMiddleware' in mw_path for mw_path in MIDDLEWARE)
+    if '/static/' == STATIC_URL and not is_whitenoise_present:
+        print("WARNING: Serving static files via Django (STATIC_URL='/static/') without WhiteNoise in production is inefficient and potentially insecure. Consider using WhiteNoise or a dedicated static file server.", file=sys.stderr)
 
-
-print(f"--- Base settings loaded (DJANGO_ENV={DJANGO_ENV}) ---", file=sys.stderr)
+print(f"--- Base settings loaded (DJANGO_ENV={DJANGO_ENV}, DEBUG={DEBUG}) ---", file=sys.stderr)
 
 # --- END OF FILE ---

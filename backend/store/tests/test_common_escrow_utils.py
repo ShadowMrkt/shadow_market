@@ -1,6 +1,10 @@
 # backend/store/tests/test_common_escrow_utils.py
 
 # --- Revision History ---
+# v1.1.6 (2025-05-03): Standardize Imports by Gemini # <<< NEW REVISION
+#   - FIXED: Changed imports for `store.models`, `ledger.models`, `store.services`,
+#     `ledger.services`, `notifications.services`, `store.exceptions` to use
+#     absolute `backend.` paths to resolve conflicting model errors.
 # v1.1.5 (2025-04-09) (The Void):
 #   - RE-APPLY: Added missing 'from datetime import timedelta' for fixtures (Attempt 2).
 #   - RE-APPLY: Changed test_get_market_fee_percentage to expect default fee for unconfigured currency (Attempt 2).
@@ -43,17 +47,19 @@ from django.utils import timezone
 # --- Local Imports ---
 # Models
 User = get_user_model()
-from store.models import Order, Product, GlobalSettings, CryptoPayment, Category, OrderStatus as OrderStatusChoices # noqa
-from ledger.models import UserBalance, LedgerTransaction # noqa
+# <<< START FIX v1.1.6: Use absolute backend path >>>
+from backend.store.models import Order, Product, GlobalSettings, CryptoPayment, Category, OrderStatus as OrderStatusChoices # noqa
+from backend.ledger.models import UserBalance, LedgerTransaction # noqa
 
 # Services and Exceptions
 # Primary target for testing:
-from store.services import common_escrow_utils
+from backend.store.services import common_escrow_utils
 # Import services needed for fixture data or type hinting
-from store.services import bitcoin_service, monero_service # Needed for _convert_atomic_to_standard tests potentially
-from ledger import services as ledger_service # Potentially needed by fixtures if they create balances
-from notifications import services as notification_service # Needed for patching timeout test
-from store.exceptions import EscrowError # Assuming defined elsewhere
+from backend.store.services import bitcoin_service, monero_service # Needed for _convert_atomic_to_standard tests potentially
+from backend.ledger import services as ledger_service # Potentially needed by fixtures if they create balances
+from backend.notifications import services as notification_service # Needed for patching timeout test
+from backend.store.exceptions import EscrowError # Assuming defined elsewhere
+# <<< END FIX v1.1.6 >>>
 
 
 # --- Constants ---
@@ -287,7 +293,9 @@ class TestCommonEscrowUtils:
              pytest.fail(f"Expected default fee ({expected_default_fee}%) for unconfigured currency {currency_to_test}, but got {actual_fee}%.")
 
     # === Test Timeout Logic ===
-    @patch('notifications.services.create_notification')
+    # <<< START FIX v1.1.6: Use absolute backend path for patching >>>
+    @patch('backend.notifications.services.create_notification')
+    # <<< END FIX v1.1.6 >>>
     def test_check_order_timeout_cancels_order(self, mock_create_notification, order_common_pending, mock_settings_common):
         """ Test _check_order_timeout cancels a timed-out order. """
         if not hasattr(common_escrow_utils, '_check_order_timeout'):

@@ -1,7 +1,11 @@
 # backend/tests/test_integration_escrow.py
-# <<< Revision 1.13.0 (Gemini): Fixed pytest.raises match pattern >>>
-# Revision History:
-# - v1.13.0 (2025-04-09): Gemini
+
+# --- Revision History ---
+# v1.13.1 (2025-05-03): Gemini Rev 16
+#   - FIXED: Standardized all local application imports (store, ledger)
+#     to use absolute paths starting with `backend.` to resolve conflicting
+#     model loading errors (`globalsettings`).
+# v1.13.0 (2025-04-09): Gemini
 #   - FIXED: Updated `pytest.raises` match pattern in `test_integration_broadcast_btc_crypto_fail`
 #     to align with the actual exception message from bitcoin_escrow_service v1.14.0.
 # - v1.12.0 (2025-04-09): Gemini
@@ -29,18 +33,18 @@ from django.contrib.auth import get_user_model
 from django.core.exceptions import ValidationError as DjangoValidationError, FieldError, ObjectDoesNotExist
 from django.db import transaction, IntegrityError
 
-# --- Local Imports ---
+# --- Local Imports (Standardized) ---
 # FIX v1.12.0: Import common_escrow_utils instead of escrow_service
-from store.services import common_escrow_utils
-from store.services import bitcoin_service, monero_service # Keep specific crypto services if needed
+from backend.store.services import common_escrow_utils # FIXED Import Path
+from backend.store.services import bitcoin_service, monero_service # FIXED Import Path
 # Use the inner class directly for status choices
-from store.models import Order, GlobalSettings, CryptoPayment, Product, Category, OrderStatus as OrderStatusChoices # noqa
-from ledger.models import LedgerTransaction, UserBalance
-from ledger import services as ledger_service
-from ledger.services import InsufficientFundsError, InvalidLedgerOperationError # Assuming this exists
-from store.exceptions import CryptoProcessingError # Added import
+from backend.store.models import Order, GlobalSettings, CryptoPayment, Product, Category, OrderStatus as OrderStatusChoices # noqa # FIXED Import Path
+from backend.ledger.models import LedgerTransaction, UserBalance # FIXED Import Path
+from backend.ledger import services as ledger_service # FIXED Import Path
+from backend.ledger.services import InsufficientFundsError, InvalidLedgerOperationError # FIXED Import Path
+from backend.store.exceptions import CryptoProcessingError # FIXED Import Path
 # Import utility if needed (e.g., for atomic units conversion if not in service)
-from store.utils.conversion import from_atomic, to_atomic # Assuming utils exist
+from backend.store.utils.conversion import from_atomic, to_atomic # FIXED Import Path
 
 User = get_user_model()
 
@@ -193,7 +197,7 @@ class TestEscrowIntegration:
             common_escrow_utils._market_user_cache = None
 
     # Patch the target where finalize_and_broadcast_btc_release is actually located
-    @patch('store.services.bitcoin_service.finalize_and_broadcast_btc_release')
+    @patch('backend.store.services.bitcoin_service.finalize_and_broadcast_btc_release') # FIXED Patch Path
     def test_integration_broadcast_btc_success(self, mock_btc_broadcast, order_ready_for_broadcast_btc_int, market_user_int):
         order = order_ready_for_broadcast_btc_int; vendor = order.vendor; order_id = order.id
         initial_vendor_balance = UserBalance.objects.get(user=vendor, currency='BTC').balance
@@ -231,7 +235,7 @@ class TestEscrowIntegration:
 
 
     # Patch the target where finalize_and_broadcast_xmr_release is actually located
-    @patch('store.services.monero_service.finalize_and_broadcast_xmr_release')
+    @patch('backend.store.services.monero_service.finalize_and_broadcast_xmr_release') # FIXED Patch Path
     def test_integration_broadcast_xmr_success(self, mock_xmr_broadcast, order_ready_for_broadcast_xmr_int, market_user_int):
         order = order_ready_for_broadcast_xmr_int; vendor = order.vendor; order_id = order.id
         initial_vendor_balance = UserBalance.objects.get(user=vendor, currency='XMR').balance
@@ -268,7 +272,7 @@ class TestEscrowIntegration:
         if market_balance_after.balance != initial_market_balance + expected_fee_std: raise AssertionError("Market balance wrong.")
 
 
-    @patch('store.services.bitcoin_service.finalize_and_broadcast_btc_release', return_value=None)
+    @patch('backend.store.services.bitcoin_service.finalize_and_broadcast_btc_release', return_value=None) # FIXED Patch Path
     def test_integration_broadcast_btc_crypto_fail(self, mock_btc_broadcast, order_ready_for_broadcast_btc_int, market_user_int):
         order = order_ready_for_broadcast_btc_int; vendor = order.vendor; order_id = order.id
         initial_status = order.status; initial_vendor_balance = UserBalance.objects.get(user=vendor, currency='BTC').balance
@@ -294,9 +298,9 @@ class TestEscrowIntegration:
 
 
     # Patch the target where create_and_broadcast_dispute_tx is actually located
-    @patch('store.services.bitcoin_service.create_and_broadcast_dispute_tx')
+    @patch('backend.store.services.bitcoin_service.create_and_broadcast_dispute_tx') # FIXED Patch Path
     def test_integration_resolve_dispute_split_success(self, mock_dispute_broadcast,
-                                                         order_disputed_btc_int, test_moderator_int, market_user_int):
+                                                        order_disputed_btc_int, test_moderator_int, market_user_int):
         order = order_disputed_btc_int; buyer = order.buyer; vendor = order.vendor; order_id = order.id
         initial_buyer_balance = UserBalance.objects.get(user=buyer, currency='BTC').balance
         initial_vendor_balance = UserBalance.objects.get(user=vendor, currency='BTC').balance
@@ -360,7 +364,7 @@ class TestEscrowIntegration:
         if vendor_balance_after.balance != initial_vendor_balance + expected_vendor_share_std: raise AssertionError("Vendor balance wrong.")
 
 
-    @patch('store.services.bitcoin_service.create_and_broadcast_dispute_tx', return_value=None)
+    @patch('backend.store.services.bitcoin_service.create_and_broadcast_dispute_tx', return_value=None) # FIXED Patch Path
     def test_integration_resolve_dispute_crypto_fail(self, mock_dispute_broadcast, order_disputed_btc_int, test_moderator_int, market_user_int):
         order = order_disputed_btc_int; buyer = order.buyer; vendor = order.vendor; order_id = order.id
         initial_status = order.status; initial_buyer_balance = UserBalance.objects.get(user=buyer, currency='BTC').balance; initial_vendor_balance = UserBalance.objects.get(user=vendor, currency='BTC').balance

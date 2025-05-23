@@ -1,9 +1,9 @@
 // frontend/pages/profile.test.js
 // --- REVISION HISTORY ---
-// 2025-04-23 (Gemini): Rev 35 - Added checks for spinner absence within buttons in final `waitFor` blocks after async operations, attempting to further stabilize tests and potentially resolve lingering act warnings.
-// 2025-04-23 (Gemini): Rev 34 - Added jest.spyOn for console.error/log in specific tests to suppress expected error/log messages during test runs (e.g., Address/PGP/Password update failures, Vendor Apply/Status failures).
-// 2025-04-23 (Gemini): Rev 33 - Removed incorrect assertion expecting "Refresh Status" button in tests for terminal vendor statuses ('approved', 'rejected'), fixing test failures introduced in Rev 32. Component does not show refresh for final states.
-// ... (previous history omitted for brevity) ...
+// 2025-04-28 (Gemini): Rev 40 - Added 'await Promise.resolve()' inside act() blocks after *initial* form submit clicks (for PGP-gated actions), in addition to after modal confirm clicks, to further attempt flushing microtasks for act warnings.
+// 2025-04-28 (Gemini): Rev 39 - Added 'await Promise.resolve()' inside act() blocks after PGP modal confirm clicks, aiming to flush microtasks and resolve act warnings without wrapping final waitFor blocks. (Ineffective)
+// 2025-04-28 (Gemini): Rev 38 - Reverted act() wrapper around final waitFor blocks (Rev 37) as it caused new test failures. Returning to previous passing state (Rev 35 equivalent) to address functional bug first.
+// ... (previous history) ...
 
 import React from 'react';
 import { render, screen, waitFor, within, act } from '@testing-library/react';
@@ -59,10 +59,6 @@ jest.mock('../components/PgpChallengeSigner', () => {
             <div data-testid="mock-pgp-signer">
                 {errorMessage && <div role="alert">{errorMessage}</div>}
                 <p>Challenge: {challenge?.challenge_text}</p>
-                {/* IMPORTANT: Wrap callbacks in act here IF THEY CAUSE STATE UPDATES IN THE PARENT *DIRECTLY*,
-                    otherwise the act in the test clicking the button is sufficient.
-                    Since onSuccess/onFail/onCancel *trigger* state updates in ProfilePage, wrapping them
-                    here ensures they run within the test's act context triggered by userEvent.click */}
                 <button onClick={() => act(() => { onSuccess('mockSignedChallenge'); })}>Confirm Signature</button>
                 <button onClick={() => act(() => { onFail('Mock PGP Signer Failure'); })}>Fail Signature</button>
                 <button onClick={() => act(() => { onCancel(); })}>Cancel Signature</button>
@@ -240,7 +236,7 @@ describe('ProfilePage Component', () => {
     // --- Address Update Tests ---
     describe('Address Update', () => {
         test('updates address fields and handles successful save', async () => {
-             // <<< REVISION 34: Suppress expected console.log >>>
+            // <<< REVISION 34: Suppress expected console.log >>>
             const consoleLogSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
             const updatedUserResponse = { ...defaultMockUser, btc_withdrawal_address: 'newBTCAddress' };
             updateCurrentUser
@@ -254,10 +250,12 @@ describe('ProfilePage Component', () => {
             const saveButton = screen.getByRole('button', { name: /Save Addresses/i });
 
             // Simulate user input and first API call trigger (request challenge)
+            // <<< REVISION 40: Added Promise.resolve() >>>
             await act(async () => {
                 await user.clear(btcInput);
                 await user.type(btcInput, 'newBTCAddress');
                 await user.click(saveButton);
+                await Promise.resolve(); // Flush microtasks
             });
 
             // Wait for the modal and confirm button to appear
@@ -269,8 +267,10 @@ describe('ProfilePage Component', () => {
             expect(within(saveButton).getByTestId('button-spinner')).toBeInTheDocument();
 
             // Simulate PGP confirmation and second API call trigger (submit update)
+            // <<< REVISION 39: Added Promise.resolve() >>>
             await act(async () => {
                 await user.click(confirmButton);
+                await Promise.resolve(); // Flush microtasks
             });
 
             // Wait for ALL final effects after successful modal confirmation
@@ -318,10 +318,12 @@ describe('ProfilePage Component', () => {
             const addressSection = screen.getByRole('heading', { name: /Withdrawal Addresses/i }).closest('section');
 
             // Simulate user input and first API call trigger
+            // <<< REVISION 40: Added Promise.resolve() >>>
             await act(async () => {
                 await user.clear(btcInput);
                 await user.type(btcInput, 'invalid-btc');
                 await user.click(saveButton);
+                await Promise.resolve(); // Flush microtasks
             });
 
             // Wait for modal
@@ -333,8 +335,10 @@ describe('ProfilePage Component', () => {
             expect(within(saveButton).getByTestId('button-spinner')).toBeInTheDocument();
 
             // Simulate PGP confirmation and second API call trigger (which will fail)
+            // <<< REVISION 39: Added Promise.resolve() >>>
             await act(async () => {
                 await user.click(confirmButton);
+                await Promise.resolve(); // Flush microtasks
             });
 
             // Wait for final outcomes AFTER modal confirmation leads to failure
@@ -376,6 +380,7 @@ describe('ProfilePage Component', () => {
                 await user.clear(pgpInput);
                 await user.type(pgpInput, 'this is not a pgp key');
                 await user.click(updateButton);
+                // No Promise.resolve needed here as it's client-side validation fail
             });
 
             // Wait for client-side validation error
@@ -397,10 +402,12 @@ describe('ProfilePage Component', () => {
             const updateButton = screen.getByRole('button', { name: /Update PGP Key/i });
 
             // Simulate valid input and click
+            // <<< REVISION 40: Added Promise.resolve() >>>
             await act(async () => {
                 await user.clear(pgpInput);
                 await user.type(pgpInput, validPgpKeyNew); // Use the valid new key
                 await user.click(updateButton);
+                await Promise.resolve(); // Flush microtasks
             });
 
             // Wait for modal to appear after successful challenge request
@@ -410,7 +417,7 @@ describe('ProfilePage Component', () => {
                 expect(within(screen.getByTestId('mock-pgp-signer')).queryByRole('alert')).not.toBeInTheDocument();
                 // Check API call for challenge
                 expect(updateCurrentUser).toHaveBeenCalledWith({ request_pgp_challenge_for: 'pgp_key' });
-                // Check button is disabled AND spinner is present
+                // Check button is disabled AND spinner present
                 expect(updateButton).toBeDisabled();
                 // <<< REVISION 35: Check for spinner in button >>>
                 expect(within(updateButton).getByTestId('button-spinner')).toBeInTheDocument();
@@ -426,10 +433,12 @@ describe('ProfilePage Component', () => {
             const updateButton = screen.getByRole('button', { name: /Update PGP Key/i });
 
             // Initiate the update
+            // <<< REVISION 40: Added Promise.resolve() >>>
             await act(async () => {
                 await user.clear(pgpInput);
                 await user.type(pgpInput, validPgpKeyNew);
                 await user.click(updateButton);
+                await Promise.resolve(); // Flush microtasks
             });
 
             // Wait for modal and get cancel button
@@ -440,6 +449,7 @@ describe('ProfilePage Component', () => {
             // Click cancel
             await act(async () => {
                 await user.click(cancelButton);
+                 // No need for Promise.resolve here as cancel is synchronous in the mock
             });
 
             // Wait for modal to close and check toast
@@ -468,10 +478,12 @@ describe('ProfilePage Component', () => {
             const updateButton = screen.getByRole('button', { name: /Update PGP Key/i });
 
             // Initiate update
+            // <<< REVISION 40: Added Promise.resolve() >>>
             await act(async () => {
                 await user.clear(pgpInput);
                 await user.type(pgpInput, validPgpKeyNew);
                 await user.click(updateButton);
+                await Promise.resolve(); // Flush microtasks
             });
 
             // Confirm in modal
@@ -482,9 +494,10 @@ describe('ProfilePage Component', () => {
             // <<< REVISION 35: Check for spinner in button >>>
             expect(within(updateButton).getByTestId('button-spinner')).toBeInTheDocument();
 
-
+            // <<< REVISION 39: Added Promise.resolve() >>>
             await act(async () => {
                 await user.click(confirmButton);
+                await Promise.resolve(); // Flush microtasks
             });
 
             // Wait for final successful state
@@ -501,8 +514,8 @@ describe('ProfilePage Component', () => {
                 expect(screen.getByLabelText(/Current PGP Key/i)).toHaveValue(validPgpKeyNew);
                 // Check button is re-enabled AND spinner is gone
                 expect(updateButton).toBeEnabled();
-                 // <<< REVISION 35: Check for spinner absence in button >>>
-                 expect(within(updateButton).queryByTestId('button-spinner')).not.toBeInTheDocument();
+                // <<< REVISION 35: Check for spinner absence in button >>>
+                expect(within(updateButton).queryByTestId('button-spinner')).not.toBeInTheDocument();
             });
         });
 
@@ -526,10 +539,12 @@ describe('ProfilePage Component', () => {
             const pgpSection = screen.getByRole('heading', { name: /PGP Public Key/i }).closest('section');
 
             // Initiate update
+            // <<< REVISION 40: Added Promise.resolve() >>>
             await act(async () => {
                 await user.clear(pgpInput);
                 await user.type(pgpInput, validPgpKeyNew);
                 await user.click(updateButton);
+                await Promise.resolve(); // Flush microtasks
             });
 
             // Confirm in modal (which leads to failure)
@@ -540,8 +555,10 @@ describe('ProfilePage Component', () => {
              // <<< REVISION 35: Check for spinner in button >>>
              expect(within(updateButton).getByTestId('button-spinner')).toBeInTheDocument();
 
+            // <<< REVISION 39: Added Promise.resolve() >>>
             await act(async () => {
                 await user.click(confirmButton);
+                await Promise.resolve(); // Flush microtasks
             });
 
             // Wait for final failure state
@@ -562,8 +579,8 @@ describe('ProfilePage Component', () => {
             // Check state not updated
             expect(useAuth().setUser).not.toHaveBeenCalled();
             // Input should retain the value user typed
-             expect(screen.getByLabelText(/Current PGP Key/i)).toHaveValue(validPgpKeyNew);
-             consoleErrorSpy.mockRestore(); // <<< REVISION 34: Restore spy >>>
+            expect(screen.getByLabelText(/Current PGP Key/i)).toHaveValue(validPgpKeyNew);
+            consoleErrorSpy.mockRestore(); // <<< REVISION 34: Restore spy >>>
         });
     });
 
@@ -577,7 +594,10 @@ describe('ProfilePage Component', () => {
             const passwordSection = screen.getByRole('heading', { name: /Change Password/i }).closest('section');
 
             // Click change with empty fields
-            await act(async () => { await user.click(changeButton); });
+            await act(async () => {
+                await user.click(changeButton);
+                // No Promise.resolve needed here (client-side fail)
+            });
 
             // Wait for client-side error
             await waitFor(() => {
@@ -602,9 +622,10 @@ describe('ProfilePage Component', () => {
                 await user.type(screen.getByLabelText(/^New Password/i), validLengthPass1);
                 await user.type(screen.getByLabelText(/Confirm New Password/i), validLengthPass2);
                 await user.click(changeButton);
-            });
+                 // No Promise.resolve needed here (client-side fail)
+           });
 
-             // Wait for client-side error
+              // Wait for client-side error
             await waitFor(() => {
                 expect(within(passwordSection).getByRole('alert')).toHaveTextContent("New passwords do not match.");
                 expect(showErrorToast).toHaveBeenCalledWith("New passwords do not match.");
@@ -626,6 +647,7 @@ describe('ProfilePage Component', () => {
                 await user.type(screen.getByLabelText(/^New Password/i), shortPassword);
                 await user.type(screen.getByLabelText(/Confirm New Password/i), shortPassword);
                 await user.click(changeButton);
+                // No Promise.resolve needed here (client-side fail)
             });
 
             // Wait for client-side error
@@ -637,7 +659,7 @@ describe('ProfilePage Component', () => {
         });
 
         test('shows password validation error: new same as current', async () => {
-             render(<ProfilePage />);
+              render(<ProfilePage />);
             await waitFor(() => expect(getVendorApplicationStatus).toHaveBeenCalledTimes(1));
             const user = userEvent.setup();
             const currentPasswordValue = 'a'.repeat(MIN_PASSWORD_LENGTH);
@@ -650,12 +672,13 @@ describe('ProfilePage Component', () => {
                 await user.type(screen.getByLabelText(/^New Password/i), currentPasswordValue);
                 await user.type(screen.getByLabelText(/Confirm New Password/i), currentPasswordValue);
                 await user.click(changeButton);
+                 // No Promise.resolve needed here (client-side fail)
             });
 
             // Wait for client-side error
             await waitFor(() => {
                  expect(within(passwordSection).getByRole('alert')).toHaveTextContent(/New password cannot be the same as the current password/i);
-                expect(showErrorToast).toHaveBeenCalledWith("New password cannot be the same as the current password.");
+                 expect(showErrorToast).toHaveBeenCalledWith("New password cannot be the same as the current password.");
             });
             expect(updateCurrentUser).not.toHaveBeenCalled(); // API not called
         });
@@ -676,11 +699,13 @@ describe('ProfilePage Component', () => {
             const newPassword = 'b'.repeat(MIN_PASSWORD_LENGTH);
 
             // Enter valid data and initiate change
+            // <<< REVISION 40: Added Promise.resolve() >>>
             await act(async () => {
                 await user.type(currentPassInput, 'oldCorrectPassword');
                 await user.type(newPassInput, newPassword);
                 await user.type(confirmPassInput, newPassword);
                 await user.click(changeButton);
+                await Promise.resolve(); // Flush microtasks
             });
 
             // Confirm in modal
@@ -691,12 +716,13 @@ describe('ProfilePage Component', () => {
             // <<< REVISION 35: Check for spinner in button >>>
             expect(within(changeButton).getByTestId('button-spinner')).toBeInTheDocument();
 
-
+            // <<< REVISION 39: Added Promise.resolve() >>>
             await act(async () => {
                 await user.click(confirmButton);
+                await Promise.resolve(); // Flush microtasks
             });
 
-            // Wait for final success state
+              // Wait for final success state
             await waitFor(() => {
                 expect(updateCurrentUser).toHaveBeenCalledTimes(2);
                 expect(updateCurrentUser).toHaveBeenNthCalledWith(2, {
@@ -716,7 +742,7 @@ describe('ProfilePage Component', () => {
                  // <<< REVISION 35: Check for spinner absence in button >>>
                  expect(within(changeButton).queryByTestId('button-spinner')).not.toBeInTheDocument();
             });
-             // Password change shouldn't call setUser context
+              // Password change shouldn't call setUser context
             expect(useAuth().setUser).not.toHaveBeenCalled();
         });
 
@@ -745,23 +771,27 @@ describe('ProfilePage Component', () => {
             const wrongCurrentPassword = 'wrongCurrentPassword';
 
             // Enter data with wrong current pass and initiate
+            // <<< REVISION 40: Added Promise.resolve() >>>
             await act(async () => {
                 await user.type(currentPassInput, wrongCurrentPassword);
                 await user.type(newPassInput, newPassword);
                 await user.type(confirmPassInput, newPassword);
                 await user.click(changeButton);
+                await Promise.resolve(); // Flush microtasks
             });
 
             // Confirm in modal (leads to failure)
             const confirmButton = await screen.findByRole('button', { name: /Confirm Signature/i });
             expect(updateCurrentUser).toHaveBeenCalledWith({ request_pgp_challenge_for: 'password' });
-             // Check button is disabled
-             expect(changeButton).toBeDisabled();
-             // <<< REVISION 35: Check for spinner in button >>>
-             expect(within(changeButton).getByTestId('button-spinner')).toBeInTheDocument();
+              // Check button is disabled
+              expect(changeButton).toBeDisabled();
+              // <<< REVISION 35: Check for spinner in button >>>
+              expect(within(changeButton).getByTestId('button-spinner')).toBeInTheDocument();
 
+            // <<< REVISION 39: Added Promise.resolve() >>>
             await act(async () => {
                 await user.click(confirmButton);
+                await Promise.resolve(); // Flush microtasks
             });
 
             // Wait for final failure state
@@ -818,7 +848,11 @@ describe('ProfilePage Component', () => {
             const applyButton = await screen.findByRole('button', { name: /Apply for Vendor Status/i });
 
             // Click apply
-            await act(async () => { await user.click(applyButton); });
+            // <<< REVISION 40: Added Promise.resolve() >>>
+            await act(async () => {
+                await user.click(applyButton);
+                await Promise.resolve(); // Flush microtasks
+            });
 
             // Wait for modal to appear and check API call
             await waitFor(() => {
@@ -829,7 +863,7 @@ describe('ProfilePage Component', () => {
                  // <<< REVISION 35: Check for spinner in button >>>
                  expect(within(applyButton).getByTestId('button-spinner')).toBeInTheDocument();
             });
-             // No success toast yet
+              // No success toast yet
             expect(showSuccessToast).not.toHaveBeenCalled();
         });
 
@@ -848,19 +882,27 @@ describe('ProfilePage Component', () => {
             const applyButton = await screen.findByRole('button', { name: /Apply for Vendor Status/i }); // Wait for button
 
             // Click Apply
-            await act(async () => { await user.click(applyButton); });
+            // <<< REVISION 40: Added Promise.resolve() >>>
+            await act(async () => {
+                await user.click(applyButton);
+                await Promise.resolve(); // Flush microtasks
+            });
 
             // Modal appears, get confirm button
             const confirmButton = await screen.findByRole('button', { name: /Confirm Signature/i });
             expect(applyForVendor).toHaveBeenCalledTimes(1); // Challenge request done
             // Check button is disabled
             expect(applyButton).toBeDisabled();
-             // <<< REVISION 35: Check for spinner in button >>>
-             expect(within(applyButton).getByTestId('button-spinner')).toBeInTheDocument();
+              // <<< REVISION 35: Check for spinner in button >>>
+              expect(within(applyButton).getByTestId('button-spinner')).toBeInTheDocument();
 
 
             // Click Confirm in Modal
-            await act(async () => { await user.click(confirmButton); });
+            // <<< REVISION 39: Added Promise.resolve() >>>
+            await act(async () => {
+                await user.click(confirmButton);
+                await Promise.resolve(); // Flush microtasks
+            });
 
             // Wait for ALL final effects after successful submission
             await waitFor(() => {
@@ -900,7 +942,11 @@ describe('ProfilePage Component', () => {
             const vendorSection = screen.getByRole('heading', { name: /Vendor Status/i, level: 2 }).closest('section');
 
             // Click apply (triggers failed API call)
-            await act(async () => { await user.click(applyButton); });
+            // <<< REVISION 40: Added Promise.resolve() >>>
+            await act(async () => {
+                await user.click(applyButton);
+                await Promise.resolve(); // Flush microtasks
+            });
 
             // Wait for error state
             await waitFor(() => {
@@ -914,8 +960,8 @@ describe('ProfilePage Component', () => {
             });
 
             // Modal should not have opened
-             expect(screen.queryByTestId('mock-pgp-signer')).not.toBeInTheDocument();
-             consoleErrorSpy.mockRestore(); // <<< REVISION 34: Restore spy >>>
+            expect(screen.queryByTestId('mock-pgp-signer')).not.toBeInTheDocument();
+            consoleErrorSpy.mockRestore(); // <<< REVISION 34: Restore spy >>>
         });
 
         // --- Tests for displaying existing statuses ---
@@ -942,15 +988,15 @@ describe('ProfilePage Component', () => {
             getVendorApplicationStatus.mockResolvedValue(mockApp);
             render(<ProfilePage />);
 
-             await waitFor(() => {
-                 expect(getVendorApplicationStatus).toHaveBeenCalledTimes(1);
-                 expect(screen.getByText(/Your Vendor Application Status:/i)).toBeInTheDocument();
-                 expect(screen.getByText(mockApp.status_display || mockApp.status)).toBeInTheDocument();
-                 expect(screen.getByText(/Your application is currently under review./i)).toBeInTheDocument(); // Check specific text
-                 // Check Refresh button exists
-                 expect(screen.getByRole('button', { name: /Refresh Status/i })).toBeInTheDocument();
-             });
-              expect(screen.queryByRole('button', { name: /Apply for Vendor Status/i })).not.toBeInTheDocument();
+              await waitFor(() => {
+                   expect(getVendorApplicationStatus).toHaveBeenCalledTimes(1);
+                   expect(screen.getByText(/Your Vendor Application Status:/i)).toBeInTheDocument();
+                   expect(screen.getByText(mockApp.status_display || mockApp.status)).toBeInTheDocument();
+                   expect(screen.getByText(/Your application is currently under review./i)).toBeInTheDocument(); // Check specific text
+                   // Check Refresh button exists
+                   expect(screen.getByRole('button', { name: /Refresh Status/i })).toBeInTheDocument();
+               });
+               expect(screen.queryByRole('button', { name: /Apply for Vendor Status/i })).not.toBeInTheDocument();
         });
 
          test('fetches and displays existing "approved" application status on load', async () => {
@@ -958,12 +1004,12 @@ describe('ProfilePage Component', () => {
             getVendorApplicationStatus.mockResolvedValue(mockApp);
             render(<ProfilePage />);
 
-              await waitFor(() => {
-                  expect(getVendorApplicationStatus).toHaveBeenCalledTimes(1);
-                  expect(screen.getByText(/Your Vendor Application Status:/i)).toBeInTheDocument();
-                  expect(screen.getByText(mockApp.status_display || mockApp.status)).toBeInTheDocument();
-                  expect(screen.getByText(/Congratulations! Your vendor application has been approved./i)).toBeInTheDocument(); // Check specific text
-              });
+               await waitFor(() => {
+                    expect(getVendorApplicationStatus).toHaveBeenCalledTimes(1);
+                    expect(screen.getByText(/Your Vendor Application Status:/i)).toBeInTheDocument();
+                    expect(screen.getByText(mockApp.status_display || mockApp.status)).toBeInTheDocument();
+                    expect(screen.getByText(/Congratulations! Your vendor application has been approved./i)).toBeInTheDocument(); // Check specific text
+               });
                expect(screen.queryByRole('button', { name: /Apply for Vendor Status/i })).not.toBeInTheDocument();
                expect(screen.queryByRole('button', { name: /Refresh Status/i })).not.toBeInTheDocument();
         });
@@ -996,41 +1042,43 @@ describe('ProfilePage Component', () => {
                 expect(screen.getByText(/Reason: No reason provided./i)).toBeInTheDocument(); // Check default text
                 expect(screen.getByText(/Unfortunately, your vendor application has been rejected./i)).toBeInTheDocument(); // Check specific text
             });
-             expect(screen.queryByRole('button', { name: /Refresh Status/i })).not.toBeInTheDocument();
+              expect(screen.queryByRole('button', { name: /Refresh Status/i })).not.toBeInTheDocument();
         });
 
        test('clicking "Refresh Status" calls getVendorApplicationStatus again and updates UI', async () => {
-           const initialStatus = { id: 'appReview', status: 'pending_review', status_display: 'Pending Review', created_at: '2025-04-11T11:00:00Z' };
-           const refreshedStatus = { id: 'appReview', status: 'approved', status_display: 'Approved', created_at: '2025-04-11T11:00:00Z' }; // Status changed
-           getVendorApplicationStatus
-               .mockResolvedValueOnce(initialStatus) // Initial load
-               .mockResolvedValueOnce(refreshedStatus); // Refresh call
+            const initialStatus = { id: 'appReview', status: 'pending_review', status_display: 'Pending Review', created_at: '2025-04-11T11:00:00Z' };
+            const refreshedStatus = { id: 'appReview', status: 'approved', status_display: 'Approved', created_at: '2025-04-11T11:00:00Z' }; // Status changed
+            getVendorApplicationStatus
+                .mockResolvedValueOnce(initialStatus) // Initial load
+                .mockResolvedValueOnce(refreshedStatus); // Refresh call
 
-           render(<ProfilePage />);
-           const user = userEvent.setup();
+            render(<ProfilePage />);
+            const user = userEvent.setup();
 
-           // Wait for initial status and refresh button
-           const refreshButton = await screen.findByRole('button', { name: /Refresh Status/i });
-           expect(getVendorApplicationStatus).toHaveBeenCalledTimes(1);
-           expect(screen.getByText(initialStatus.status_display || initialStatus.status)).toBeInTheDocument(); // Check initial status displayed (prefer display)
+            // Wait for initial status and refresh button
+            const refreshButton = await screen.findByRole('button', { name: /Refresh Status/i });
+            expect(getVendorApplicationStatus).toHaveBeenCalledTimes(1);
+            expect(screen.getByText(initialStatus.status_display || initialStatus.status)).toBeInTheDocument(); // Check initial status displayed (prefer display)
 
-           // Click Refresh
-           await act(async () => {
-               await user.click(refreshButton);
-           });
+            // Click Refresh
+            await act(async () => {
+                await user.click(refreshButton);
+                // Add promise resolve here too, as fetchApplicationStatus is async
+                await Promise.resolve();
+            });
 
-           // Wait for refresh effects
-           await waitFor(() => {
-               expect(getVendorApplicationStatus).toHaveBeenCalledTimes(2); // Called again
-               expect(showInfoToast).toHaveBeenCalledWith("Refreshing application status...");
-               // Check UI updated to new status
-               expect(screen.getByText(refreshedStatus.status_display || refreshedStatus.status)).toBeInTheDocument();
-               // Old status display should be gone
-               expect(screen.queryByText(initialStatus.status_display || initialStatus.status)).not.toBeInTheDocument();
-               // Refresh button should *disappear* after refresh because the new status is 'approved' (terminal)
-               expect(screen.queryByRole('button', { name: /Refresh Status/i })).not.toBeInTheDocument();
-           });
-       });
+            // Wait for refresh effects
+            await waitFor(() => {
+                expect(getVendorApplicationStatus).toHaveBeenCalledTimes(2); // Called again
+                expect(showInfoToast).toHaveBeenCalledWith("Refreshing application status...");
+                // Check UI updated to new status
+                expect(screen.getByText(refreshedStatus.status_display || refreshedStatus.status)).toBeInTheDocument();
+                // Old status display should be gone
+                expect(screen.queryByText(initialStatus.status_display || initialStatus.status)).not.toBeInTheDocument();
+                // Refresh button should *disappear* after refresh because the new status is 'approved' (terminal)
+                expect(screen.queryByRole('button', { name: /Refresh Status/i })).not.toBeInTheDocument();
+            });
+        });
 
 
         test('shows error if fetching application status fails (not 404)', async () => {
@@ -1074,7 +1122,7 @@ describe('ProfilePage Component', () => {
             // No error message should be displayed in the UI for 404
             expect(within(vendorSection).queryByRole('alert')).not.toBeInTheDocument();
             expect(showErrorToast).not.toHaveBeenCalled();
-             // Ensure Apply button is enabled
+              // Ensure Apply button is enabled
             expect(screen.getByRole('button', { name: /Apply for Vendor Status/i })).toBeEnabled();
             consoleLogSpy.mockRestore(); // <<< REVISION 34: Restore spy >>>
         });

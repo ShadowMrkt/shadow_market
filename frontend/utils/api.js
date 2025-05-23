@@ -1,5 +1,6 @@
 // frontend/utils/api.js
 // --- REVISION HISTORY ---
+// 2025-04-28: Rev 6 - [Gemini] Added getVendorFeedback function.
 // 2025-04-16: Rev 5 - [Gemini] Refined non-401/403 error message to prioritize detail field over stringified JSON, falling back to status text.
 // 2025-04-16: Rev 4 - [Gemini] Ensured ApiError constructor correctly uses the generated errorMessage.
 // 2025-04-16: Rev 3 - [Gemini] Fixed JSON error message construction in apiRequest to consistently include stringified body, matching test expectation.
@@ -235,6 +236,18 @@ export const getProducts = (queryParams = null) => {
 };
 
 /**
+ * Fetches public vendor profile information.
+ * GET /api/store/vendors/{username}/
+ * @param {string} username The vendor's username.
+ */
+export const getVendorPublicProfile = (username) => {
+    if (!username) {
+        return Promise.reject(new Error("Username is required to fetch vendor profile."));
+    }
+    return apiRequest(`/api/store/vendors/${encodeURIComponent(username)}/`, 'GET');
+};
+
+/**
  * Initiates the login process.
  * POST /api/store/auth/login/init/
  * @param {object} credentials - { username, password, captcha_key, captcha_value }.
@@ -277,7 +290,7 @@ export const updateCurrentUser = (updateData) => {
  */
 export const applyForVendor = async () => {
     // !!! IMPORTANT: Verify this endpoint URL matches your backend DRF router/URL configuration !!!
-    const endpoint = '/api/store/vendor/apply/';
+    const endpoint = '/api/store/vendor/applications/'; // Updated endpoint based on urls.py
     // apiRequest handles POST and CSRF automatically
     return await apiRequest(endpoint, 'POST');
     // Include body if the backend requires specific application data
@@ -292,7 +305,7 @@ export const applyForVendor = async () => {
  */
 export const getVendorApplicationStatus = async () => {
     // !!! IMPORTANT: Verify this endpoint URL matches your backend DRF router/URL configuration !!!
-    const endpoint = '/api/store/vendor/application-status/';
+    const endpoint = '/api/store/vendor/applications/status/'; // Updated endpoint based on urls.py
     try {
         // apiRequest handles GET automatically
         const applicationData = await apiRequest(endpoint, 'GET');
@@ -314,6 +327,24 @@ export const getVendorApplicationStatus = async () => {
          console.error("Error fetching vendor application status:", error);
          throw error; // Re-throw ApiError
     }
+};
+
+// --- <<< ADDED: Vendor Feedback Function >>> ---
+
+/**
+ * Fetches a paginated list of feedback for a specific vendor.
+ * GET /api/store/vendors/{username}/feedback/
+ * @param {string} username The username of the vendor.
+ * @param {object} [queryParams] Optional query parameters (e.g., { page: 1, page_size: 10 }).
+ * @returns {Promise<object>} Paginated response object (e.g., { count, next, previous, results: [...] }).
+ */
+export const getVendorFeedback = async (username, queryParams = null) => {
+    if (!username) {
+        return Promise.reject(new Error("Username is required to fetch vendor feedback."));
+    }
+    const endpoint = `/api/store/vendors/${encodeURIComponent(username)}/feedback/`;
+    // apiRequest handles GET and query params
+    return await apiRequest(endpoint, 'GET', null, queryParams);
 };
 
 // --- Add other API functions below as needed, following the pattern ---

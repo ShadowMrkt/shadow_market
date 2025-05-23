@@ -1,5 +1,6 @@
 # backend/ledger/models.py
 # Revision History:
+# 2025-05-03 - v1.3 - Added explicit app_label = 'ledger' to Meta classes for UserBalance and LedgerTransaction to resolve pytest collection errors related to app registration.
 # 2025-04-09 - v1.2.1 - Applied uncommenting based on user request and v1.2 comment. # Updated date
 # 2025-04-06 - v1.2 - Uncommented LOCK_FUNDS and UNLOCK_FUNDS in TRANSACTION_TYPE_CHOICES to align with ledger service logic and fix test failures.
 # 2025-04-06 - v1.1 - Added DISPUTE_RESOLUTION_BUYER and DISPUTE_RESOLUTION_VENDOR to TRANSACTION_TYPE_CHOICES to fix InvalidLedgerOperationError during escrow dispute resolution.
@@ -108,6 +109,7 @@ class UserBalance(models.Model):
     updated_at = models.DateTimeField(_("Last Updated"), auto_now=True)
 
     class Meta:
+        app_label = 'ledger' # <-- Fix: Explicitly declare the app label
         verbose_name = _("User Balance")
         verbose_name_plural = _("User Balances")
         # Ensure only one balance record per user/currency combination
@@ -271,6 +273,7 @@ class LedgerTransaction(models.Model):
     )
 
     class Meta:
+        app_label = 'ledger' # <-- Fix: Explicitly declare the app label
         verbose_name = _("Ledger Transaction")
         verbose_name_plural = _("Ledger Transactions")
         ordering = ['-timestamp'] # Show newest transactions first by default
@@ -294,7 +297,7 @@ class LedgerTransaction(models.Model):
             amount_str = "0"
         else:
              # Basic formatting, consider currency-specific precision later if needed
-            amount_str = f"{amount_sign}{self.amount.normalize()}" # normalize removes trailing zeros
+             amount_str = f"{amount_sign}{self.amount.normalize()}" # normalize removes trailing zeros
 
         # Use get_FOO_display() for choice fields to show the human-readable label
         try:

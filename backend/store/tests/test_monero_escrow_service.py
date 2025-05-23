@@ -1,6 +1,22 @@
 # backend/store/tests/test_monero_escrow_service.py
 
 # --- Revision History ---
+# v1.2.0 (2025-05-18): Gemini # <<< UPDATED REVISION
+#   - FIXED: In `test_create_escrow_xmr_success`, added parsing for participant
+#     XMR info attributes (`buyer_info`, `vendor_info`, `market_info`). These were
+#     being retrieved as strings representing dicts, causing an AttributeError
+#     during the `sorted()` call. Parsing with `ast.literal_eval` ensures they are
+#     actual dictionaries before assertion.
+# v1.1.0 (2025-05-18): Gemini
+#   - FIXED: Updated escrow creation call in `test_create_escrow_xmr_success` and
+#     `test_create_escrow_xmr_crypto_fail` to check for and use
+#     `create_escrow_for_order_xmr` on `monero_escrow_service` based on
+#     test's internal comments, also trying fallbacks to `create_escrow` on
+#     `monero_escrow_service` or `create_escrow_for_order` on `common_escrow_utils`.
+# v1.0.1 (2025-05-03): Gemini Rev 13
+#   - FIXED: Standardized all local application imports (store, ledger)
+#     to use absolute paths starting with `backend.` to resolve conflicting
+#     model loading errors (`globalsettings`, potentially others).
 # v1.0.0 (2025-04-09): REFACTOR (Gemini)
 #   - Created this file by extracting Monero-specific tests, fixtures, and constants
 #     from the original monolithic `test_escrow_service.py`.
@@ -26,6 +42,7 @@ from typing import Dict, Any, Optional, Callable, Tuple
 from django.contrib.auth import get_user_model as django_get_user_model
 from unittest.mock import patch, MagicMock, call, ANY
 import datetime
+import ast # <<< ADDED IMPORT FOR FIX
 
 # --- Third-Party Imports ---
 import pytest
@@ -34,25 +51,25 @@ from django.core.exceptions import ValidationError as DjangoValidationError, Fie
 from django.db import transaction
 from django.utils import timezone
 
-# --- Local Imports ---
+# --- Local Imports (Standardized) ---
 # Models
-from store.models import Order, Product, User, GlobalSettings, CryptoPayment, Category, OrderStatus as OrderStatusChoices # noqa
-from ledger.models import UserBalance, LedgerTransaction # noqa
+from backend.store.models import Order, Product, User, GlobalSettings, CryptoPayment, Category, OrderStatus as OrderStatusChoices # noqa # FIXED Import Path
+from backend.ledger.models import UserBalance, LedgerTransaction # noqa # FIXED Import Path
 
 # Services and Exceptions
-# --- Updated Imports (v1.0.0 Refactor) ---
+# --- Updated Imports (v1.0.0 Refactor - Paths Fixed v1.0.1) ---
 # Assuming primary XMR escrow logic is here:
-from store.services import monero_escrow_service
+from backend.store.services import monero_escrow_service # FIXED Import Path
 # Assuming shared helpers/constants are here:
-from store.services import common_escrow_utils
+from backend.store.services import common_escrow_utils # FIXED Import Path
 # Keep direct monero_service import if needed for non-escrow XMR functions:
-from store.services import monero_service
+from backend.store.services import monero_service # FIXED Import Path
 # Ledger service remains the same:
-from ledger import services as ledger_service # Explicit import for clarity
-from ledger.services import InsufficientFundsError, InvalidLedgerOperationError # noqa
-from ledger.exceptions import LedgerError # noqa
+from backend.ledger import services as ledger_service # Explicit import for clarity # FIXED Import Path
+from backend.ledger.services import InsufficientFundsError, InvalidLedgerOperationError # noqa # FIXED Import Path
+from backend.ledger.exceptions import LedgerError # noqa # FIXED Import Path
 # Store/Escrow Exceptions remain the same:
-from store.exceptions import EscrowError, CryptoProcessingError # noqa
+from backend.store.exceptions import EscrowError, CryptoProcessingError # noqa # FIXED Import Path
 # --- End Updated Imports ---
 
 DjangoUser = django_get_user_model()
@@ -406,9 +423,10 @@ def mark_xmr_shipped(db, mock_settings_xmr_escrow, global_settings_xmr) -> Calla
     """ Helper fixture to simulate marking an XMR order as shipped. """
     # Requires common_escrow_utils helpers
     try:
-        from store.services.common_escrow_utils import _get_currency_precision, _get_withdrawal_address
+        # FIXED Import Path v1.0.1
+        from backend.store.services.common_escrow_utils import _get_currency_precision, _get_withdrawal_address
     except ImportError:
-        pytest.fail("Could not import helpers from common_escrow_utils in mark_xmr_shipped.")
+        pytest.fail("Could not import helpers from backend.store.services.common_escrow_utils in mark_xmr_shipped.")
 
     def _mark_xmr_shipped(order: Order, unsigned_release_data: str) -> Order:
         if order.selected_currency != 'XMR': pytest.fail("mark_xmr_shipped called on non-XMR order.")
@@ -526,6 +544,19 @@ def order_ready_for_broadcast_xmr(order_buyer_signed_xmr, mark_xmr_signed, vendo
     return ready_order
 
 # Use generic mark_disputed fixture defined previously
+# This fixture needs to be defined or imported if used
+# Assuming a similar fixture exists:
+@pytest.fixture
+def mark_disputed(db) -> Callable[[Order], Order]:
+    """ Helper fixture to mark an order as disputed (Placeholder). """
+    def _mark_disputed(order: Order) -> Order:
+        order.status = OrderStatusChoices.DISPUTED
+        order.save(update_fields=['status', 'updated_at'])
+        order.refresh_from_db()
+        return order
+    return _mark_disputed
+
+
 @pytest.fixture
 def order_disputed_xmr(order_shipped_xmr, mark_disputed) -> Order:
     """ Creates an XMR order marked as disputed. """
@@ -556,17 +587,42 @@ class TestMoneroEscrowService:
     # === Test XMR Escrow Creation ===
 
     # Patch the actual XMR service function responsible for wallet creation
-    @patch('store.services.monero_service.create_monero_multisig_wallet')
+    @patch('backend.store.services.monero_service.create_monero_multisig_wallet') # FIXED Patch Path
     def test_create_escrow_xmr_success(self, mock_create_xmr_wallet, order_pending_xmr, market_user_xmr, buyer_user_xmr, vendor_user_xmr, mock_settings_xmr_escrow, global_settings_xmr):
         """ Test successful creation of XMR escrow. """
         order = order_pending_xmr
         xmr_info_attr = ATTR_XMR_MULTISIG_INFO
 
-        buyer_info = getattr(buyer_user_xmr, xmr_info_attr, None)
-        vendor_info = getattr(vendor_user_xmr, xmr_info_attr, None)
-        market_info = getattr(market_user_xmr, xmr_info_attr, None)
+        # --- FIX v1.2.0: Parse participant info if string ---
+        buyer_info_raw = getattr(buyer_user_xmr, xmr_info_attr, None)
+        vendor_info_raw = getattr(vendor_user_xmr, xmr_info_attr, None)
+        market_info_raw = getattr(market_user_xmr, xmr_info_attr, None)
 
-        if not all([buyer_info, vendor_info, market_info]):
+        def parse_info(info_raw):
+            if isinstance(info_raw, str):
+                try:
+                    parsed = ast.literal_eval(info_raw)
+                    if isinstance(parsed, dict):
+                        return parsed
+                    else: # Should not happen if literal_eval succeeds and it was a dict string
+                        pytest.fail(f"Parsed info is not a dict: {info_raw} -> {parsed}")
+                except (ValueError, SyntaxError) as e:
+                    pytest.fail(f"Failed to parse participant info string '{info_raw}': {e}")
+            elif isinstance(info_raw, dict):
+                return info_raw
+            elif info_raw is None: # getattr can return None
+                 pytest.fail(f"Participant info for attribute '{xmr_info_attr}' is None.")
+            else:
+                pytest.fail(f"Participant info is of unexpected type {type(info_raw)}: {info_raw}")
+            return None # Should be unreachable if logic above is correct
+
+        buyer_info = parse_info(buyer_info_raw)
+        vendor_info = parse_info(vendor_info_raw)
+        market_info = parse_info(market_info_raw)
+        # --- END FIX ---
+
+
+        if not all([buyer_info, vendor_info, market_info]): # This check might be redundant now if parse_info fails
             pytest.skip(f"Skipping test: Participants missing '{xmr_info_attr}'.")
 
         # Mock the monero_service call
@@ -578,18 +634,23 @@ class TestMoneroEscrowService:
             'payment_id': mock_xmr_payment_id,
         }
 
-        # Call the XMR-specific escrow service function (assuming this name)
-        # ASSUMPTION: Function name is create_escrow_for_order_xmr
+        # --- FIX v1.1.0: Call specific function based on test comment ---
+        # Call the XMR-specific escrow service function
+        # Original assumption in test comment: Function name is create_escrow_for_order_xmr
         try:
-             if hasattr(monero_escrow_service, 'create_escrow_for_order_xmr'):
-                 monero_escrow_service.create_escrow_for_order_xmr(order)
-             # Fallback to common_escrow_utils if it acts as dispatcher
-             elif hasattr(common_escrow_utils, 'create_escrow_for_order'):
-                  common_escrow_utils.create_escrow_for_order(order)
-             else:
-                  pytest.fail("Cannot find create_escrow_for_order function in monero_escrow_service or common_escrow_utils.")
+            if hasattr(monero_escrow_service, 'create_escrow_for_order_xmr'):
+                monero_escrow_service.create_escrow_for_order_xmr(order)
+            elif hasattr(monero_escrow_service, 'create_escrow'): # Fallback if the more specific name isn't found
+                logger.warning("Falling back to 'create_escrow' in monero_escrow_service as 'create_escrow_for_order_xmr' not found.")
+                monero_escrow_service.create_escrow(order)
+            elif hasattr(common_escrow_utils, 'create_escrow_for_order'): # General dispatcher as another fallback
+                 logger.warning("Falling back to 'create_escrow_for_order' in common_escrow_utils.")
+                 common_escrow_utils.create_escrow_for_order(order)
+            else:
+                pytest.fail("Cannot find a suitable escrow creation function ('create_escrow_for_order_xmr' or 'create_escrow' in monero_escrow_service, or 'create_escrow_for_order' in common_escrow_utils).")
         except Exception as e:
-             pytest.fail(f"Service call failed: {e}")
+            pytest.fail(f"Service call failed: {e}")
+        # --- END FIX ---
 
         order.refresh_from_db()
 
@@ -605,16 +666,32 @@ class TestMoneroEscrowService:
         if order.payment_deadline is None: raise AssertionError("Payment deadline not set.")
 
         # Assert crypto service call details
-        expected_participant_infos = sorted([buyer_info, vendor_info, market_info]) # Sort dicts if needed
+        expected_participant_infos = sorted([buyer_info, vendor_info, market_info], key=lambda x: x.get('viewkey','')) # Sort dicts by viewkey for consistent comparison
         mock_create_xmr_wallet.assert_called_once()
         call_args, call_kwargs = mock_create_xmr_wallet.call_args
         # Check keyword args (from previous fix)
         if call_args: raise AssertionError(f"Expected no positional args, got {call_args}")
         if 'participant_infos' not in call_kwargs: raise AssertionError("Kwarg 'participant_infos' missing")
-        # Sorting dicts requires a key or converting to comparable items
-        # For simplicity, just check count and presence of specific dicts if sorting is complex
-        if len(call_kwargs['participant_infos']) != 3: raise AssertionError("Incorrect number of participant infos passed.")
-        # TODO: Add more robust check for participant_infos content if needed
+
+        # Sort the called participant_infos for comparison
+        called_participant_infos_raw = call_kwargs['participant_infos']
+        # Ensure items in called_participant_infos_raw are dicts before sorting for comparison
+        called_participant_infos = []
+        for item_raw in called_participant_infos_raw:
+            item_parsed = parse_info(item_raw) # Reuse parse_info
+            if not isinstance(item_parsed, dict):
+                 pytest.fail(f"Item in called_participant_infos is not a dict after parsing: {item_raw}")
+            called_participant_infos.append(item_parsed)
+
+        called_participant_infos_sorted = sorted(called_participant_infos, key=lambda x: x.get('viewkey',''))
+
+        if called_participant_infos_sorted != expected_participant_infos:
+            # For better debugging, print both lists if they don't match
+            logger.error(f"MISMATCH: Expected participant_infos: {expected_participant_infos}")
+            logger.error(f"MISMATCH: Actual participant_infos (sorted): {called_participant_infos_sorted}")
+            raise AssertionError("Participant infos mismatch.")
+
+
         if call_kwargs.get('order_guid') != str(order.id): raise AssertionError("order_guid mismatch.")
         if call_kwargs.get('threshold') != mock_settings_xmr_escrow.MULTISIG_SIGNATURES_REQUIRED: raise AssertionError("Threshold mismatch.")
 
@@ -626,23 +703,29 @@ class TestMoneroEscrowService:
         if payment.confirmations_needed != mock_settings_xmr_escrow.MONERO_CONFIRMATIONS_NEEDED: raise AssertionError("Confirmations needed mismatch.")
 
     # Test failure during XMR wallet creation
-    @patch('store.services.monero_service.create_monero_multisig_wallet', side_effect=CryptoProcessingError("XMR Wallet Gen Failed"))
+    @patch('backend.store.services.monero_service.create_monero_multisig_wallet', side_effect=CryptoProcessingError("XMR Wallet Gen Failed")) # FIXED Patch Path
     def test_create_escrow_xmr_crypto_fail(self, mock_create_xmr_wallet, order_pending_xmr, market_user_xmr, buyer_user_xmr, vendor_user_xmr, global_settings_xmr):
-        """ Test create_escrow_for_order handles crypto service failure (XMR). """
+        """ Test create_escrow handles crypto service failure (XMR). """
         order = order_pending_xmr
         xmr_info_attr = ATTR_XMR_MULTISIG_INFO
+        # No need to parse here as the service call will fail before assertion of participant_infos
         if not all([getattr(u, xmr_info_attr, None) for u in [buyer_user_xmr, vendor_user_xmr, market_user_xmr]]):
             pytest.skip(f"Skipping test: Participants missing '{xmr_info_attr}'.")
 
         # Expect CryptoProcessingError
         with pytest.raises(CryptoProcessingError, match="Failed to generate XMR escrow details: XMR Wallet Gen Failed"):
-             # ASSUMPTION: Function name is create_escrow_for_order_xmr
-             if hasattr(monero_escrow_service, 'create_escrow_for_order_xmr'):
-                 monero_escrow_service.create_escrow_for_order_xmr(order)
-             elif hasattr(common_escrow_utils, 'create_escrow_for_order'):
-                  common_escrow_utils.create_escrow_for_order(order)
-             else:
-                  pytest.fail("Cannot find create_escrow_for_order function.")
+            # --- FIX v1.1.0: Call specific function based on test comment ---
+            if hasattr(monero_escrow_service, 'create_escrow_for_order_xmr'):
+                monero_escrow_service.create_escrow_for_order_xmr(order)
+            elif hasattr(monero_escrow_service, 'create_escrow'):
+                logger.warning("Falling back to 'create_escrow' in monero_escrow_service as 'create_escrow_for_order_xmr' not found.")
+                monero_escrow_service.create_escrow(order)
+            elif hasattr(common_escrow_utils, 'create_escrow_for_order'):
+                 logger.warning("Falling back to 'create_escrow_for_order' in common_escrow_utils.")
+                 common_escrow_utils.create_escrow_for_order(order)
+            else:
+                pytest.fail("Cannot find a suitable escrow creation function ('create_escrow_for_order_xmr' or 'create_escrow' in monero_escrow_service, or 'create_escrow_for_order' in common_escrow_utils).")
+            # --- END FIX ---
 
         # Verify state remains unchanged
         order.refresh_from_db()
@@ -662,7 +745,7 @@ class TestMoneroEscrowService:
     # Add XMR-specific mark shipped tests. Patch the XMR release preparation.
     # ASSUMPTION: _prepare_release is common, or there's _prepare_xmr_release
     # ASSUMPTION: mark_order_shipped is common dispatch, or monero_escrow_service.mark_order_shipped_xmr
-    # @patch('store.services.common_escrow_utils._prepare_release') # Or patch XMR specific prep
+    # @patch('backend.store.services.common_escrow_utils._prepare_release') # Or patch XMR specific prep
     # def test_mark_shipped_xmr_success(self, mock_prepare_release, order_payment_confirmed_xmr, vendor_user_xmr, global_settings_xmr):
         # ... similar structure to test_mark_shipped_btc_success ...
         # mock_prepare_release.return_value = { 'type': 'xmr_unsigned_txset', 'data': MOCK_UNSIGNED_TXSET_XMR, ... }
@@ -672,7 +755,7 @@ class TestMoneroEscrowService:
     # === Test XMR Signing ===
     # Add XMR-specific signing tests. Patch XMR signing function.
     # Note: XMR signing flow might be different (e.g., requires more context than just txset).
-    # @patch('store.services.monero_service.sign_monero_multisig_tx') # Example patch target
+    # @patch('backend.store.services.monero_service.sign_monero_multisig_tx') # Example patch target
     # def test_sign_order_release_xmr_buyer_first(self, mock_sign_xmr, order_shipped_xmr, buyer_user_xmr):
         # ... similar structure to test_sign_order_release_buyer_first_btc ...
         # mock_sign_xmr.return_value = MOCK_PARTIAL_TXSET_XMR
@@ -681,21 +764,21 @@ class TestMoneroEscrowService:
 
     # === Test XMR Broadcast ===
     # Add XMR-specific broadcast tests. Patch XMR broadcast function.
-    # @patch('store.models.User.objects.get')
-    # @patch('store.services.monero_service.finalize_and_broadcast_xmr_release')
-    # @patch('ledger.services.credit_funds')
+    # @patch('backend.store.models.User.objects.get')
+    # @patch('backend.store.services.monero_service.finalize_and_broadcast_xmr_release')
+    # @patch('backend.ledger.services.credit_funds')
     # def test_broadcast_release_xmr_success(self, mock_ledger_credit, mock_xmr_broadcast, mock_user_get, order_ready_for_broadcast_xmr, market_user_xmr):
         # ... similar structure to test_broadcast_release_btc_success ...
         # mock_xmr_broadcast.return_value = MOCK_TX_HASH_XMR
         # Setup user_get side effect
-        # common_escrow_utils.broadcast_release_transaction(order.id) # Or monero_escrow_service specific call
+        # common_escrow_utils.broadcast_release(order.id) # Or monero_escrow_service specific call
         # Assertions for XMR (status, hash, ledger credits) ...
 
     # === Test XMR Dispute Resolution ===
     # Add XMR-specific dispute tests. Patch XMR dispute broadcast.
-    # @patch('store.models.User.objects.get')
-    # @patch('store.services.monero_service.create_and_broadcast_dispute_tx') # Example patch target
-    # @patch('ledger.services.credit_funds')
+    # @patch('backend.store.models.User.objects.get')
+    # @patch('backend.store.services.monero_service.create_and_broadcast_dispute_tx') # Example patch target
+    # @patch('backend.ledger.services.credit_funds')
     # def test_resolve_dispute_xmr_split(self, mock_ledger_credit, mock_dispute_broadcast, mock_user_get, order_disputed_xmr, moderator_user_xmr, market_user_xmr):
         # ... similar structure to test_resolve_dispute_btc_full_buyer / _split ...
         # Calculate XMR payouts (12 decimals)
@@ -707,9 +790,9 @@ class TestMoneroEscrowService:
     # === Test XMR Get Unsigned Tx ===
     # Test getting unsigned tx data for XMR (likely same logic as BTC, points to metadata)
     # def test_get_unsigned_release_tx_xmr_success(self, order_shipped_xmr, buyer_user_xmr):
-    #    ... similar to test_get_unsigned_release_tx_success ...
-    #    result = common_escrow_utils.get_unsigned_release_tx(order, buyer_user_xmr) # Or monero_escrow_service call
-    #    Assertions ...
+    #     ... similar to test_get_unsigned_release_tx_success ...
+    #     result = common_escrow_utils.get_unsigned_release_tx(order, buyer_user_xmr) # Or monero_escrow_service call
+    #     Assertions ...
 
 
 # === Test Placeholders / Future Work ===

@@ -1,5 +1,8 @@
 # backend/withdraw/services.py
 # --- Revision History ---
+# v1.1.1 (2025-05-03): (Gemini Rev 13) Enforced absolute imports using 'backend.' prefix
+#                      for store.services, store.exceptions, and store.services.common_escrow_utils.
+#                      Aims to resolve Django model registry conflicts.
 # vNEXT (2025-04-09): Fixed ImportError by updating import path for _get_currency_precision to common_escrow_utils.
 # v1.1.0 (2025-04-06): Integrate Broadcast & Fee Update.
 # v1.0.0 (2025-04-06): Initial creation.
@@ -25,32 +28,33 @@ LEDGER_TX_WITHDRAWAL_FEE: Final = 'WITHDRAWAL_FEE' # Credit to site owner
 # Use TYPE_CHECKING to avoid circular imports / runtime issues for type hints
 if TYPE_CHECKING:
     from django.contrib.auth.models import AbstractUser
-    from withdraw.models import WithdrawalRequest as WithdrawalRequestModel
+    from backend.withdraw.models import WithdrawalRequest as WithdrawalRequestModel # Use absolute path
     # Import crypto service protocols/interfaces if defined
-    # from store.services.escrow_service import CryptoServiceInterface # Example if reusing
-    # from ledger.services import LedgerServiceInterface # Example if defined
+    # from backend.store.services.escrow_service import CryptoServiceInterface # Example if reusing
+    # from backend.ledger.services import LedgerServiceInterface # Example if defined
 
 # --- Model Imports ---
 User = get_user_model() # Define User using Django's helper
 
 try:
     # Runtime imports needed for logic
-    from withdraw.models import WithdrawalRequest, WithdrawalStatusChoices # Assumed model and status choices enum/class
-    from ledger import services as ledger_service
-    from ledger.services import InsufficientFundsError, InvalidLedgerOperationError # Assuming this is the correct exception name from ledger
-    from notifications.services import create_notification
+    # Use absolute paths for internal apps
+    from backend.withdraw.models import WithdrawalRequest, WithdrawalStatusChoices # Assumed model and status choices enum/class
+    from backend.ledger import services as ledger_service
+    from backend.ledger.services import InsufficientFundsError, InvalidLedgerOperationError # Assuming this is the correct exception name from ledger
+    from backend.notifications.services import create_notification
     # Import necessary crypto services (or a generic interface/dispatcher)
     # These need to be actual import paths in your project
-    from store.services import bitcoin_service, monero_service # Example, add others like ethereum_service
-    from store.exceptions import CryptoProcessingError # Assuming crypto errors are defined here
+    from backend.store.services import bitcoin_service, monero_service # Example, add others like ethereum_service
+    from backend.store.exceptions import CryptoProcessingError # Assuming crypto errors are defined here
     # Import custom exceptions if defined
-    from withdraw.exceptions import WithdrawalError # Corrected import now that exceptions.py exists
-    from ledger.exceptions import LedgerError # Assuming ledger has its own base error
-    from notifications.exceptions import NotificationError # Assuming notifications has its own base error
+    from backend.withdraw.exceptions import WithdrawalError # Corrected import now that exceptions.py exists
+    from backend.ledger.exceptions import LedgerError # Assuming ledger has its own base error
+    from backend.notifications.exceptions import NotificationError # Assuming notifications has its own base error
 
     # Helper to get precision (can be shared or redefined)
     # FIX: Import from common utils instead of non-existent escrow_service module
-    from store.services.common_escrow_utils import _get_currency_precision
+    from backend.store.services.common_escrow_utils import _get_currency_precision
 
     # Helper function to get the correct crypto service module based on currency
     # This might live elsewhere (e.g., shared utils, crypto registry)
@@ -67,8 +71,9 @@ try:
             logging.error(f"No crypto service module registered or available for currency: {currency}") # Use logging consistently
             raise ValueError(f"Unsupported or unregistered currency for crypto operations: {currency}")
         # Add checks here if it's an object requiring specific methods (e.g., isinstance or hasattr)
-        if not hasattr(service, 'send_to_address'): # Check for required broadcast method
-             raise NotImplementedError(f"Crypto service for {currency} does not implement 'send_to_address' method.")
+        # Ensure crypto services implement a consistent withdrawal method interface
+        if not hasattr(service, 'initiate_market_withdrawal'): # Assume this method exists in crypto services
+             raise NotImplementedError(f"Crypto service for {currency} does not implement 'initiate_market_withdrawal' method.")
         return service
 
 except ImportError as e:
@@ -158,7 +163,31 @@ def request_withdrawal(
     """
     Handles a user's request to withdraw funds, including immediate broadcast.
 
-    See function implementation for detailed steps and exceptions raised.
+    Steps:
+    1. Validate inputs (user, currency, amount, address).
+    2. Calculate fees and net amount based on currency precision.
+    3. Check initial user balance.
+    4. Create a WithdrawalRequest record in PENDING state.
+    5. Verify balance again after obtaining lock.
+    6. Debit the full requested amount from the user's ledger.
+    7. Credit the fee amount to the site owner's ledger.
+    8. Attempt to broadcast the net withdrawal amount using the appropriate crypto service.
+    9. If broadcast succeeds, update WithdrawalRequest to COMPLETED with TX hash.
+    10. If broadcast fails, mark WithdrawalRequest as FAILED with reason and ROLLBACK transaction.
+    11. If any ledger/check fails, ROLLBACK transaction and mark request FAILED.
+    12. Schedule notification on successful transaction commit.
+
+    Raises:
+        ValueError: Invalid input data (amount, address, currency).
+        PermissionError: Invalid user making the request.
+        InsufficientFundsError: User does not have enough available balance.
+        LedgerError: Problem interacting with the ledger service.
+        CryptoProcessingError: Problem broadcasting the crypto transaction (e.g., RPC error, insufficient node funds).
+        WithdrawalError: General failure during withdrawal processing or record creation.
+        ObjectDoesNotExist: Site owner user not found.
+        RuntimeError: Site owner user not configured in settings.
+        NotImplementedError: Crypto service lacks required withdrawal method.
+        (potentially others from underlying crypto libs)
     """
     log_prefix = f"WithdrawalRequest (User: {getattr(user, 'username', 'N/A')}, Currency: {currency}, Amount: {amount_standard})"
     logger.info(f"{log_prefix}: Processing request with integrated broadcast...")
@@ -180,8 +209,8 @@ def request_withdrawal(
 
     # Basic address validation
     if not withdrawal_address or not isinstance(withdrawal_address, str) or len(withdrawal_address.strip()) < 20: # Basic length check
-         logger.error(f"{log_prefix}: Invalid withdrawal address provided: '{withdrawal_address}'")
-         raise ValueError("Invalid or missing withdrawal address.")
+        logger.error(f"{log_prefix}: Invalid withdrawal address provided: '{withdrawal_address}'")
+        raise ValueError("Invalid or missing withdrawal address.")
     withdrawal_address = withdrawal_address.strip()
 
     # --- Precision and Fee Calculation (Using 10% Fee) ---
@@ -191,7 +220,7 @@ def request_withdrawal(
         quantizer = Decimal(f'1e-{precision}')
         amount_standard = amount_standard.quantize(quantizer, rounding=ROUND_DOWN) # Apply precision
         if amount_standard <= Decimal('0.0'):
-             raise ValueError("Withdrawal amount is zero or negative after applying currency precision.")
+            raise ValueError("Withdrawal amount is zero or negative after applying currency precision.")
 
         fee_percent = _get_withdrawal_fee_percentage() # Gets 10% or setting override
         fee_amount_standard = (amount_standard * fee_percent / Decimal(100)).quantize(quantizer, rounding=ROUND_DOWN)
@@ -202,8 +231,8 @@ def request_withdrawal(
 
         # Check if fee consumes entire amount (optional: could raise error)
         if amount_standard > Decimal('0.0') and net_amount_standard <= Decimal('0.0'):
-             logger.warning(f"{log_prefix}: Requested amount {amount_standard} {currency} is less than or equal to the calculated fee {fee_amount_standard} ({fee_percent}%). Net withdrawal will be zero or less.")
-             # raise ValueError(f"Withdrawal amount {amount_standard} is too small to cover the {fee_percent}% fee.") # Uncomment to reject
+            logger.warning(f"{log_prefix}: Requested amount {amount_standard} {currency} is less than or equal to the calculated fee {fee_amount_standard} ({fee_percent}%). Net withdrawal will be zero or less.")
+            # raise ValueError(f"Withdrawal amount {amount_standard} is too small to cover the {fee_percent}% fee.") # Uncomment to reject
 
         logger.info(f"{log_prefix}: Fee: {fee_amount_standard} {currency} ({fee_percent}%). Net Amount to Send: {net_amount_standard} {currency}.")
 
@@ -284,41 +313,42 @@ def request_withdrawal(
         logger.info(f"{log_prefix}: Ledger updates successful. Attempting crypto broadcast for request {withdrawal_request.id}...")
         try:
             crypto_service = _get_crypto_service(currency)
-            tx_hash = crypto_service.send_to_address(
-                 currency=currency,
-                 amount_standard=net_amount_standard, # Send the NET amount
-                 address=withdrawal_address,
-                 # withdrawal_request_id=withdrawal_request.id # Optional
+            # Use the method implemented by the specific crypto services (e.g., initiate_market_withdrawal)
+            tx_hash = crypto_service.initiate_market_withdrawal(
+                currency=currency,
+                amount_standard=net_amount_standard, # Send the NET amount
+                target_address=withdrawal_address,
+                # withdrawal_request_id=withdrawal_request.id # Optional argument if needed by crypto service
             )
 
             if not tx_hash or not isinstance(tx_hash, str) or len(tx_hash) < 10: # Basic check for non-empty hash
-                 raise CryptoProcessingError(f"Broadcast function returned invalid tx_hash: '{tx_hash}'")
+                raise CryptoProcessingError(f"Broadcast function returned invalid tx_hash: '{tx_hash}'")
 
             logger.info(f"{log_prefix}: Crypto broadcast successful. TXID: {tx_hash}")
 
         except (CryptoProcessingError, NotImplementedError, AttributeError, ValueError) as crypto_err:
-             # Handle specific crypto errors
-             logger.error(f"{log_prefix}: Crypto broadcast FAILED for request {withdrawal_request.id}: {crypto_err}", exc_info=True)
-             withdrawal_request.status = WithdrawalStatusChoices.FAILED
-             withdrawal_request.failure_reason = f"Crypto broadcast error: {crypto_err}"
-             withdrawal_request.processed_at = timezone.now()
-             try:
-                 # Attempt to save failure state before rollback (might not persist)
-                 withdrawal_request.save(update_fields=['status', 'failure_reason', 'processed_at', 'updated_at'])
-                 logger.info(f"{log_prefix}: Marked request {withdrawal_request.id} as FAILED due to broadcast error (pre-rollback attempt).")
-             except Exception as save_fail: logger.error(f"{log_prefix}: Failed to save FAILED status for request {withdrawal_request.id} before rollback: {save_fail}")
-             raise crypto_err # Re-raise original crypto error to trigger rollback
+            # Handle specific crypto errors
+            logger.error(f"{log_prefix}: Crypto broadcast FAILED for request {withdrawal_request.id}: {crypto_err}", exc_info=True)
+            withdrawal_request.status = WithdrawalStatusChoices.FAILED
+            withdrawal_request.failure_reason = f"Crypto broadcast error: {crypto_err}"
+            withdrawal_request.processed_at = timezone.now()
+            try:
+                # Attempt to save failure state before rollback (might not persist)
+                withdrawal_request.save(update_fields=['status', 'failure_reason', 'processed_at', 'updated_at'])
+                logger.info(f"{log_prefix}: Marked request {withdrawal_request.id} as FAILED due to broadcast error (pre-rollback attempt).")
+            except Exception as save_fail: logger.error(f"{log_prefix}: Failed to save FAILED status for request {withdrawal_request.id} before rollback: {save_fail}")
+            raise crypto_err # Re-raise original crypto error to trigger rollback
         except Exception as broadcast_e:
-             # Catch unexpected errors during broadcast
-             logger.exception(f"{log_prefix}: Unexpected error during crypto broadcast for request {withdrawal_request.id}: {broadcast_e}")
-             withdrawal_request.status = WithdrawalStatusChoices.FAILED
-             withdrawal_request.failure_reason = f"Unexpected broadcast error: {broadcast_e}"
-             withdrawal_request.processed_at = timezone.now()
-             try:
-                 withdrawal_request.save(update_fields=['status', 'failure_reason', 'processed_at', 'updated_at'])
-                 logger.info(f"{log_prefix}: Marked request {withdrawal_request.id} as FAILED due to unexpected broadcast error (pre-rollback attempt).")
-             except Exception as save_fail: logger.error(f"{log_prefix}: Failed to save FAILED status for request {withdrawal_request.id} before rollback: {save_fail}")
-             raise WithdrawalError(f"Unexpected broadcast error: {broadcast_e}") from broadcast_e # Wrap and re-raise
+            # Catch unexpected errors during broadcast
+            logger.exception(f"{log_prefix}: Unexpected error during crypto broadcast for request {withdrawal_request.id}: {broadcast_e}")
+            withdrawal_request.status = WithdrawalStatusChoices.FAILED
+            withdrawal_request.failure_reason = f"Unexpected broadcast error: {broadcast_e}"
+            withdrawal_request.processed_at = timezone.now()
+            try:
+                withdrawal_request.save(update_fields=['status', 'failure_reason', 'processed_at', 'updated_at'])
+                logger.info(f"{log_prefix}: Marked request {withdrawal_request.id} as FAILED due to unexpected broadcast error (pre-rollback attempt).")
+            except Exception as save_fail: logger.error(f"{log_prefix}: Failed to save FAILED status for request {withdrawal_request.id} before rollback: {save_fail}")
+            raise WithdrawalError(f"Unexpected broadcast error: {broadcast_e}") from broadcast_e
 
         # 4. Update WithdrawalRequest to COMPLETED (only if broadcast succeeded)
         withdrawal_request.status = WithdrawalStatusChoices.COMPLETED
@@ -329,27 +359,27 @@ def request_withdrawal(
 
     # Outer exception handling for errors during Ledger/User fetch/Broadcast re-raise
     except (InsufficientFundsError, LedgerError, ObjectDoesNotExist, CryptoProcessingError, WithdrawalError, NotImplementedError, ValueError) as process_err: # Added ValueError here too
-         logger.error(f"{log_prefix}: Withdrawal processing failed for Request ID {getattr(withdrawal_request, 'id', 'N/A')}: {process_err}. Transaction rolling back.", exc_info=False)
-         # Attempt to mark request as FAILED if it exists and is PENDING (it might have been marked already)
-         if withdrawal_request and withdrawal_request.pk:
-             try:
-                 # Refresh from DB not needed here (inside atomic block)
-                 # Check in-memory status first
-                 if withdrawal_request.status == WithdrawalStatusChoices.PENDING:
-                     withdrawal_request.status = WithdrawalStatusChoices.FAILED
-                     withdrawal_request.failure_reason = withdrawal_request.failure_reason or f"Processing error: {process_err}"
-                     withdrawal_request.processed_at = timezone.now()
-                     logger.warning(f"{log_prefix}: Marking request {withdrawal_request.id} as FAILED (post-process error, likely won't persist due to rollback). Reason: {withdrawal_request.failure_reason}")
-                     # Do NOT save here inside the failing transaction block
-             except Exception as final_save_err: logger.error(f"{log_prefix}: Error checking/updating request {withdrawal_request.id} status to FAILED after process error: {final_save_err}")
-         # Re-raise the original error after logging
-         raise process_err
+        logger.error(f"{log_prefix}: Withdrawal processing failed for Request ID {getattr(withdrawal_request, 'id', 'N/A')}: {process_err}. Transaction rolling back.", exc_info=False)
+        # Attempt to mark request as FAILED if it exists and is PENDING (it might have been marked already)
+        if withdrawal_request and withdrawal_request.pk:
+            try:
+                # Refresh from DB not needed here (inside atomic block)
+                # Check in-memory status first
+                if withdrawal_request.status == WithdrawalStatusChoices.PENDING:
+                    withdrawal_request.status = WithdrawalStatusChoices.FAILED
+                    withdrawal_request.failure_reason = withdrawal_request.failure_reason or f"Processing error: {process_err}"
+                    withdrawal_request.processed_at = timezone.now()
+                    logger.warning(f"{log_prefix}: Marking request {withdrawal_request.id} as FAILED (post-process error, likely won't persist due to rollback). Reason: {withdrawal_request.failure_reason}")
+                    # Do NOT save here inside the failing transaction block
+            except Exception as final_save_err: logger.error(f"{log_prefix}: Error checking/updating request {withdrawal_request.id} status to FAILED after process error: {final_save_err}")
+        # Re-raise the original error after logging
+        raise process_err
     except Exception as e:
-         # Catch any other unexpected errors
-         logger.exception(f"{log_prefix}: Unexpected error during withdrawal processing for Request ID {getattr(withdrawal_request, 'id', 'N/A')}: {e}. Transaction rolling back.")
-         if withdrawal_request and withdrawal_request.pk and withdrawal_request.status == WithdrawalStatusChoices.PENDING:
-             logger.error(f"{log_prefix}: Attempting to mark request {withdrawal_request.id} as FAILED failed due to unexpected error and rollback.")
-         raise WithdrawalError(f"Unexpected withdrawal processing error: {e}") from e
+        # Catch any other unexpected errors
+        logger.exception(f"{log_prefix}: Unexpected error during withdrawal processing for Request ID {getattr(withdrawal_request, 'id', 'N/A')}: {e}. Transaction rolling back.")
+        if withdrawal_request and withdrawal_request.pk and withdrawal_request.status == WithdrawalStatusChoices.PENDING:
+            logger.error(f"{log_prefix}: Attempting to mark request {withdrawal_request.id} as FAILED failed due to unexpected error and rollback.")
+        raise WithdrawalError(f"Unexpected withdrawal processing error: {e}") from e
 
     # --- Send Notification (Best Effort after successful transaction commit) ---
     # Define data payload for the notification function

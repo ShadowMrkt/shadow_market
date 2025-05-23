@@ -1,14 +1,19 @@
 # --- MODIFICATION START ---
 # File: shadow_market/backend/middleware/RateLimitMiddleware.py
 # Revision History:
-# 2025-04-07: Initial Refactor - Applied enterprise hardening concepts:
-#             - Added trusted proxy support for IP address identification (settings.TRUSTED_PROXY_IPS, settings.REAL_IP_HEADER). CRITICAL FIX.
-#             - Moved rate limit definitions (RATE_LIMIT_CONFIGS) and endpoint mapping (RATE_LIMIT_MAPPING) to be configurable via settings.py, with defaults.
-#             - Improved logging clarity and context.
-#             - Added type hinting.
-#             - Clearly documented the non-atomic nature of the default cache update mechanism and recommended Redis.
-#             - Renamed middleware class slightly for clarity.
-#             - Encapsulated IP fetching logic within the class.
+# - v1.1.0 (2025-04-25):
+#   - SECURITY FIX: Corrected IP address extraction logic in `_get_client_ip`. Now correctly takes the *first* IP from the configured header (`REAL_IP_HEADER`) if the `REMOTE_ADDR` is trusted. Removed flawed `NUM_PROXIES` logic.
+#   - BEST PRACTICE (Atomicity): Changed core rate limit logic to use `cache.incr()` for atomic counter updates (recommended with Redis/Memcached). Includes handling for initial hit to set expiry. Falls back gracefully if `incr` fails.
+#   - REFACTOR: Simplified cache data structure - only stores the count directly, expiry handled by cache timeout.
+#   - IMPROVEMENT: Calculate remaining time more directly when using `incr`.
+# - v1.0.0 (2025-04-07): Initial Refactor - Applied enterprise hardening concepts:
+#   - Added trusted proxy support for IP address identification (settings.TRUSTED_PROXY_IPS, settings.REAL_IP_HEADER). CRITICAL FIX. (Logic fixed in v1.1.0)
+#   - Moved rate limit definitions (RATE_LIMIT_CONFIGS) and endpoint mapping (RATE_LIMIT_MAPPING) to be configurable via settings.py, with defaults.
+#   - Improved logging clarity and context.
+#   - Added type hinting.
+#   - Clearly documented the non-atomic nature of the default cache update mechanism and recommended Redis.
+#   - Renamed middleware class slightly for clarity.
+#   - Encapsulated IP fetching logic within the class.
 
 import time
 import logging
@@ -21,34 +26,35 @@ from django.urls import resolve, Resolver404
 from django.utils.deprecation import MiddlewareMixin
 from django.conf import settings
 
-logger = logging.getLogger(__name__) # Use __name__ for module-level logger
+# Use specific logger for this middleware
+logger = logging.getLogger('mymarketplace.middleware.ratelimit')
 
 # --- Default Rate Limit Configuration (used if not overridden in settings.py) ---
 # Define rate limits (requests, period_in_seconds)
 # Use descriptive names for limit types
 DEFAULT_RATE_LIMITS_CONFIG = {
     # Limit Type             : (Requests, Period)
-    'anon_browse'          : (200, 3600),    # Anonymous general Browse: 200 reqs/hour
-    'user_browse'          : (2000, 3600),   # Authenticated general Browse: 2000 reqs/hour
-    'login_attempt_ip'     : (10, 60 * 5),   # Login attempts (per IP): 10 reqs/5 minutes
-    'login_success_user'   : (5, 60 * 15),   # Post-successful login actions (per User): 5 reqs/15 minutes
-    'register_attempt_ip'  : (5, 3600),      # Registration attempts (per IP): 5 reqs/hour
-    'product_list'         : (120, 60),      # Product listing/search: 120 reqs/minute
-    'product_detail'       : (180, 60),      # Product detail view: 180 reqs/minute
-    'product_create_user'  : (10, 3600),     # Vendor creating/updating product: 10 reqs/hour
-    'order_place_user'     : (5, 60 * 10),   # Placing an order: 5 reqs/10 minutes
-    'order_action_user'    : (20, 60 * 5),   # Other order actions (ship, finalize, etc): 20 reqs/5 minutes
-    'withdrawal_prep_user' : (5, 60 * 10),   # Preparing withdrawal: 5 reqs/10 minutes
-    'withdrawal_exec_user' : (3, 60 * 15),   # Executing withdrawal: 3 reqs/15 minutes
-    'ticket_create_user'   : (5, 3600),      # Creating support ticket: 5 reqs/hour
-    'ticket_reply_user'    : (30, 3600),     # Replying to ticket: 30 reqs/hour
-    'upload_user'          : (10, 3600),     # Generic upload limit: 10 reqs/hour
-    'sensitive_api_user'   : (60, 60),       # Fallback for sensitive APIs: 60 reqs/minute
-    'captcha_request_ip'   : (20, 60),       # Requesting CAPTCHA: 20 reqs/minute
+    'anon_browse'            : (200, 3600),     # Anonymous general Browse: 200 reqs/hour
+    'user_browse'            : (2000, 3600),    # Authenticated general Browse: 2000 reqs/hour
+    'login_attempt_ip'       : (10, 60 * 5),    # Login attempts (per IP): 10 reqs/5 minutes
+    'login_success_user'     : (5, 60 * 15),    # Post-successful login actions (per User): 5 reqs/15 minutes
+    'register_attempt_ip'    : (5, 3600),       # Registration attempts (per IP): 5 reqs/hour
+    'product_list'           : (120, 60),       # Product listing/search: 120 reqs/minute
+    'product_detail'         : (180, 60),       # Product detail view: 180 reqs/minute
+    'product_create_user'    : (10, 3600),      # Vendor creating/updating product: 10 reqs/hour
+    'order_place_user'       : (5, 60 * 10),    # Placing an order: 5 reqs/10 minutes
+    'order_action_user'      : (20, 60 * 5),    # Other order actions (ship, finalize, etc): 20 reqs/5 minutes
+    'withdrawal_prep_user'   : (5, 60 * 10),    # Preparing withdrawal: 5 reqs/10 minutes
+    'withdrawal_exec_user'   : (3, 60 * 15),    # Executing withdrawal: 3 reqs/15 minutes
+    'ticket_create_user'     : (5, 3600),       # Creating support ticket: 5 reqs/hour
+    'ticket_reply_user'      : (30, 3600),      # Replying to ticket: 30 reqs/hour
+    'upload_user'            : (10, 3600),      # Generic upload limit: 10 reqs/hour
+    'sensitive_api_user'     : (60, 60),        # Fallback for sensitive APIs: 60 reqs/minute
+    'captcha_request_ip'     : (20, 60),        # Requesting CAPTCHA: 20 reqs/minute
 }
 
 # --- Default Endpoint to Limit Type Mapping (used if not overridden in settings.py) ---
-# Map URL names (or patterns) to specific rate limit types defined above.
+# Map URL names (or prefixes) to specific rate limit types defined above.
 # Use OrderedDict to ensure the most specific match is checked first.
 DEFAULT_ENDPOINT_LIMIT_MAPPING = OrderedDict([
     # URL Name (or prefix)   : Limit Type
@@ -99,26 +105,24 @@ class ConfigurableRateLimitMiddleware(MiddlewareMixin):
 
     Applies granular limits based on resolved URL names and authentication status,
     configurable via Django settings. Identifies client IP considering trusted proxies.
+    Uses atomic cache.incr() if available for better accuracy under load.
 
     Settings:
         - ENABLE_RATE_LIMITING (bool): Enable/disable the middleware. Default: True.
         - RATE_LIMIT_CONFIGS (dict): Overrides DEFAULT_RATE_LIMITS_CONFIG.
         - RATE_LIMIT_MAPPING (dict|list): Overrides DEFAULT_ENDPOINT_LIMIT_MAPPING.
-                                         Use list of tuples to preserve order.
+                                          Use list of tuples to preserve order.
         - TRUSTED_PROXY_IPS (list): List of IP addresses of immediate upstream proxies
                                     that are allowed to set the real IP header. Default: [].
         - REAL_IP_HEADER (str): META key for the header containing the real client IP
                                 (e.g., 'HTTP_X_FORWARDED_FOR', 'HTTP_X_REAL_IP').
                                 Default: 'HTTP_X_FORWARDED_FOR'.
-        - NUM_PROXIES (int): If using X-Forwarded-For, how many proxy IPs to expect
-                             before the client IP. Default: 1.
 
-    Cache Atomicity Note:
-        The default Django cache API using get/set for counters is *not* strictly atomic.
-        Under high load, a small race condition could allow slightly exceeding the limit.
-        Using a Redis cache backend (via django-redis) significantly minimizes this window.
-        For guaranteed atomicity, consider using cache.incr() if available and suitable,
-        or Redis Lua scripts. This implementation prioritizes clarity and compatibility.
+    Cache Backend Recommendation:
+        Using cache.incr() provides atomic increments, preventing race conditions.
+        This works best with Redis or Memcached cache backends via django-redis or
+        Django's built-in Memcached backend. Database or filesystem caches might not
+        support atomic increments efficiently or at all.
     """
     RATELIMIT_CACHE_PREFIX = "rl:" # Short prefix for cache keys
 
@@ -130,111 +134,88 @@ class ConfigurableRateLimitMiddleware(MiddlewareMixin):
         mapping_setting = getattr(settings, 'RATE_LIMIT_MAPPING', DEFAULT_ENDPOINT_LIMIT_MAPPING.items())
         # Ensure mapping is an OrderedDict or convert from list/dict
         if isinstance(mapping_setting, dict):
-             self.endpoint_mapping = OrderedDict(mapping_setting.items())
+            self.endpoint_mapping = OrderedDict(mapping_setting.items())
         else: # Assume list of tuples or already OrderedDict
-             self.endpoint_mapping = OrderedDict(mapping_setting)
+            self.endpoint_mapping = OrderedDict(mapping_setting)
 
         # Trusted proxy settings
         self.trusted_proxies = set(getattr(settings, 'TRUSTED_PROXY_IPS', []))
         self.real_ip_header = getattr(settings, 'REAL_IP_HEADER', 'HTTP_X_FORWARDED_FOR')
-        self.num_proxies = getattr(settings, 'NUM_PROXIES', 1)
+        # NUM_PROXIES is no longer used in the corrected IP logic below
 
         if not self.enabled:
             logger.info("Rate limiting is disabled via settings.ENABLE_RATE_LIMITING.")
         if not self.trusted_proxies:
              logger.warning("TRUSTED_PROXY_IPS setting is empty. Rate limiting will use REMOTE_ADDR directly. "
-                           "Ensure this is correct for your deployment.")
+                            "Ensure this is correct for your deployment.")
 
     def _get_client_ip(self, request: HttpRequest) -> Optional[str]:
         """
         Get the client's real IP address, trusting configured proxies.
-
-        Logic:
-        1. Get the immediate upstream IP from request.META['REMOTE_ADDR'].
-        2. If REMOTE_ADDR is in TRUSTED_PROXY_IPS:
-           a. Look for the header specified in REAL_IP_HEADER.
-           b. If found (e.g., X-Forwarded-For): Parse it. The client IP is typically
-              the first entry, unless multiple trusted proxies are involved (use NUM_PROXIES).
-              Example: Client, ProxyA, ProxyB -> XFF: "Client, ProxyA"
-              If ProxyB is trusted, REMOTE_ADDR is ProxyB's IP.
-              If NUM_PROXIES=1, we trust ProxyB setting XFF, client is first IP.
-              If NUM_PROXIES=2, we trust ProxyA setting XFF, client is first IP.
-              (Simplified: take the IP at index `len(ips) - num_proxies` if trusting XFF chain)
-           c. If header not found or empty, log warning and fall back to REMOTE_ADDR.
-        3. If REMOTE_ADDR is NOT trusted, use REMOTE_ADDR as the client IP.
+        If REMOTE_ADDR is trusted, takes the *first* IP from REAL_IP_HEADER.
         """
         remote_addr = request.META.get('REMOTE_ADDR')
         if not remote_addr:
             logger.error("Could not determine REMOTE_ADDR. Cannot apply IP-based rate limits.")
             return None
 
-        ip: Optional[str] = None
+        ip: Optional[str] = remote_addr # Default to REMOTE_ADDR
+
+        # <<< SECURITY FIX: Corrected logic >>>
         if remote_addr in self.trusted_proxies:
             header_value = request.META.get(self.real_ip_header)
             if header_value:
-                # Split header value (e.g., "client, proxy1, proxy2")
-                ips = [ip.strip() for ip in header_value.split(',')]
-
-                if len(ips) >= self.num_proxies:
-                    # The client IP is expected at this position from the *left*
-                    # e.g., if num_proxies=1, client is ips[0]
-                    # e.g., if num_proxies=2, client is ips[0]
-                    # Django's SECURE_PROXY_SSL_HEADER logic is slightly different,
-                    # usually taking the Nth from the *right*. Let's stick to common XFF usage:
-                    # Client is typically the *first* element set by the *last* trusted proxy.
-                    # If num_proxies defines how many trusted proxies are *expected*,
-                    # the client IP should be at index len(ips) - num_proxies.
-                    # However, the simplest/most common convention is the first IP.
-                    # Let's use the first IP for simplicity, assuming the immediate trusted
-                    # proxy correctly sets/appends the header.
-                    client_ip_index = 0 # Assume first IP is client when set by trusted proxy
-                    ip = ips[client_ip_index]
-                    logger.debug(f"Trusted proxy {remote_addr} identified. Using IP {ip} from {self.real_ip_header} header: {header_value}")
-                else:
-                    logger.warning(
+                # X-Forwarded-For format is "client, proxy1, proxy2", so split and take the first one.
+                try:
+                    client_ip = header_value.split(',')[0].strip()
+                    if client_ip: # Ensure it's not an empty string
+                        ip = client_ip
+                        # logger.debug(f"Trusted proxy {remote_addr} identified. Using IP {ip} from {self.real_ip_header} header: {header_value}")
+                    else:
+                         logger.warning(
+                            f"Trusted proxy {remote_addr} provided {self.real_ip_header} header '{header_value}', "
+                            f"but the first value was empty. Falling back to REMOTE_ADDR."
+                        )
+                except IndexError:
+                     logger.warning(
                         f"Trusted proxy {remote_addr} provided {self.real_ip_header} header '{header_value}', "
-                        f"but not enough IPs found for NUM_PROXIES={self.num_proxies}. Falling back to REMOTE_ADDR."
+                        f"but it was empty or malformed after split. Falling back to REMOTE_ADDR."
                     )
-                    ip = remote_addr # Fallback if header format is unexpected
+                except Exception as e:
+                    logger.warning(
+                        f"Error processing {self.real_ip_header} header '{header_value}' from trusted proxy {remote_addr}: {e}. "
+                        f"Falling back to REMOTE_ADDR."
+                    )
             else:
                 logger.warning(
                     f"Trusted proxy {remote_addr} did not provide the expected {self.real_ip_header} header. "
                     f"Falling back to REMOTE_ADDR."
-                 )
-                ip = remote_addr # Fallback if header is missing
-        else:
-            # If the immediate upstream server is not a trusted proxy, use its IP
-            ip = remote_addr
-            logger.debug(f"Untrusted REMOTE_ADDR {remote_addr}. Using it as client IP.")
+                )
+        # else:
+            # logger.debug(f"Untrusted REMOTE_ADDR {remote_addr}. Using it as client IP.")
 
         return ip
 
-
     def process_request(self, request: HttpRequest) -> Optional[HttpResponse]:
-        """Checks and enforces the rate limit for the incoming request."""
+        """Checks and enforces the rate limit for the incoming request using cache.incr()."""
         if not self.enabled:
             return None
 
         # --- Resolve URL and Determine Limit ---
         try:
             match = resolve(request.path_info)
-            # Construct full URL name: <namespace>:<url_name> or just <url_name>
             url_name = f"{match.namespace}:{match.url_name}" if match.namespace else match.url_name
         except Resolver404:
-            # Could not resolve URL (e.g., static file, invalid path).
-            # Try matching based on path prefix as a fallback if needed, or just bypass.
             url_name = None
-            # Let's determine limit type based on auth status if URL is unresolved
-            limit_type = self._get_limit_type(request, url_name)
+            # Determine limit type based on auth status if URL is unresolved
+            limit_type = self._get_limit_type(request, url_name) # Uses fallback logic
             logger.debug(f"URL '{request.path_info}' not resolved. Using limit type '{limit_type}'.")
 
-
         # Determine rate limit config based on resolved name or fallback
-        if url_name:
-             limit_type = self._get_limit_type(request, url_name)
+        if url_name and 'limit_type' not in locals(): # Only run if not already set by Resolver404 fallback
+            limit_type = self._get_limit_type(request, url_name)
 
         if not limit_type:
-            # This case should ideally be covered by fallbacks in _get_limit_type
             logger.warning(f"Rate limit type could not be determined for request path '{request.path_info}' (resolved: {url_name}). Bypassing limit.")
             return None
 
@@ -249,65 +230,68 @@ class ConfigurableRateLimitMiddleware(MiddlewareMixin):
         cache_key, identifier = self._get_cache_key_and_identifier(request, limit_type)
 
         if not cache_key or not identifier:
-            # Error logged in _get_cache_key_and_identifier if IP/User is missing
-             logger.error(f"Could not generate cache key or identifier for limit type '{limit_type}'. Bypassing limit.")
-             return None
+            logger.error(f"Could not generate cache key or identifier for limit type '{limit_type}'. Bypassing limit.")
+            return None
 
-        # --- Enforce Limit using Cache ---
+        # --- Enforce Limit using Cache (Atomic Increment Method) ---
         try:
-            now = time.time()
-            # Get current usage data from cache
-            # Format: {'count': N, 'expiry': timestamp}
-            usage_data: Dict[str, Any] = cache.get(cache_key, {'count': 0, 'expiry': 0})
-            current_count: int = usage_data.get('count', 0)
-            expiry_time: float = usage_data.get('expiry', 0)
+            # Atomically increment the count for the cache key.
+            # cache.incr() initializes the key to 1 if it doesn't exist.
+            current_count = cache.incr(cache_key)
 
-            # Check if the window has expired
-            if now > expiry_time:
-                # Start new window
-                current_count = 1
-                new_expiry_time = now + period
-                # Set new data in cache with timeout slightly longer than period for safety
-                cache.set(cache_key, {'count': current_count, 'expiry': new_expiry_time}, timeout=period + 5)
-                remaining = limit - current_count
-                reset_time = period
-                expiry_time = new_expiry_time # Update expiry for headers/logging
-            else:
-                # Increment count within the existing window (NON-ATOMIC step)
-                current_count += 1
-                # Update cache data, keeping the existing expiry time
-                # Timeout is duration FROM NOW until expiry + buffer
-                cache_timeout = max(5, int(expiry_time - now) + 5)
-                cache.set(cache_key, {'count': current_count, 'expiry': expiry_time}, timeout=cache_timeout)
-                remaining = limit - current_count
-                reset_time = int(expiry_time - now)
+            # If this is the first hit (count is 1), set the expiry for the key.
+            if current_count == 1:
+                # Set the timeout for the cache key itself
+                cache.expire(cache_key, timeout=period)
+                # Alternative if expire isn't available: set with timeout
+                # cache.set(cache_key, 1, timeout=period)
+
+            # Get the remaining time until the key expires (TTL: Time To Live)
+            # Note: cache.ttl() might return None if the key doesn't exist or has no timeout,
+            # or -1/-2 depending on backend/state. We need a robust way to estimate reset.
+            # We know the period, and if count > 1, it must have been set recently.
+            # A simple estimate is usually sufficient for headers.
+            # We use the 'period' as the reset time from the *start* of the window.
+            reset_time_estimate = period # For header, represents full window duration
+
+            # More accurate TTL if available (e.g., Redis)
+            try:
+                ttl = cache.ttl(cache_key)
+                if ttl is not None and ttl > 0:
+                    reset_time_estimate = ttl
+            except AttributeError:
+                pass # Backend doesn't support ttl, use period
+
+            remaining = max(0, limit - current_count)
 
             # Store rate limit info on request for potential use in response headers
             request.rate_limit_info = {
                 'limit': limit,
-                'remaining': max(0, remaining), # Don't show negative remaining
-                'reset': max(0, reset_time), # Ensure reset is non-negative
+                'remaining': remaining,
+                'reset': reset_time_estimate,
             }
 
             # --- Check if Limit Exceeded ---
             if current_count > limit:
                 user_id = getattr(request.user, 'id', 'Anonymous')
-                log_identifier = f"User: {user_id}" if request.user.is_authenticated else f"IP: {identifier}" # Identifier is IP for anon
+                log_identifier = f"User: {user_id}" if request.user.is_authenticated and '_user' in limit_type else f"IP: {identifier}"
                 logger.warning(
                     f"Rate limit exceeded for key '{cache_key}' ({log_identifier}, URL: {url_name or request.path_info}). "
-                    f"Count: {current_count}/{limit} per {period}s. Reset in {reset_time}s."
+                    f"Count: {current_count}/{limit} per {period}s. Approx reset in {reset_time_estimate}s."
                 )
                 # Return HTTP 429 Too Many Requests
                 response = HttpResponse("Rate limit exceeded. Please try again later.", status=429)
-                response['Retry-After'] = str(reset_time) # Inform client when to retry (seconds)
-                # Optionally add X-RateLimit headers even on failure
+                response['Retry-After'] = str(reset_time_estimate) # Inform client when to retry (seconds)
                 response['X-RateLimit-Limit'] = str(limit)
-                response['X-RateLimit-Remaining'] = '0'
-                response['X-RateLimit-Reset'] = str(reset_time)
+                response['X-RateLimit-Remaining'] = '0' # Exceeded, so 0 remaining
+                response['X-RateLimit-Reset'] = str(reset_time_estimate)
                 return response
 
+        except AttributeError:
+             # Cache backend likely doesn't support incr or expire/ttl. Log error and fail open.
+             logger.exception(f"Rate limiting cache backend does not support atomic incr/expire/ttl for key '{cache_key}'. Falling back: request allowed.")
         except Exception as e:
-            # Log cache/unexpected errors but don't block requests (fail open)
+            # Log other cache/unexpected errors but don't block requests (fail open)
             logger.exception(f"Rate limiting failed for key '{cache_key}' due to error: {e}. Request allowed.")
 
         return None # Rate limit not exceeded or error occurred
@@ -333,27 +317,29 @@ class ConfigurableRateLimitMiddleware(MiddlewareMixin):
             for name_pattern, limit_type in self.endpoint_mapping.items():
                 # Allow exact match or prefix match (e.g., 'api:')
                 is_match = (url_name == name_pattern) or \
-                           (name_pattern.endswith(':') and url_name.startswith(name_pattern))
+                           (name_pattern.endswith(':') and name_pattern != '' and url_name.startswith(name_pattern)) or \
+                           (name_pattern == '' and not url_name) # Match empty pattern only if url_name is empty/None?
 
                 if is_match:
                     # Check if limit type is user-specific and user is anonymous
                     is_user_limit = '_user' in limit_type # Simple check, adjust if names vary
                     if is_user_limit and not user.is_authenticated:
                         # Skip user-only limits for anonymous users, continue searching map
-                        logger.debug(f"Skipping user limit '{limit_type}' for anonymous user on URL '{url_name}'.")
+                        # logger.debug(f"Skipping user limit '{limit_type}' for anonymous user on URL '{url_name}'.")
                         continue
                     else:
                         limit_type_found = limit_type
-                        logger.debug(f"Matched URL '{url_name}' to limit type '{limit_type_found}'.")
+                        # logger.debug(f"Matched URL '{url_name}' to limit type '{limit_type_found}'.")
                         break # Found the most specific applicable match
 
         # Fallback if no specific URL match found or applicable
         if not limit_type_found:
+            # Check the catch-all patterns defined in the mapping explicitly
             if user.is_authenticated:
-                limit_type_found = 'user_browse' # Default authenticated
+                limit_type_found = self.endpoint_mapping.get('api:', 'user_browse') # Default auth API, then overall auth browse
             else:
-                limit_type_found = 'anon_browse' # Default anonymous
-            logger.debug(f"No specific URL match for '{url_name or request.path_info}'. Using fallback limit type '{limit_type_found}'.")
+                 limit_type_found = self.endpoint_mapping.get('', 'anon_browse') # Default anonymous
+            # logger.debug(f"No specific URL match for '{url_name or request.path_info}'. Using fallback limit type '{limit_type_found}'.")
 
         return limit_type_found
 
@@ -380,7 +366,7 @@ class ConfigurableRateLimitMiddleware(MiddlewareMixin):
                 id_type = 'user'
             else:
                 # Cannot apply user limit to anonymous user - this should have been caught
-                # in _get_limit_type, but handle defensively. Fallback to IP? Or block?
+                # in _get_limit_type, but handle defensively.
                 logger.error(f"Attempted to apply user-specific limit '{limit_type}' to anonymous user. Misconfiguration? Bypassing this specific limit check.")
                 return None, None # Indicate failure to generate key
         else:
@@ -401,9 +387,9 @@ class ConfigurableRateLimitMiddleware(MiddlewareMixin):
             return None, None
 
         # Construct cache key: rl:[user|ip]:<identifier>:<limit_type>
-        # Ensure identifier does not contain characters problematic for cache keys (like spaces, colons)
-        safe_identifier = identifier.replace(":", "_").replace(" ", "_")
+        # Ensure identifier does not contain characters problematic for cache keys
+        safe_identifier = str(identifier).replace(":", "_").replace(" ", "_").replace("@", "_") # Be safe
         cache_key = f"{self.RATELIMIT_CACHE_PREFIX}{id_type}:{safe_identifier}:{limit_type}"
-        return cache_key, identifier # Return original identifier for logging
+        return cache_key, str(identifier) # Return original identifier for logging
 
 # --- MODIFICATION END ---

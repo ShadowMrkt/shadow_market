@@ -1,34 +1,40 @@
 # backend/store/services/common_escrow_utils.py
 # Contains shared constants, exceptions, and helper functions for escrow services.
 # Revision History:
+# 2025-05-03: (Gemini Rev 9): Enforced absolute imports starting with 'backend.'
+#                              - Updated model imports (store.models -> backend.store.models).
+#                              - Updated exception imports (store.exceptions -> backend.store.exceptions).
+#                              - Updated dynamic service module paths in service_module_map
+#                                (store.services... -> backend.store.services...).
+#                              Aims to resolve Django model registry conflicts.
 # 2025-04-11: (Gemini Rev 8): Re-enabled 'ETH-MULTISIG' mapping in service_module_map
-#                            to resolve test failures in test_ethereum_escrow_service.py.
+#                              to resolve test failures in test_ethereum_escrow_service.py.
 # 2025-04-11: (Gemini): Updated service_module_map: Removed 'ETH-MULTISIG', Added 'ETH-BASIC'.
 # 2025-04-10: v1.13.1 (Gemini):
-#           - FIXED: ValueError in _get_specific_escrow_service due to incorrect case comparison.
-#                    Changed `escrow_type.upper()` to `escrow_type.lower()` for comparison with EscrowTypeChoices.values.
+#                              - FIXED: ValueError in _get_specific_escrow_service due to incorrect case comparison.
+#                                       Changed `escrow_type.upper()` to `escrow_type.lower()` for comparison with EscrowTypeChoices.values.
 # 2025-04-10: v1.13.0 (Gemini):
-#           - MODIFIED: _get_specific_escrow_service now takes escrow_type and uses it
-#             along with currency to determine the correct service module (MULTISIG vs BASIC).
-#           - UPDATED: service_module_map includes entries for BASIC escrow services.
-#           - MODIFIED: Dispatcher functions (create_escrow_for_order, check_and_confirm_payment,
-#             sign_order_release, broadcast_release_transaction, resolve_dispute) now retrieve
-#             order.escrow_type and pass it to _get_specific_escrow_service.
-#           - ADDED: sign_order_release now explicitly handles BASIC escrow (logs warning, returns False)
-#             as signing is not applicable.
+#                              - MODIFIED: _get_specific_escrow_service now takes escrow_type and uses it
+#                                along with currency to determine the correct service module (MULTISIG vs BASIC).
+#                              - UPDATED: service_module_map includes entries for BASIC escrow services.
+#                              - MODIFIED: Dispatcher functions (create_escrow_for_order, check_and_confirm_payment,
+#                                sign_order_release, broadcast_release_transaction, resolve_dispute) now retrieve
+#                                order.escrow_type and pass it to _get_specific_escrow_service.
+#                              - ADDED: sign_order_release now explicitly handles BASIC escrow (logs warning, returns False)
+#                                as signing is not applicable.
 # 2025-04-09: v1.12.1 (The Void):
-#           - FIX: `broadcast_release_transaction` dispatcher now passes `order_id`
-#             to `specific_service.broadcast_release` instead of the full `order` object,
-#             resolving ValidationError in tests/test_integration_escrow.py.
+#                              - FIX: `broadcast_release_transaction` dispatcher now passes `order_id`
+#                                to `specific_service.broadcast_release` instead of the full `order` object,
+#                                resolving ValidationError in tests/test_integration_escrow.py.
 # 2025-04-09: v1.12.0 (The Void):
-#           - Implemented dispatcher functions: create_escrow_for_order, check_and_confirm_payment,
-#             sign_order_release, broadcast_release_transaction, resolve_dispute.
-#           - Added _get_specific_escrow_service helper for dynamic module loading based on currency.
-#           - Removed NotImplementedError stubs for broadcast and resolve functions.
-#           - Added basic error handling (ImportError, AttributeError, EscrowError, CryptoProcessingError) in dispatchers.
-#           - Assumes corresponding functions exist in specific service modules (e.g., bitcoin_escrow_service.create_escrow).
+#                              - Implemented dispatcher functions: create_escrow_for_order, check_and_confirm_payment,
+#                                sign_order_release, broadcast_release_transaction, resolve_dispute.
+#                              - Added _get_specific_escrow_service helper for dynamic module loading based on currency.
+#                              - Removed NotImplementedError stubs for broadcast and resolve functions.
+#                              - Added basic error handling (ImportError, AttributeError, EscrowError, CryptoProcessingError) in dispatchers.
+#                              - Assumes corresponding functions exist in specific service modules (e.g., bitcoin_escrow_service.create_escrow).
 # 2025-04-09: v1.1.4 (The Void):
-#           - REVERT/FIX: _get_market_fee_percentage now returns default fee for missing/None config, raises RuntimeError on DB errors. Aligns with updated test v1.1.4.
+#                              - REVERT/FIX: _get_market_fee_percentage now returns default fee for missing/None config, raises RuntimeError on DB errors. Aligns with updated test v1.1.4.
 # --- Previous revisions omitted ---
 
 import logging
@@ -47,12 +53,13 @@ from django.core.exceptions import ValidationError as DjangoValidationError, Obj
 
 # Use TYPE_CHECKING to avoid circular imports / runtime issues for type hints
 if TYPE_CHECKING:
-    from store.models import Order, CryptoPayment, GlobalSettings as GlobalSettingsModel, OrderStatus as OrderStatusChoices, EscrowType as EscrowTypeChoices # Added EscrowTypeChoices
+    # Use absolute paths starting from 'backend.'
+    from backend.store.models import Order, CryptoPayment, GlobalSettings as GlobalSettingsModel, OrderStatus as OrderStatusChoices, EscrowType as EscrowTypeChoices # Added EscrowTypeChoices
     from django.contrib.auth.models import AbstractUser # A common base
     # Define a more specific type alias for User model type hinting
     UserModel = AbstractUser # Alias for User model type hinting
     # Import ledger service protocol if defined
-    # from ledger.services import LedgerServiceInterface
+    # from backend.ledger.services import LedgerServiceInterface # <-- Updated path if needed
 
 # --- Model Imports (ensure these are needed by helpers, or move specific imports to specific services) ---
 User = get_user_model() # Keep runtime User fetch
@@ -60,15 +67,16 @@ User = get_user_model() # Keep runtime User fetch
 try:
     # Runtime imports needed by some helper functions
     # Ensure EscrowType is imported for use in dispatchers
-    from store.models import GlobalSettings, Order, CryptoPayment, OrderStatus as OrderStatusChoices, EscrowType as EscrowTypeChoices # Added EscrowTypeChoices
-    from store.exceptions import EscrowError, CryptoProcessingError # Assume these are defined elsewhere or move EscrowError here
+    # Use absolute paths starting from 'backend.'
+    from backend.store.models import GlobalSettings, Order, CryptoPayment, OrderStatus as OrderStatusChoices, EscrowType as EscrowTypeChoices # Added EscrowTypeChoices
+    from backend.store.exceptions import EscrowError, CryptoProcessingError # Assume these are defined elsewhere or move EscrowError here
     # Note: Dependencies on specific crypto services (monero_service, etc.) should NOT be here.
     #       Dependencies on ledger_service and notifications should also be carefully considered
     #       if they are needed directly by these common utils.
-    # from ledger import services as ledger_service
-    # from ledger.services import InsufficientFundsError, InvalidLedgerOperationError
-    # from notifications.services import create_notification # <-- Test expects this sometimes, but it's not defined here.
-    # from notifications.exceptions import NotificationError
+    # from backend.ledger import services as ledger_service # <-- Updated path if needed
+    # from backend.ledger.services import InsufficientFundsError, InvalidLedgerOperationError # <-- Updated path if needed
+    # from backend.notifications.services import create_notification # <-- Updated path if needed - Test expects this sometimes, but it's not defined here.
+    # from backend.notifications.exceptions import NotificationError # <-- Updated path if needed
     pass # Placeholder if no specific runtime imports needed right now
 
 except ImportError as e:
@@ -241,7 +249,7 @@ def _convert_atomic_to_standard(amount_atomic: Decimal, currency: str, crypto_se
             atomic_int = int(amount_atomic)
             standard_amount = converter(atomic_int)
             if not isinstance(standard_amount, Decimal):
-                 standard_amount = Decimal(str(standard_amount))
+                standard_amount = Decimal(str(standard_amount))
             return standard_amount
         except (TypeError, ValueError, InvalidOperation) as conv_err:
              logger.error(f"{log_prefix}: Error using {getattr(converter,'__name__','N/A')}: {conv_err}. Falling back.", exc_info=True)
@@ -275,10 +283,10 @@ def _get_market_fee_percentage(currency: str) -> Decimal:
     default_fee = getattr(settings, 'DEFAULT_MARKET_FEE_PERCENTAGE', Decimal('2.5'))
     try:
         if not isinstance(default_fee, Decimal):
-             default_fee = Decimal(str(default_fee))
+              default_fee = Decimal(str(default_fee))
         if not (Decimal('0.0') <= default_fee <= Decimal('100.0')):
-             logger.warning(f"DEFAULT_MARKET_FEE_PERCENTAGE setting ('{settings.DEFAULT_MARKET_FEE_PERCENTAGE}') out of range 0-100. Clamping.")
-             default_fee = max(Decimal('0.0'), min(Decimal('100.0'), default_fee))
+              logger.warning(f"DEFAULT_MARKET_FEE_PERCENTAGE setting ('{settings.DEFAULT_MARKET_FEE_PERCENTAGE}') out of range 0-100. Clamping.")
+              default_fee = max(Decimal('0.0'), min(Decimal('100.0'), default_fee))
     except (InvalidOperation, TypeError, ValueError):
         logger.error(f"Invalid format for settings.DEFAULT_MARKET_FEE_PERCENTAGE ('{settings.DEFAULT_MARKET_FEE_PERCENTAGE}'). Using hardcoded 2.5%.")
         default_fee = Decimal('2.5') # Hardcoded fallback if setting is unusable
@@ -312,8 +320,8 @@ def _get_market_fee_percentage(currency: str) -> Decimal:
             try:
                 fee_decimal = Decimal(str(fee_value))
                 if not (Decimal('0.0') <= fee_decimal <= Decimal('100.0')):
-                     logger.warning(f"Converted market fee for {currency} ({fee_decimal}%) is outside 0-100 range. Clamping.")
-                     fee_decimal = max(Decimal('0.0'), min(Decimal('100.0'), fee_decimal))
+                      logger.warning(f"Converted market fee for {currency} ({fee_decimal}%) is outside 0-100 range. Clamping.")
+                      fee_decimal = max(Decimal('0.0'), min(Decimal('100.0'), fee_decimal))
                 logger.debug(f"Converted stored fee '{fee_value}' to Decimal {fee_decimal} for {currency}.")
                 return fee_decimal
             except (InvalidOperation, TypeError, ValueError) as conv_err:
@@ -447,7 +455,7 @@ def _get_specific_escrow_service(currency: str, escrow_type: str) -> ModuleType:
     if 'EscrowTypeChoices' in globals():
         # FIX: Compare lowercase escrow_type against lowercase EscrowTypeChoices.values
         if not isinstance(escrow_type, str) or escrow_type.lower() not in EscrowTypeChoices.values:
-            raise ValueError(f"Invalid or unsupported escrow_type: '{escrow_type}'. Must be one of {EscrowTypeChoices.values}")
+             raise ValueError(f"Invalid or unsupported escrow_type: '{escrow_type}'. Must be one of {EscrowTypeChoices.values}")
     # If EscrowTypeChoices not loaded, skip validation (might happen during startup/test?)
     # Convert to upper *after* validation for map lookup
     upper_escrow_type = escrow_type.upper()
@@ -458,17 +466,17 @@ def _get_specific_escrow_service(currency: str, escrow_type: str) -> ModuleType:
     if service_key in _specific_service_cache:
         return _specific_service_cache[service_key]
 
-    # --- Service Map (FIX APPLIED HERE) ---
+    # --- Service Map (FIX APPLIED HERE - paths updated) ---
     service_module_map = {
-        # Bitcoin
-        'BTC-MULTISIG': 'store.services.bitcoin_escrow_service',
-        'BTC-BASIC': 'store.services.simple_bitcoin_escrow_service',
-        # Monero
-        'XMR-MULTISIG': 'store.services.monero_escrow_service',
-        'XMR-BASIC': 'store.services.simple_monero_escrow_service',
-        # Ethereum
-        'ETH-MULTISIG': 'store.services.ethereum_escrow_service', # RE-ENABLED (Fix for test failure)
-        'ETH-BASIC': 'store.services.simple_ethereum_escrow_service',
+        # Bitcoin - Use absolute path from 'backend.'
+        'BTC-MULTISIG': 'backend.store.services.bitcoin_escrow_service',
+        'BTC-BASIC': 'backend.store.services.simple_bitcoin_escrow_service',
+        # Monero - Use absolute path from 'backend.'
+        'XMR-MULTISIG': 'backend.store.services.monero_escrow_service',
+        'XMR-BASIC': 'backend.store.services.simple_monero_escrow_service',
+        # Ethereum - Use absolute path from 'backend.'
+        'ETH-MULTISIG': 'backend.store.services.ethereum_escrow_service', # RE-ENABLED (Fix for test failure)
+        'ETH-BASIC': 'backend.store.services.simple_ethereum_escrow_service',
     }
     # --- End Service Map ---
 
@@ -479,6 +487,7 @@ def _get_specific_escrow_service(currency: str, escrow_type: str) -> ModuleType:
         raise ValueError(msg)
 
     try:
+        # Ensure importlib uses the updated absolute path
         module = importlib.import_module(module_name)
         _specific_service_cache[service_key] = module
         logger.debug(f"Dynamically loaded escrow service module '{module_name}' for {service_key}.")
@@ -671,7 +680,7 @@ def broadcast_release_transaction(order_id: Union[int, str]) -> bool:
         currency = order.selected_currency
         escrow_type = order.escrow_type # Get type from order
         if not currency or not escrow_type:
-            raise ValueError(f"{log_prefix}: Order {order.id} missing selected currency or escrow type.")
+             raise ValueError(f"{log_prefix}: Order {order.id} missing selected currency or escrow type.")
 
         logger.info(f"{log_prefix}: Dispatching release broadcast for Currency={currency}, Type={escrow_type}.")
 
@@ -744,7 +753,7 @@ def resolve_dispute(order: 'Order', moderator: 'UserModel', resolution_notes: st
 
         # Validate range 0-100
         if not (Decimal('0.0') <= release_to_buyer_percent_dec <= Decimal('100.0')):
-             raise ValueError("Percentage must be between 0.0 and 100.0.")
+              raise ValueError("Percentage must be between 0.0 and 100.0.")
 
     except (TypeError, ValueError, InvalidOperation) as e:
         raise ValueError(f"Invalid release_to_buyer_percent format or value: {release_to_buyer_percent}. Must be convertible to Decimal 0-100.") from e

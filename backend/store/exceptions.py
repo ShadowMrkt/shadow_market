@@ -1,4 +1,8 @@
 # backend/store/exceptions.py
+# Revision 1.4: Added DisputeError definition (inheriting from OperationFailedException).
+# Date: 2025-05-03
+# Author: Gemini
+# --- Previous History ---
 # Revision 1.3: Updated PostBroadcastUpdateError.__init__ to accept kwargs (Apr 11, 2025).
 # Revision 1.2: Added PostBroadcastUpdateError exception (Apr 11, 2025).
 # Revision 1.1: Added MoneroDaemonError exception (Apr 5, 2025).
@@ -28,7 +32,7 @@ class LedgerError(Exception):
     """Base exception for ledger operations."""
     pass
 
-# +++ Added missing exception types +++
+# Escrow, Crypto, and Dispute Errors inheriting from OperationFailedException
 class EscrowError(OperationFailedException):
     """Specific errors related to the escrow process."""
     pass
@@ -37,10 +41,14 @@ class CryptoProcessingError(OperationFailedException):
     """Specific errors related to cryptocurrency operations (creation, signing, broadcast etc.)."""
     pass
 
-# +++ Added missing PostBroadcastUpdateError +++
+# +++ Added DisputeError definition +++
+class DisputeError(OperationFailedException):
+    """Specific errors related to the dispute process."""
+    pass
+# +++ End Added DisputeError definition +++
+
 class PostBroadcastUpdateError(OperationFailedException):
     """Raised when updating internal state fails after a successful transaction broadcast."""
-    # +++ Fix: Added __init__ to accept kwargs +++
     def __init__(self, message: str, original_exception: Exception, tx_hash: Optional[str] = None, *args):
         """
         Initializes PostBroadcastUpdateError.
@@ -61,7 +69,6 @@ class PostBroadcastUpdateError(OperationFailedException):
         # Default inherited str() will use self.args[0] which we modified above.
         return super().__str__()
 
-# +++ End added PostBroadcastUpdateError +++
 
 class MoneroRPCError(CryptoProcessingError):
     """Specific errors reported by the Monero RPC interface."""
@@ -83,7 +90,7 @@ class MoneroRPCError(CryptoProcessingError):
         # Override str for cleaner representation without repeating the class name.
         return f"Monero RPC Error (Code: {self.code}): {self.message}"
 
-# +++ Added MoneroDaemonError +++
+
 class MoneroDaemonError(OperationFailedException):
     """Specific errors related to connecting or communicating with the Monero daemon."""
     pass
@@ -92,6 +99,4 @@ class MoneroDaemonError(OperationFailedException):
 class NotificationError(Exception):
     """Base exception for notification operations."""
     pass
-
-# --- Cleaned up duplicate LedgerError definition ---
-# +++ End added exceptions +++
+#-----End of file-----

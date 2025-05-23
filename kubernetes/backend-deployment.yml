@@ -1,13 +1,19 @@
 # shadow_market/kubernetes/backend-deployment.yaml
-# Revision History:
-# 2025-04-07: Initial creation. Defines the Deployment for the Django backend.
-#             - Configures replicas, image source (from CI/CD).
-#             - Mounts ConfigMap/Secret for environment configuration.
-#             - Sets command to run Gunicorn using config from ConfigMap.
-#             - Defines resource requests/limits.
-#             - Implements strict securityContext (non-root, read-only filesystem).
-#             - Includes placeholder volumeMounts/volumes for /tmp and media files.
-#             - Configures HTTP readiness and liveness probes.
+# /***************************************************************************************
+# * REVISION HISTORY (Most recent first)
+# ***************************************************************************************
+# * 2025-04-28    [Gemini]   MAJOR UPDATE: Integrated with Vault Agent Injector.
+# * - Added Vault annotations to spec.template.metadata.
+# * - Removed direct loading from K8s 'shadow-market-secrets'.
+# * (App must now read secrets from /vault/secrets/*).
+# * - Enabled readOnlyRootFilesystem with /tmp volume.
+# * - Updated image placeholder & recommended SHA tags.
+# * - Removed placeholder media volume (assume external storage).
+# * - Added placeholder for Vault secret path env var if needed.
+# * WARNING: Vault annotations (role, paths) MUST be verified
+# * and adjusted to match your Vault configuration.
+# * 2025-04-07    [Original] Initial creation. Defines Deployment for Django backend.
+# ***************************************************************************************/
 
 apiVersion: apps/v1
 kind: Deployment
@@ -33,99 +39,109 @@ spec:
       labels: # Labels applied to each Pod
         app: shadow-market
         tier: backend
-        # Optional: Add annotation for automatic rollout on ConfigMap change
-        # checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+      annotations:
+        # --- Vault Agent Injector Configuration ---
+        # MUST BE ADJUSTED TO MATCH YOUR VAULT SETUP
+        vault.hashicorp.com/agent-inject: 'true'
+        vault.hashicorp.com/role: 'shadow-market-backend' # AppRole name for this deployment
+        vault.hashicorp.com/agent-inject-secret-config: 'secret/data/shadow-market' # Path to your KV secrets
+        # Template for rendering the DJANGO_SECRET_KEY to a file
+        vault.hashicorp.com/agent-inject-template-config: |
+          {{- with secret "secret/data/shadow-market" -}}
+          export DJANGO_SECRET_KEY='{{ .Data.data.DJANGO_SECRET_KEY }}'
+          export POSTGRES_PASSWORD='{{ .Data.data.POSTGRES_PASSWORD }}'
+          {{ if .Data.data.REDIS_PASSWORD }}export REDIS_PASSWORD='{{ .Data.data.REDIS_PASSWORD }}'{{ end }}
+          # Add other secrets needed as environment variables here...
+          {{- end }}
+        # Note: Alternatively, render secrets to files and read from files in Django settings
+        # Example: Render DJANGO_SECRET_KEY to /vault/secrets/django_secret_key
+        # vault.hashicorp.com/agent-inject-file-django_secret_key: 'secret/data/shadow-market'
+        # vault.hashicorp.com/agent-inject-template-django_secret_key: |
+        #   {{- with secret "secret/data/shadow-market" -}}
+        #   {{ .Data.data.DJANGO_SECRET_KEY }}
+        #   {{- end -}}
+        # --- End Vault Configuration ---
     spec:
       terminationGracePeriodSeconds: 30 # Allow time for Gunicorn workers to finish requests
       # Service Account Name if using specific K8s service account for permissions
-      # serviceAccountName: shadow-market-sa
+      # serviceAccountName: shadow-market-sa # Ensure this SA is bound to the Vault AppRole
       containers:
         - name: backend # Container name
           # Image built and pushed by the CI/CD pipeline
-          # IMPORTANT: Replace '<your-github-owner>' or use a variable substitution mechanism
-          image: ghcr.io/<your-github-owner>/shadow_market_backend:latest
-          # Use 'Always' to ensure K8s pulls the latest image if using ':latest' tag,
-          # or use specific SHA tags pushed by CI/CD for better immutability.
-          imagePullPolicy: Always
+          # IMPORTANT: Replace placeholder or use variable substitution. Use SHA tags instead of :latest.
+          image: ghcr.io/{{ GITHUB_OWNER_PLACEHOLDER }}/shadow_market_backend:{{ IMAGE_TAG_PLACEHOLDER }} # e.g., ghcr.io/myorg/shadow_market_backend:a1b2c3d4
+          # Use 'IfNotPresent' with specific SHA tags. Use 'Always' only if forced to use ':latest'.
+          imagePullPolicy: IfNotPresent
           ports:
             - name: http # Port name for reference
-              # Port Gunicorn listens on inside the container (from Dockerfile/Gunicorn config)
               containerPort: 8000
               protocol: TCP
-          envFrom: # Load all key-value pairs from ConfigMap as environment variables
+          envFrom: # Load non-sensitive config from ConfigMap
             - configMapRef:
-                name: shadow-market-config # Reference the ConfigMap created earlier
-          env: # Load specific sensitive values from Secret as environment variables
-            - name: DJANGO_SECRET_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: shadow-market-secrets
-                  key: DJANGO_SECRET_KEY
-            - name: POSTGRES_PASSWORD # Needed by Django settings to connect to DB
-              valueFrom:
-                secretKeyRef:
-                  name: shadow-market-secrets
-                  key: POSTGRES_PASSWORD
-            - name: REDIS_PASSWORD # Needed by Django settings if Redis requires auth
-              valueFrom:
-                secretKeyRef:
-                  name: shadow-market-secrets
-                  key: REDIS_PASSWORD
-                  optional: true # Allow Secret key to be missing if Redis has no password
-            # Construct Gunicorn command arguments using values from ConfigMap
-            - name: GUNICORN_CMD_ARGS
-              value: "-w $(GUNICORN_WORKERS) -b $(GUNICORN_BIND_ADDR) --log-level info --access-logfile -"
+                name: shadow-market-config
+          # env: # Specific env vars needed (e.g., pointing to Vault secret file paths if not using agent-inject-template-config export)
+            # Example if rendering secrets to files:
+            # - name: VAULT_SECRETS_PATH
+            #   value: "/vault/secrets"
+            # - name: DJANGO_SECRET_KEY_FILE
+            #   value: "/vault/secrets/django_secret_key"
+            # - name: POSTGRES_PASSWORD_FILE
+            #   value: "/vault/secrets/postgres_password"
+            # # Gunicorn args still loaded from ConfigMap via envFrom above
+            # - name: GUNICORN_CMD_ARGS
+            #   value: "-w $(GUNICORN_WORKERS) -b $(GUNICORN_BIND_ADDR) --log-level info --access-logfile -"
           # Override the Dockerfile CMD to ensure GUNICORN_CMD_ARGS is expanded
+          # Note: If using Vault template to export env vars, they are available here.
+          # If rendering to files, the app needs to read them internally.
           command: ["/bin/sh", "-c"]
-          args: ["exec gunicorn mymarketplace.wsgi:application $GUNICORN_CMD_ARGS"]
+          args: ["exec gunicorn mymarketplace.wsgi:application -w $(GUNICORN_WORKERS) -b $(GUNICORN_BIND_ADDR) --log-level info --access-logfile -"] # Simpler arg passing
           resources: # Define resource requests and limits for the container
             requests: # Minimum resources required
-              memory: "512Mi" # Adjust based on application memory footprint
-              cpu: "500m"    # 0.5 CPU core
+              memory: "512Mi"
+              cpu: "500m"
             limits: # Maximum resources allowed
-              memory: "1Gi" # Adjust based on needs and node capacity
-              cpu: "1"       # 1 CPU core
+              memory: "1Gi"
+              cpu: "1"
           securityContext: # Apply security best practices
-            allowPrivilegeEscalation: false # Prevent privilege escalation
-            runAsNonRoot: true              # Ensure container runs as non-root user
-            runAsUser: 1000                 # MUST match the 'appuser' UID from the backend Dockerfile
-            # readOnlyRootFilesystem: true    # RECOMMENDED: Makes filesystem immutable
-                                            # Requires writable /tmp volumeMount and ensuring app/deps
-                                            # don't write elsewhere unexpectedly. Test thoroughly.
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            runAsUser: 1000 # MUST match the 'appuser' UID from the backend Dockerfile
+            readOnlyRootFilesystem: true # Enabled for security
             capabilities:
               drop:
-                - ALL # Drop all Linux capabilities for enhanced security
+                - ALL # Drop all Linux capabilities
           volumeMounts:
-            # Mount a writable /tmp if readOnlyRootFilesystem is true
-            # - name: tmp-volume
-            #   mountPath: /tmp
-            # Mount a persistent volume for media files if your app handles uploads
-            # - name: media-volume
-            #   mountPath: /app/media # Path where Django expects media files
+            # Mount a writable /tmp required by readOnlyRootFilesystem
+            - name: tmp-volume
+              mountPath: /tmp
+            # Vault agent mounts secrets here if rendering to files (even with env var injection, volume is needed)
+            - name: vault-secrets # VolumeMount for secrets managed by Vault Agent
+              mountPath: /vault/secrets # Default path Vault agent uses (check agent config)
+              readOnly: true # Secrets should be read-only
+            # Media volume mount removed - Assuming media handled by external object storage (e.g., S3)
           readinessProbe: # Check if the application is ready to serve traffic
             httpGet:
-              path: /healthz # Replace with your actual readiness endpoint
-              port: http    # Reference the container port by name ('http' -> 8000)
-            initialDelaySeconds: 15 # Wait before first probe
-            periodSeconds: 10       # How often to probe
-            timeoutSeconds: 5       # When to time out
-            failureThreshold: 3     # How many failures before marking Unready
+              path: /healthz # Ensure this endpoint exists and indicates readiness
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
             successThreshold: 1
           livenessProbe: # Check if the application is still running and responsive
             httpGet:
-              path: /healthz # Replace with your actual liveness endpoint (can be same as readiness)
+              path: /healthz # Ensure this endpoint exists and indicates liveness
               port: http
-            initialDelaySeconds: 30 # Wait longer before first probe
+            initialDelaySeconds: 30
             periodSeconds: 15
             timeoutSeconds: 5
             failureThreshold: 3
       # --- Volume Definitions ---
       volumes:
-        # Define an emptyDir volume for /tmp if using readOnlyRootFilesystem
-        # - name: tmp-volume
-        #   emptyDir: {}
-        # Define the volume for persistent media storage
-        # This requires a PersistentVolumeClaim named 'shadow-market-media-pvc' to be created separately.
-        # - name: media-volume
-        #   persistentVolumeClaim:
-        #     claimName: shadow-market-media-pvc # Needs a corresponding PVC manifest
+        # Define an emptyDir volume for /tmp required by readOnlyRootFilesystem
+        - name: tmp-volume
+          emptyDir: {}
+        # Define an emptyDir volume for Vault secrets (managed by the injector/agent)
+        - name: vault-secrets
+          emptyDir: {} # The Vault agent populates this
+        # Media volume definition removed

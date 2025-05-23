@@ -1,5 +1,6 @@
 // frontend/pages/faq.js
 // --- REVISION HISTORY ---
+// 2025-04-28: Rev 5 - Filled in placeholder content for "How do I become a vendor?". (Gemini)
 // 2025-04-09: Rev 4 - Updated auto-finalize deadline content based on user input.
 // 2025-04-09: Rev 3 - Updated "Are there market fees?" content based on user input.
 // 2025-04-09: Rev 2 - Updated "What is Shadow Market?" content based on user input.
@@ -59,7 +60,7 @@ export default function FaqPage() {
 
                         <h3 className={styles.question}>Q: Is this market secure?</h3>
                         <p className={styles.answer}>
-                            A: We employ several security measures, including mandatory PGP 2FA, multi-signature escrow, encrypted messaging (where applicable), and operate exclusively on Tor. However, absolute security cannot be guaranteed. Users must also practice good Operational Security (OpSec). See our About page (if it exists) or Rules for more details. {/* Consider linking to /rules instead of /about if more relevant */}
+                            A: We employ several security measures, including mandatory PGP 2FA, multi-signature escrow, encrypted messaging (where applicable), and operate exclusively on Tor. However, absolute security cannot be guaranteed. Users must also practice good Operational Security (OpSec). See our <Link href="/rules">Rules page</Link> for more details.
                         </p>
 
                          <h3 className={styles.question}>Q: Are there market fees?</h3>
@@ -114,7 +115,7 @@ export default function FaqPage() {
                          <h3 className={styles.question}>Q: When should I open a dispute?</h3>
                          <p className={styles.answer}>
                              A: Open a dispute before the auto-finalize deadline if you haven't received your order after a reasonable shipping time has passed, or if the item received is incorrect, damaged, or significantly not as described. It is highly recommended to attempt communication with the vendor via order messages first to resolve the issue amicably.
-                         </p>
+                          </p>
 
                           <h3 className={styles.question}>Q: What happens in a dispute?</h3>
                           <p className={styles.answer}>
@@ -126,10 +127,31 @@ export default function FaqPage() {
                      <section className="mt-4">
                           <h2>Vendors</h2>
                           <h3 className={styles.question}>Q: How do I become a vendor?</h3>
+                           {/* --- UPDATED CONTENT (Rev 5) --- */}
                           <p className={styles.answer}>
-                            {/* TODO: Fill in vendor application process */}
-                            A: [TODO: Explain your vendor application/approval process here - e.g., Minimum account age/history, application via support ticket, requirements for PGP/description, bond payment details]. Check the specific requirements detailed on the [TODO: Link to Vendor Application Info if available] page or in the Market Rules.
+                              A: Becoming a vendor on Shadow Market involves demonstrating trustworthiness and commitment to security. The general process is:
                           </p>
+                          <ol className={`${styles.answer} list-decimal pl-4 mb-3`}>
+                                <li className="mb-2">
+                                    <strong>Prerequisites:</strong> You must have an established user account in good standing (e.g., minimum account age, positive transaction history if applicable - specific requirements are in the Market Rules). You must have PGP configured correctly on your account.
+                                </li>
+                                <li className="mb-2">
+                                    <strong>Application:</strong> Navigate to the 'Become a Vendor' page [TODO: Link to `/vendor-application` or similar if it exists] or follow instructions in the <Link href="/rules">Market Rules</Link>. You will typically need to provide a description of your intended listings, verify your identity via a PGP signed message challenge issued during the application, and agree to the vendor terms.
+                                </li>
+                                <li className="mb-2">
+                                    <strong>Bond Payment:</strong> If your initial application details are satisfactory, you will be required to pay a non-refundable vendor bond (currently payable in BTC). The specific bond amount is listed in the <Link href="/rules">Market Rules</Link>. You will be provided with a unique BTC deposit address during the application process.
+                                </li>
+                                <li className="mb-2">
+                                    <strong>Review:</strong> Once the bond payment is confirmed on the blockchain, your application will be reviewed by market staff. This involves verifying your PGP signature, checking your statement, and ensuring compliance with market rules.
+                                </li>
+                                <li className="mb-2">
+                                    <strong>Approval:</strong> If approved, your account will be granted vendor status, allowing you to create listings. You will receive a notification upon approval.
+                                </li>
+                           </ol>
+                           <p className={`${styles.answer} font-italic`}> {/* Use global italic class if available */}
+                               Please note: The vendor application process is thorough to ensure market integrity. Falsifying information or failing PGP verification will result in rejection. Ensure you read the <Link href="/rules">Market Rules</Link> completely before applying.
+                           </p>
+                          {/* --- END UPDATED CONTENT --- */}
 
                            <h3 className={styles.question}>Q: What is the vendor bond?</h3>
                            <p className={styles.answer}>

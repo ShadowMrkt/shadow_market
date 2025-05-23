@@ -1,64 +1,65 @@
 # Target Environment:
-# Installs the LATEST available version of each package upon installation.
-# WARNING: This can lead to unexpected breaking changes and non-reproducible environments.
-# Consider using dependency management tools like pip-tools for better control.
+# It is recommended to pin direct dependencies for reproducible environments.
+# Use tools like pip-tools (pip-compile) to manage pinned versions and their transitive dependencies.
 
 # --- Core Framework ---
-Django
-djangorestframework
-django-environ
-gunicorn
+Django==5.2.1
+djangorestframework==3.16.0
+django-environ==0.12.0
+gunicorn==23.0.0
 
 # --- Database & Cache ---
-psycopg2-binary
-redis
-django-redis
+psycopg2-binary==2.9.10
+redis==6.0.0
+django-redis==5.4.0
 
 # --- Background Tasks ---
-celery
-django-celery-results
+celery==5.5.2
+django-celery-results==2.6.0
+drf-nested-routers==0.94.1
 
 # --- Authentication & Security ---
-django-axes
-django-otp
-django-simple-captcha
-python-gnupg
-PyNaCl
-bleach
-hvac
-webauthn
-djangorestframework-simplejwt
-python-redis-lock
+django-axes==8.0.0
+django-otp==1.6.0
+django-simple-captcha==0.6.2
+python-gnupg==0.5.4
+PyNaCl==1.5.0
+bleach==6.2.0
+hvac==2.3.0
+webauthn==2.5.2
+djangorestframework-simplejwt==5.5.0
+python-redis-lock==4.0.0      # <<< VERSION NEEDED >>> # Note: Was in original, but not in global_requirements.txt freeze? Add version if needed.
+argon2-cffi ==23.1.0
 
 # --- API & Utilities ---
-requests
-python-json-logger
-django-filter
-websockets
-sentry-sdk
-
+requests==2.32.3
+python-json-logger==3.3.0    # NOTE: Address internal deprecation warning via code changes in logging config.
+django-filter==25.1
+websockets==15.0.1           # NOTE: Address legacy usage warning via code changes where websockets are used.
+sentry-sdk==2.27.0                 # <<< VERSION NEEDED >>>
 
 # --- Cryptocurrency Libraries ---
-#web3 dependency commented out as in original file, uncomment if needed
-web3
-python-monerorpc
-python-bitcoinlib
+web3==7.10.0                         # 	
+monero==1.1.1                 # <<< VERSION NEEDED >>>
+python-monerorpc==0.6.2             # <<< VERSION NEEDED >>>
+python-bitcoinlib==0.12.2           # <<< VERSION NEEDED >>> # Used by bitcoin_service.py
+bitcoinaddress==0.1.5      # <<< ADDED VERSION (Used by store/validators.py) >>>
+hdwallet==3.4.0
 
 
 # --- Image Handling ---
-Pillow
-
+Pillow==11.0.0
 
 # --- Core Testing Tools ---
-django-solo
-pytest
-pytest-django
-pytest-cov
-sentry-sdk
-django-debug-toolbar
+# It's often better to keep testing tools in a separate requirements-dev.txt
+django-solo==2.4.0                # <<< VERSION NEEDED >>>
+pytest==8.3.5
+pytest-django==4.11.1
+pytest-cov==6.1.1                # Listed above
+django-debug-toolbar==5.1.0         # <<< VERSION NEEDED >>>
 
 
-# --- Other Development/Testing Tools (Optional - Uncomment if needed) ---
+# --- Other Development/Testing Tools (Optional - Keep commented or move to requirements-dev.txt) ---
 # bandit
 # safety
 # pip-audit
@@ -68,7 +69,5 @@ django-debug-toolbar
 # isort
 # icontract
 
-# NOTE: The actual output of 'pip freeze' after installing with this file
-# will likely include MANY more packages than listed here, as it includes
-# all indirect dependencies at their latest versions compatible with the
-# primary dependencies requested here.
+# NOTE: For a fully reproducible environment, generate a lock file (e.g., requirements.lock)
+# using pip-compile requirements.txt > requirements.lock and install using pip install -r requirements.lock

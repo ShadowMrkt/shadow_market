@@ -1,5 +1,8 @@
 // frontend/jest.config.js
 // --- REVISION HISTORY ---
+// 2025-04-28: Rev 15 - Reverted transformIgnorePatterns changes (Revs 13 & 14) as they did not resolve ESM issue with next/jest. Will use module mocking instead. (Gemini)
+// 2025-04-28: Rev 14 - Switched transformIgnorePatterns to a simpler regex for ESM modules. (Gemini) - REVERTED
+// 2025-04-28: Rev 13 - Added transformIgnorePatterns to process specific ESM modules in node_modules (bitcoin-address-validation, base58-js). (Gemini) - REVERTED
 // 2025-04-09: Rev 12 - Simplified moduleNameMapper for path aliases.
 //             - Removed specific subdirectory mappings ('@/components/', '@/context/', etc.).
 //             - Relies solely on the general '@/' mapping based on tsconfig baseUrl '.'.
@@ -32,6 +35,8 @@ const customJestConfig = {
     '<rootDir>/node_modules/',
     '<rootDir>/.next/',
   ],
+
+  // transformIgnorePatterns removed - relying on next/jest defaults + manual mocks for problematic ESM modules.
 };
 
 // createJestConfig is exported this way to ensure that next/jest can load the Next.js config which is async

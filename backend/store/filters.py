@@ -1,4 +1,12 @@
 # backend/store/filters.py
+# Revision: 1.1 (Fix Relative Model Import)
+# Date: 2025-04-29
+# Changes:
+# - Rev 1.1:
+#   - FIXED: Changed relative model import (`from .models import ...`) to absolute
+#     (`from backend.store.models import ...`) to resolve conflicting model
+#     loading errors and ensure consistency.
+# - Rev 1.0 (Original): Initial filterset definitions.
 
 """
 Defines FilterSet classes for the store application using django-filter.
@@ -17,9 +25,9 @@ from django_filters.rest_framework import (
 )
 # Note: No need to import 'django_filters' directly if using 'django_filters.rest_framework'
 
+# --- FIXED IMPORT PATH ---
 # Import models and constants needed for choices or relations
-# Ensure these paths are correct relative to your project structure.
-from .models import Product, Category, User, CURRENCY_CHOICES
+from backend.store.models import Product, Category, User, CURRENCY_CHOICES
 
 # --- Constants ---
 
@@ -184,9 +192,9 @@ class ProductFilter(FilterSet):
         # For TextField (comma-separated, less robust, needs careful implementation):
         # from django.db.models import Q
         # return queryset.filter(
-        #     Q(accepted_currencies__iexact=value) | # Exact match if only one currency
-        #     Q(accepted_currencies__icontains=f'{value},') | # Starts with or middle
-        #     Q(accepted_currencies__iendswith=f',{value}') # Ends with
+        #     Q(accepted_currencies__iexact=value) | # Exact match if only one currency
+        #     Q(accepted_currencies__icontains=f'{value},') | # Starts with or middle
+        #     Q(accepted_currencies__iendswith=f',{value}') # Ends with
         # )
         # Even better for TextField might be regex or finding a library. Avoid if possible.
 

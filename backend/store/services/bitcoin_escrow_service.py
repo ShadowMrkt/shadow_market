@@ -2,37 +2,30 @@
 # Handles Bitcoin-specific escrow logic, extracted from escrow_service.py
 
 # Revision History:
-# 2025-04-09: v1.14.0 (Gemini):
-#           - FIX: In `broadcast_release`, handle input `order_id` being either PK or Order object.
-#           - FIX: In `resolve_dispute`, removed 'dispute_resolved_at' from `update_fields`
-#                  list for `Order.save()` call to prevent ValueError (field likely on Dispute model).
-# 2025-04-09: v1.13.0 (Gemini):
-#           - Renamed functions to match dispatcher calls in common_escrow_utils v1.12.0:
-#                  - create_escrow_for_order -> create_escrow
-#                  - check_and_confirm_payment -> check_confirm
-#                  - sign_order_release -> sign_release (adjusted key_info param)
-#                  - broadcast_release_transaction -> broadcast_release (kept order_id param)
-#           - Verified resolve_dispute signature matches dispatcher call.
-#           - No changes to mark_order_shipped or get_unsigned_release_tx logic.
-#
-# Original Revision Notes relevant to BTC Escrow Process:
-# - v1.22.4 (2025-04-07):
-#   - FIXED (New Failure in test_create_escrow_btc_success): Updated `create_escrow_for_order` (BTC path)
-#     to pass participant keys via the keyword argument `participant_pubkeys_hex`, aligning
-#     with the test's expectation (updated in test v1.18.2).
-#   - RECOMMENDED: Update `CryptoServiceInterface` protocol definition for `create_btc_multisig_address`
-#     to reflect `participant_pubkeys_hex` as a keyword-only argument.
-# - v1.20.1:
-#   - NOTE: Reinforced notes about external fixes needed for other test failures (often related to BTC).
-# - v1.19.0: MAJOR FIX: Removed suppression of 'btc_escrow_address' validation error.
-# - v1.18.0: FIXED: Logic error in `sign_order_release` for BTC signature counting.
-# --- Prior revisions omitted ---
+# v1.17.0 (2025-05-04): # <<< NEW REVISION >>>
+#   - REVERTED: Removed BitcoinEscrowService class encapsulation (from v1.16.0).
+#   - Escrow functions (create_escrow, check_confirm, etc.) are now module-level functions again.
+#   - Removed 'self' parameter from functions and updated internal calls (e.g., _prepare_btc_release).
+#   - AIM: Align with the dispatcher in common_escrow_utils.py which expects module-level functions,
+#     to resolve "Function not found" errors in pytest failures.
+#   - (Gemini)
+# v1.16.0 (2025-05-03):
+#   - REFACTOR: Encapsulated escrow functions within a BitcoinEscrowService class.
+#   - Methods now take 'self'. Internal helper '_prepare_btc_release' made private method.
+#   - No change to core logic, only structure to allow class-based import/instantiation.
+#   - (Gemini)
+# v1.15.0 (2025-05-03):
+#   - FIXED: Standardized all local application imports to use the 'backend.' prefix
+#     (e.g., 'backend.store.models', 'backend.ledger.services', 'backend.notifications.services', etc.)
+#     to resolve conflicting model errors.
+# ------------------------
+# --- Prior revisions omitted for brevity ---
 
 import logging
 from decimal import Decimal, InvalidOperation, ROUND_DOWN
 from typing import Optional, Tuple, Dict, Any, List, Union # Added List, Union
 # Add this line:
-from datetime import timedelta
+from datetime import timedelta, datetime # Added datetime for revision date
 import uuid # Import uuid for checking instance type potentially
 
 from django.contrib.auth import get_user_model
@@ -42,8 +35,9 @@ from django.conf import settings
 from django.core.exceptions import ValidationError as DjangoValidationError, ObjectDoesNotExist
 
 # --- Service & Utility Imports ---
+# <<< FIX v1.15.0: Standardize imports with 'backend.' prefix >>>
 # Import common utils, constants, exceptions, and the interface protocol
-from .common_escrow_utils import (
+from backend.store.services.common_escrow_utils import ( # FIXED
     get_market_user, _get_currency_precision, _get_atomic_to_standard_converter,
     _convert_atomic_to_standard, _get_market_fee_percentage, _get_withdrawal_address,
     _check_order_timeout, CryptoServiceInterface, PostBroadcastUpdateError,
@@ -55,23 +49,25 @@ from .common_escrow_utils import (
     ATTR_BTC_ESCROW_ADDRESS,
 )
 # Import the specific crypto service for Bitcoin
-from . import bitcoin_service
+from backend.store.services import bitcoin_service # FIXED
 # Import other necessary services
-from ledger import services as ledger_service
-from ledger.services import InsufficientFundsError, InvalidLedgerOperationError
-from notifications.services import create_notification
-from store.exceptions import EscrowError, CryptoProcessingError # Assuming these are defined elsewhere
-from ledger.exceptions import LedgerError # Assuming defined elsewhere
-from notifications.exceptions import NotificationError # Assuming defined elsewhere
+from backend.ledger import services as ledger_service # FIXED
+from backend.ledger.services import InsufficientFundsError, InvalidLedgerOperationError # FIXED
+from backend.notifications.services import create_notification # FIXED
+from backend.store.exceptions import EscrowError, CryptoProcessingError # FIXED
+from backend.ledger.exceptions import LedgerError # FIXED
+from backend.notifications.exceptions import NotificationError # FIXED
 
 # --- Model Imports ---
-from store.models import Order, CryptoPayment, GlobalSettings, Product, OrderStatus as OrderStatusChoices, Dispute # Added Dispute
+from backend.store.models import Order, CryptoPayment, GlobalSettings, Product, OrderStatus as OrderStatusChoices, Dispute # FIXED
+# <<< END FIX v1.15.0 >>>
+
 User = get_user_model()
 
 # --- Type Hinting ---
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
-    from store.models import GlobalSettings as GlobalSettingsModel, Product as ProductModel
+    from backend.store.models import GlobalSettings as GlobalSettingsModel, Product as ProductModel # Use backend path
     from django.contrib.auth.models import AbstractUser # A common base
     UserModel = AbstractUser # Alias for User model type hinting
 
@@ -83,9 +79,126 @@ security_logger = logging.getLogger('django.security')
 CURRENCY_CODE = 'BTC'
 
 
-# === Enterprise Grade Bitcoin Escrow Functions ===
+# === REFACTOR v1.17.0: Functions are now module-level ===
 
-# Renamed from create_escrow_for_order to match dispatcher call
+# Internal helper function (was private method)
+def _prepare_btc_release(order: 'Order') -> Dict[str, Any]:
+    """
+    Internal helper: Calculates BTC payouts (standard units), gets addresses, calls
+    bitcoin_service to create initial unsigned release PSBT (passing standard units).
+    Stores result in metadata format (with standard units for payout/fee).
+
+    Args:
+        order: The Order instance (must be BTC).
+    Returns:
+        Dict[str, Any]: A dictionary containing the prepared BTC release metadata.
+    Raises:
+        ObjectDoesNotExist: If vendor or market user not found.
+        ValueError: For calculation errors or missing BTC withdrawal address.
+        CryptoProcessingError: If bitcoin_service fails to prepare the PSBT.
+    """
+    log_prefix = f"Order {order.id} (_prepare_btc_release)"
+    logger.debug(f"{log_prefix}: Preparing BTC release metadata (PSBT)...")
+
+    # Assume order.selected_currency == CURRENCY_CODE has been checked by caller
+    vendor = order.vendor
+
+    # --- Load Participants and Validate ---
+    try:
+        market_user = get_market_user()
+        if not vendor:
+            if order.vendor_id: vendor = User.objects.get(pk=order.vendor_id)
+            else: raise ObjectDoesNotExist(f"Vendor relationship missing for order {order.id}")
+    except ObjectDoesNotExist as obj_err:
+        logger.critical(f"{log_prefix}: Cannot prepare release - missing participants: {obj_err}")
+        raise
+    except RuntimeError as e: # Catch setting error from get_market_user
+        logger.critical(f"{log_prefix}: Cannot prepare release - error fetching market user: {e}")
+        raise
+
+    # --- Get Vendor BTC Payout Address ---
+    try:
+        vendor_payout_address = _get_withdrawal_address(vendor, CURRENCY_CODE) # Use common helper
+    except ValueError as e:
+        logger.error(f"{log_prefix}: Cannot prepare BTC release. Vendor {vendor.username} missing required {CURRENCY_CODE} withdrawal address. Error: {e}")
+        raise ValueError(f"Cannot prepare release: Vendor {vendor.username} missing required {CURRENCY_CODE} withdrawal address.") from e
+
+    # --- Calculate Payouts and Fees (in STANDARD BTC units) ---
+    prec = _get_currency_precision(CURRENCY_CODE)
+    quantizer = Decimal(f'1e-{prec}')
+    vendor_payout_btc = Decimal('0.0')
+    market_fee_btc = Decimal('0.0')
+    total_escrowed_btc = Decimal('0.0')
+
+    try:
+        if order.total_price_native_selected is None: raise ValueError("Order total_price_native_selected is None.")
+        if not isinstance(order.total_price_native_selected, Decimal): raise ValueError("Order total_price_native_selected is not Decimal.")
+
+        # Convert total price from satoshis (atomic) to BTC (standard)
+        total_escrowed_btc = _convert_atomic_to_standard(order.total_price_native_selected, CURRENCY_CODE, bitcoin_service)
+        if total_escrowed_btc <= Decimal('0.0'): raise ValueError("Calculated total escrowed BTC amount is zero or negative.")
+
+        market_fee_percent = _get_market_fee_percentage(CURRENCY_CODE)
+        market_fee_btc = (total_escrowed_btc * market_fee_percent / Decimal(100)).quantize(quantizer, rounding=ROUND_DOWN)
+        if market_fee_btc < Decimal('0.0'): market_fee_btc = Decimal('0.0')
+        market_fee_btc = min(market_fee_btc, total_escrowed_btc) # Cap fee
+
+        vendor_payout_btc = (total_escrowed_btc - market_fee_btc).quantize(quantizer, rounding=ROUND_DOWN)
+        if vendor_payout_btc < Decimal('0.0'): vendor_payout_btc = Decimal('0.0')
+
+        # --- Verification ---
+        calculated_total = vendor_payout_btc + market_fee_btc
+        # Use tolerance for floating point comparisons if necessary, though unlikely with Decimal
+        tolerance = Decimal(f'1e-{prec + 1}') # Small tolerance
+        if calculated_total > total_escrowed_btc + tolerance:
+            logger.error(f"{log_prefix}: CRITICAL CALCULATION ERROR: Sum of payout and fee ({calculated_total}) exceeds total escrowed ({total_escrowed_btc}). Aborting.")
+            raise ValueError("Calculation error: Sum of BTC payout and fee exceeds total escrowed amount.")
+        elif calculated_total < total_escrowed_btc - tolerance:
+            dust = total_escrowed_btc - calculated_total
+            logger.warning(f"{log_prefix}: Rounding dust detected in BTC release calculation. Amount: {dust}. Fee: {market_fee_btc}, Payout: {vendor_payout_btc}, Total: {total_escrowed_btc}")
+            # Decide policy: add dust to vendor payout? Market fee? Ignore?
+            # Current policy: Dust is lost to rounding.
+
+        logger.debug(f"{log_prefix}: Calculated BTC payout: Vendor={vendor_payout_btc}, Fee={market_fee_btc} ({market_fee_percent}%)")
+
+    except (InvalidOperation, ValueError, TypeError) as e:
+        logger.error(f"{log_prefix}: Error calculating BTC release payout/fee: {e}", exc_info=True)
+        raise ValueError("Failed to calculate BTC release payout/fee amounts.") from e
+
+    # --- Prepare Unsigned PSBT via Bitcoin Service ---
+    prepared_psbt: Optional[str] = None
+    try:
+        # Call the specific BTC prepare function
+        prepared_psbt = bitcoin_service.prepare_btc_release_tx(
+            order=order, vendor_payout_amount_btc=vendor_payout_btc, # Pass standard BTC amount
+            vendor_address=vendor_payout_address
+        )
+
+        if not prepared_psbt or not isinstance(prepared_psbt, str) or len(prepared_psbt) < 10:
+            raise CryptoProcessingError(f"Failed to get valid prepared BTC PSBT data (Result: '{prepared_psbt}').")
+
+        logger.info(f"{log_prefix}: Successfully prepared unsigned BTC PSBT data.")
+
+    except CryptoProcessingError as crypto_err:
+        logger.error(f"{log_prefix}: Failed to prepare BTC release PSBT: {crypto_err}", exc_info=True)
+        raise # Re-raise specific error
+    except Exception as e:
+        logger.exception(f"{log_prefix}: Unexpected error preparing BTC release PSBT: {e}")
+        raise CryptoProcessingError(f"Unexpected error preparing BTC release PSBT: {e}") from e
+
+    # --- Construct Metadata Dictionary ---
+    metadata: Dict[str, Any] = {
+        'type': 'btc_psbt', # Specific type for BTC
+        'data': prepared_psbt,
+        'payout': str(vendor_payout_btc), # Store STANDARD BTC as string
+        'fee': str(market_fee_btc),       # Store STANDARD BTC as string
+        'vendor_address': vendor_payout_address,
+        'ready_for_broadcast': False,
+        'signatures': {},
+        'prepared_at': timezone.now().isoformat()
+    }
+    return metadata
+
 @transaction.atomic
 def create_escrow(order: 'Order') -> None:
     """
@@ -197,13 +310,6 @@ def create_escrow(order: 'Order') -> None:
         )
         escrow_address = msig_details.get('address')
 
-        # CRITICAL NOTE (Root cause of ValidationError in mark_order_shipped):
-        # The `escrow_address` returned by bitcoin_service (or test mock) MUST be a valid, standard
-        # Bitcoin address format (e.g., P2SH, Bech32). If it returns an internal identifier or placeholder,
-        # the `full_clean()` call in `mark_order_shipped` WILL FAIL correctly. The fix must happen
-        # in the crypto service or the test mock to ensure a valid address is returned and saved here.
-        # No fix needed in THIS file for that error.
-
         # Store BTC specific details on order if fields exist
         if hasattr(order, ATTR_BTC_REDEEM_SCRIPT):
             # Service should ideally return a consistent key, check for common ones
@@ -212,11 +318,9 @@ def create_escrow(order: 'Order') -> None:
                 order.btc_redeem_script = script
                 order_update_fields.append(ATTR_BTC_REDEEM_SCRIPT)
             else:
-                logger.warning(f"{log_prefix}: BTC multisig details missing expected redeem/witness script.")
+                 logger.warning(f"{log_prefix}: BTC multisig details missing expected redeem/witness script.")
 
         if hasattr(order, ATTR_BTC_ESCROW_ADDRESS):
-            # Save the address returned by the service. Validation happens later.
-            # Ensure the crypto service / mock returns a VALID address format.
             order.btc_escrow_address = escrow_address
             order_update_fields.append(ATTR_BTC_ESCROW_ADDRESS)
         else:
@@ -289,8 +393,6 @@ def create_escrow(order: 'Order') -> None:
         logger.exception(f"{log_prefix}: Failed to save final order updates (status, deadlines, BTC fields): {e}")
         raise EscrowError("Failed to save order updates during BTC escrow creation.") from e
 
-
-# Renamed from check_and_confirm_payment to match dispatcher call
 @transaction.atomic
 def check_confirm(payment_id: Any) -> bool:
     """
@@ -423,7 +525,7 @@ def check_confirm(payment_id: Any) -> bool:
         logger.error(f"{log_prefix}: Invalid amount format or conversion error. ExpectedSatoshis={payment.expected_amount_native}, ReceivedSatoshis='{received_satoshis}'. Error: {q_err}")
         raise EscrowError("Invalid BTC payment amount format or conversion error.") from q_err
 
-   # --- Handle Insufficient Amount ---
+    # --- Handle Insufficient Amount ---
     if not is_amount_sufficient:
         logger.warning(f"{log_prefix}: Amount insufficient. RcvdBTC: {received_btc}, ExpBTC: {expected_btc} {CURRENCY_CODE}. (RcvdSatoshis: {received_satoshis}, ExpSatoshis: {expected_satoshis}). TXID: {external_txid}")
         try:
@@ -467,7 +569,7 @@ def check_confirm(payment_id: Any) -> bool:
             logger.exception(f"{log_prefix}: Error updating records for underpaid BTC order: {e}. Transaction will rollback.")
             raise EscrowError("Failed to process BTC underpayment.") from e
 
-   # --- Handle Sufficient Amount: Apply Deposit Fee, Update Ledger and Order ---
+    # --- Handle Sufficient Amount: Apply Deposit Fee, Update Ledger and Order ---
     try:
         # Re-fetch users safely within this final block
         buyer: Optional['UserModel'] = None
@@ -511,18 +613,18 @@ def check_confirm(payment_id: Any) -> bool:
 
         if net_deposit_btc > Decimal('0.0'):
              ledger_service.credit_funds(
-                  user=buyer, currency=CURRENCY_CODE, amount=net_deposit_btc,
-                  transaction_type=LEDGER_TX_DEPOSIT, external_txid=external_txid,
-                  related_order=order, notes=ledger_deposit_notes
+                 user=buyer, currency=CURRENCY_CODE, amount=net_deposit_btc,
+                 transaction_type=LEDGER_TX_DEPOSIT, external_txid=external_txid,
+                 related_order=order, notes=ledger_deposit_notes
              )
         else:
              if received_btc > Decimal('0.0'):
-                  logger.warning(f"{log_prefix}: Entire deposit amount {received_btc} {CURRENCY_CODE} consumed by deposit fee {deposit_fee_btc}. Buyer receives 0 net credit.")
-                  ledger_service.credit_funds(
-                      user=buyer, currency=CURRENCY_CODE, amount=Decimal('0.0'),
-                      transaction_type=LEDGER_TX_DEPOSIT, external_txid=external_txid,
-                      related_order=order, notes=f"{ledger_deposit_notes} (Net Zero after fee)"
-                  )
+                 logger.warning(f"{log_prefix}: Entire deposit amount {received_btc} {CURRENCY_CODE} consumed by deposit fee {deposit_fee_btc}. Buyer receives 0 net credit.")
+                 ledger_service.credit_funds(
+                     user=buyer, currency=CURRENCY_CODE, amount=Decimal('0.0'),
+                     transaction_type=LEDGER_TX_DEPOSIT, external_txid=external_txid,
+                     related_order=order, notes=f"{ledger_deposit_notes} (Net Zero after fee)"
+                 )
 
         logger.debug(f"{log_prefix}: Attempting to lock {expected_btc} {CURRENCY_CODE} from Buyer {buyer.username}'s available balance.")
         lock_success = ledger_service.lock_funds(
@@ -580,11 +682,11 @@ def check_confirm(payment_id: Any) -> bool:
                 )
                 logger.info(f"{log_prefix}: Sent BTC payment confirmation notification to Vendor {vendor.username}.")
             else:
-                logger.error(f"{log_prefix}: Cannot send payment confirmed notification: Vendor missing on order.")
+                 logger.error(f"{log_prefix}: Cannot send payment confirmed notification: Vendor missing on order.")
         except NotificationError as notify_e:
             logger.error(f"{log_prefix}: Failed to create payment confirmed notification for Vendor {getattr(order.vendor,'id','N/A')}: {notify_e}", exc_info=True)
         except Exception as notify_e:
-            logger.error(f"{log_prefix}: Unexpected error creating payment notification for Vendor {getattr(order.vendor,'id','N/A')}: {notify_e}", exc_info=True)
+             logger.error(f"{log_prefix}: Unexpected error creating payment notification for Vendor {getattr(order.vendor,'id','N/A')}: {notify_e}", exc_info=True)
 
     except (InsufficientFundsError, LedgerError, DjangoValidationError, IntegrityError, ObjectDoesNotExist) as e:
         logger.critical(f"{log_prefix}: CRITICAL: Ledger/Order atomic update FAILED during BTC payment confirmation! Error: {e}. Transaction rolled back.", exc_info=True)
@@ -594,9 +696,6 @@ def check_confirm(payment_id: Any) -> bool:
         raise EscrowError(f"Unexpected error confirming BTC payment: {e}") from e
 
     return newly_confirmed # Return True only if confirmation process completed successfully in this call
-
-# <<< bitcoin_escrow_service.py Part 1 of 3 >>>
-# <<< Part 2: Continues from bitcoin_escrow_service.py Part 1 >>>
 
 @transaction.atomic
 def mark_order_shipped(order: 'Order', vendor: 'UserModel', tracking_info: Optional[str] = None) -> None:
@@ -655,8 +754,8 @@ def mark_order_shipped(order: 'Order', vendor: 'UserModel', tracking_info: Optio
     prepared_release_metadata: Dict[str, Any]
     try:
         logger.debug(f"{log_prefix}: Preparing initial BTC release metadata (PSBT)...")
-        # Use the BTC-specific internal helper
-        prepared_release_metadata = _prepare_btc_release(order_locked)
+        # Use the BTC-specific internal helper (now a module-level function)
+        prepared_release_metadata = _prepare_btc_release(order_locked) # <--- UPDATED: Removed self.
         if not prepared_release_metadata or not isinstance(prepared_release_metadata, dict):
             raise CryptoProcessingError(f"Failed to prepare {CURRENCY_CODE} release transaction metadata (invalid result).")
         logger.debug(f"{log_prefix}: BTC release metadata (PSBT) prepared successfully.")
@@ -704,8 +803,6 @@ def mark_order_shipped(order: 'Order', vendor: 'UserModel', tracking_info: Optio
 
     # --- Save Order Updates ---
     try:
-        # CRITICAL NOTE (Re-confirmed v1.22.0): Ensure `bitcoin_service.create_btc_multisig_address`
-        # (or its test mock) returns a VALID Bitcoin address format. DO NOT REMOVE VALIDATION.
         logger.debug(f"{log_prefix}: Validating order before saving shipment updates...")
         order_locked.full_clean(exclude=None) # Perform full validation
         logger.debug(f"{log_prefix}: Validation passed. Saving fields: {update_fields}")
@@ -736,13 +833,10 @@ def mark_order_shipped(order: 'Order', vendor: 'UserModel', tracking_info: Optio
         else:
             logger.error(f"{log_prefix}: Cannot send shipped notification: Buyer relationship missing on order.")
     except NotificationError as notify_e:
-         logger.error(f"{log_prefix}: Failed to create order shipped notification for Buyer {getattr(buyer,'id','N/A')}: {notify_e}", exc_info=True)
+       logger.error(f"{log_prefix}: Failed to create order shipped notification for Buyer {getattr(buyer,'id','N/A')}: {notify_e}", exc_info=True)
     except Exception as notify_e:
-         logger.error(f"{log_prefix}: Unexpected error creating order shipped notification for Buyer {getattr(buyer,'id','N/A')}: {notify_e}", exc_info=True)
+       logger.error(f"{log_prefix}: Unexpected error creating order shipped notification for Buyer {getattr(buyer,'id','N/A')}: {notify_e}", exc_info=True)
 
-
-# Renamed from sign_order_release to match dispatcher call
-# Changed 'private_key_wif' arg to 'key_info'
 @transaction.atomic
 def sign_release(order: 'Order', user: 'UserModel', key_info: Any) -> Tuple[bool, bool]:
     """
@@ -840,8 +934,8 @@ def sign_release(order: 'Order', user: 'UserModel', key_info: Any) -> Tuple[bool
         )
 
         if not signed_psbt_base64:
-             logger.error(f"{log_prefix}: bitcoin_service.sign_btc_multisig_tx returned None or empty.")
-             raise CryptoProcessingError("BTC signing function failed to return a signed PSBT.")
+            logger.error(f"{log_prefix}: bitcoin_service.sign_btc_multisig_tx returned None or empty.")
+            raise CryptoProcessingError("BTC signing function failed to return a signed PSBT.")
 
         # Manually add the current signer to the map AFTER successful signing call
         current_sigs[user_id_str] = {
@@ -903,11 +997,6 @@ def sign_release(order: 'Order', user: 'UserModel', key_info: Any) -> Tuple[bool
         logger.exception(f"{log_prefix}: Failed to save order updates after BTC signing: {e}")
         raise EscrowError("Failed to save BTC signature updates.") from e
 
-# <<< bitcoin_escrow_service.py Part 2 of 3 >>>
-# <<< Part 3: Continues from bitcoin_escrow_service.py Part 2 >>>
-
-# Renamed from broadcast_release_transaction to match dispatcher call
-# Kept order_id argument as dispatcher passes the ID
 @transaction.atomic
 def broadcast_release(order_id: Any) -> bool:
     """
@@ -1024,7 +1113,7 @@ def broadcast_release(order_id: Any) -> bool:
     # --- Load Participants and Metadata Values (Standard BTC Units) ---
     try:
         payout_btc_str = release_metadata.get('payout') # Standard BTC from _prepare_release
-        fee_btc_str = release_metadata.get('fee')      # Standard BTC from _prepare_release
+        fee_btc_str = release_metadata.get('fee')       # Standard BTC from _prepare_release
         signed_psbt_base64 = release_metadata.get('data')
 
         if not signed_psbt_base64 or payout_btc_str is None or fee_btc_str is None:
@@ -1126,22 +1215,22 @@ def broadcast_release(order_id: Any) -> bool:
         try:
             buyer = order_locked.buyer
             if buyer:
-                 order_url = f"/orders/{order_locked.id}"
-                 product_name = getattr(order_locked.product, 'name', 'N/A')
-                 order_id_str = str(order_locked.id)
-                 create_notification(
-                     user_id=buyer.id, level='success',
-                     message=f"Order #{order_id_str[:8]} ({product_name}) has been finalized and funds released. TX: {tx_hash[:15]}...",
-                     link=order_url
-                 )
+                order_url = f"/orders/{order_locked.id}"
+                product_name = getattr(order_locked.product, 'name', 'N/A')
+                order_id_str = str(order_locked.id)
+                create_notification(
+                    user_id=buyer.id, level='success',
+                    message=f"Order #{order_id_str[:8]} ({product_name}) has been finalized and funds released. TX: {tx_hash[:15]}...",
+                    link=order_url
+                )
             if vendor: # Also notify vendor
-                 order_url = f"/orders/{order_locked.id}"
-                 order_id_str = str(order_locked.id) # Define again for safety, although already defined
-                 create_notification(
-                     user_id=vendor.id, level='success',
-                     message=f"Order #{order_id_str[:8]} finalized. Funds ({payout_btc} {CURRENCY_CODE}) credited to your balance. TX: {tx_hash[:15]}...",
-                     link=order_url
-                 )
+                order_url = f"/orders/{order_locked.id}"
+                order_id_str = str(order_locked.id) # Define again for safety, although already defined
+                create_notification(
+                    user_id=vendor.id, level='success',
+                    message=f"Order #{order_id_str[:8]} finalized. Funds ({payout_btc} {CURRENCY_CODE}) credited to your balance. TX: {tx_hash[:15]}...",
+                    link=order_url
+                )
         except NotificationError as notify_e:
              logger.error(f"{log_prefix}: Failed to create finalization notification: {notify_e}", exc_info=True)
         except Exception as notify_e:
@@ -1171,8 +1260,6 @@ def broadcast_release(order_id: Any) -> bool:
             tx_hash=tx_hash
         ) from final_e
 
-
-# Signature matches dispatcher call
 @transaction.atomic
 def resolve_dispute(
     order: 'Order',
@@ -1234,16 +1321,16 @@ def resolve_dispute(
         buyer_id = order_locked.buyer_id
         vendor_id = order_locked.vendor_id
     except Order.DoesNotExist: # More specific catch
-         logger.error(f"{log_prefix}: Order not found.")
-         raise
+        logger.error(f"{log_prefix}: Order not found.")
+        raise
     except ObjectDoesNotExist: # Catch market user not found from get_market_user
         logger.error(f"{log_prefix}: Market User not found.")
         raise ObjectDoesNotExist("Market User not found.")
     except ValueError as ve: # Catch currency mismatch
         raise ve
     except RuntimeError as e: # Catch setting error from get_market_user
-         logger.critical(f"{log_prefix}: Error fetching market user: {e}")
-         raise
+        logger.critical(f"{log_prefix}: Error fetching market user: {e}")
+        raise
     except Exception as e:
         logger.exception(f"{log_prefix}: Error fetching order, users: {e}")
         raise EscrowError(f"Database/Setup error fetching details for order {order.pk}.") from e
@@ -1261,8 +1348,8 @@ def resolve_dispute(
         if not (Decimal('0.0') <= buyer_percent_decimal <= Decimal('100.0')):
             raise ValueError("Percentage must be between 0 and 100.")
     except (InvalidOperation, ValueError) as percent_err:
-         logger.error(f"{log_prefix}: Invalid percentage value '{release_to_buyer_percent}': {percent_err}")
-         raise ValueError(f"Invalid percentage value: {release_to_buyer_percent}") from percent_err
+       logger.error(f"{log_prefix}: Invalid percentage value '{release_to_buyer_percent}': {percent_err}")
+       raise ValueError(f"Invalid percentage value: {release_to_buyer_percent}") from percent_err
 
     if not resolution_notes or not isinstance(resolution_notes, str) or len(resolution_notes.strip()) < 5:
         raise ValueError("Valid resolution notes (minimum 5 characters) are required.")
@@ -1293,11 +1380,12 @@ def resolve_dispute(
 
         # --- Verification ---
         calculated_total = buyer_share_btc + vendor_share_btc
-        if calculated_total > total_escrowed_btc:
-            # This shouldn't happen with ROUND_DOWN, but check just in case
+        # Use tolerance for floating point comparisons if necessary, though unlikely with Decimal
+        tolerance = Decimal(f'1e-{prec + 1}') # Small tolerance
+        if calculated_total > total_escrowed_btc + tolerance:
              logger.error(f"{log_prefix}: CRITICAL CALCULATION ERROR: Sum of shares ({calculated_total}) exceeds total escrowed ({total_escrowed_btc}). Aborting.")
              raise ValueError("Calculation error: Sum of dispute shares exceeds total escrowed amount.")
-        elif calculated_total < total_escrowed_btc:
+        elif calculated_total < total_escrowed_btc - tolerance:
              dust = total_escrowed_btc - calculated_total
              logger.warning(f"{log_prefix}: Rounding dust detected in dispute calculation. Amount: {dust} {CURRENCY_CODE}. This amount will remain locked/unallocated by this resolution.")
              # Decide if dust should go to market or be handled differently. For now, it's lost to rounding.
@@ -1394,7 +1482,7 @@ def resolve_dispute(
         now = timezone.now()
         order_locked.status = OrderStatusChoices.DISPUTE_RESOLVED
         order_locked.release_tx_broadcast_hash = tx_hash # Store dispute TX hash here
-        order_locked.dispute_resolved_at = now # Still assign here if the field exists (harmless if not saved via update_fields)
+        # order_locked.dispute_resolved_at = now # This field belongs to Dispute model
         order_locked.updated_at = now
 
         # --- FIX v1.14.0: Remove 'dispute_resolved_at' from Order update_fields ---
@@ -1465,15 +1553,15 @@ def resolve_dispute(
 
         # Notifications (Best Effort)
         try:
-             order_url = f"/orders/{order_locked.id}"
-             order_id_str = str(order_locked.id)
-             common_msg_part = f"Dispute resolved for Order #{order_id_str[:8]}. Notes: {resolution_notes[:50]}..."
-             if buyer:
-                  buyer_msg = f"{common_msg_part} You received {buyer_share_btc} {CURRENCY_CODE} ({buyer_percent_decimal:.2f}%)."
-                  create_notification(user_id=buyer.id, level='info', message=buyer_msg, link=order_url)
-             if vendor:
-                  vendor_msg = f"{common_msg_part} Vendor received {vendor_share_btc} {CURRENCY_CODE} ({release_to_vendor_percent_decimal:.2f}%)."
-                  create_notification(user_id=vendor.id, level='info', message=vendor_msg, link=order_url)
+            order_url = f"/orders/{order_locked.id}"
+            order_id_str = str(order_locked.id)
+            common_msg_part = f"Dispute resolved for Order #{order_id_str[:8]}. Notes: {resolution_notes[:50]}..."
+            if buyer:
+                 buyer_msg = f"{common_msg_part} You received {buyer_share_btc} {CURRENCY_CODE} ({buyer_percent_decimal:.2f}%)."
+                 create_notification(user_id=buyer.id, level='info', message=buyer_msg, link=order_url)
+            if vendor:
+                 vendor_msg = f"{common_msg_part} Vendor received {vendor_share_btc} {CURRENCY_CODE} ({release_to_vendor_percent_decimal:.2f}%)."
+                 create_notification(user_id=vendor.id, level='info', message=vendor_msg, link=order_url)
         except NotificationError as notify_e:
              logger.error(f"{log_prefix}: Failed to create dispute resolved notification: {notify_e}", exc_info=True)
         except Exception as notify_e:
@@ -1501,7 +1589,6 @@ def resolve_dispute(
             original_exception=final_e,
             tx_hash=tx_hash
         ) from final_e
-
 
 def get_unsigned_release_tx(order: 'Order', user: 'UserModel') -> Optional[Dict[str, str]]:
     """
@@ -1578,124 +1665,4 @@ def get_unsigned_release_tx(order: 'Order', user: 'UserModel') -> Optional[Dict[
     # Return only the PSBT data needed for signing
     return {'unsigned_tx': psbt_base64}
 
-# --- Internal Helper: _prepare_btc_release ---
-# NOTE: This function is kept as an internal helper for mark_order_shipped
-# It is NOT directly called by the common_escrow_utils dispatcher
-def _prepare_btc_release(order: 'Order') -> Dict[str, Any]:
-    """
-    Internal helper: Calculates BTC payouts (standard units), gets addresses, calls
-    bitcoin_service to create initial unsigned release PSBT (passing standard units).
-    Stores result in metadata format (with standard units for payout/fee).
-
-    Args:
-        order: The Order instance (must be BTC).
-    Returns:
-        Dict[str, Any]: A dictionary containing the prepared BTC release metadata.
-    Raises:
-        ObjectDoesNotExist: If vendor or market user not found.
-        ValueError: For calculation errors or missing BTC withdrawal address.
-        CryptoProcessingError: If bitcoin_service fails to prepare the PSBT.
-    """
-    log_prefix = f"Order {order.id} (_prepare_btc_release)"
-    logger.debug(f"{log_prefix}: Preparing BTC release metadata (PSBT)...")
-
-    # Assume order.selected_currency == CURRENCY_CODE has been checked by caller
-    vendor = order.vendor
-
-    # --- Load Participants and Validate ---
-    try:
-        market_user = get_market_user()
-        if not vendor:
-            if order.vendor_id: vendor = User.objects.get(pk=order.vendor_id)
-            else: raise ObjectDoesNotExist(f"Vendor relationship missing for order {order.id}")
-    except ObjectDoesNotExist as obj_err:
-        logger.critical(f"{log_prefix}: Cannot prepare release - missing participants: {obj_err}")
-        raise
-    except RuntimeError as e: # Catch setting error from get_market_user
-        logger.critical(f"{log_prefix}: Cannot prepare release - error fetching market user: {e}")
-        raise
-
-    # --- Get Vendor BTC Payout Address ---
-    try:
-        vendor_payout_address = _get_withdrawal_address(vendor, CURRENCY_CODE) # Use common helper
-    except ValueError as e:
-        logger.error(f"{log_prefix}: Cannot prepare BTC release. Vendor {vendor.username} missing required {CURRENCY_CODE} withdrawal address. Error: {e}")
-        raise ValueError(f"Cannot prepare release: Vendor {vendor.username} missing required {CURRENCY_CODE} withdrawal address.") from e
-
-    # --- Calculate Payouts and Fees (in STANDARD BTC units) ---
-    prec = _get_currency_precision(CURRENCY_CODE)
-    quantizer = Decimal(f'1e-{prec}')
-    vendor_payout_btc = Decimal('0.0')
-    market_fee_btc = Decimal('0.0')
-    total_escrowed_btc = Decimal('0.0')
-
-    try:
-        if order.total_price_native_selected is None: raise ValueError("Order total_price_native_selected is None.")
-        if not isinstance(order.total_price_native_selected, Decimal): raise ValueError("Order total_price_native_selected is not Decimal.")
-
-        # Convert total price from satoshis (atomic) to BTC (standard)
-        total_escrowed_btc = _convert_atomic_to_standard(order.total_price_native_selected, CURRENCY_CODE, bitcoin_service)
-        if total_escrowed_btc <= Decimal('0.0'): raise ValueError("Calculated total escrowed BTC amount is zero or negative.")
-
-        market_fee_percent = _get_market_fee_percentage(CURRENCY_CODE)
-        market_fee_btc = (total_escrowed_btc * market_fee_percent / Decimal(100)).quantize(quantizer, rounding=ROUND_DOWN)
-        if market_fee_btc < Decimal('0.0'): market_fee_btc = Decimal('0.0')
-        market_fee_btc = min(market_fee_btc, total_escrowed_btc) # Cap fee
-
-        vendor_payout_btc = (total_escrowed_btc - market_fee_btc).quantize(quantizer, rounding=ROUND_DOWN)
-        if vendor_payout_btc < Decimal('0.0'): vendor_payout_btc = Decimal('0.0')
-
-        # --- Verification ---
-        calculated_total = vendor_payout_btc + market_fee_btc
-        # Use tolerance for floating point comparisons if necessary, though unlikely with Decimal
-        tolerance = Decimal(f'1e-{prec + 1}') # Small tolerance
-        if calculated_total > total_escrowed_btc + tolerance:
-             logger.error(f"{log_prefix}: CRITICAL CALCULATION ERROR: Sum of payout and fee ({calculated_total}) exceeds total escrowed ({total_escrowed_btc}). Aborting.")
-             raise ValueError("Calculation error: Sum of BTC payout and fee exceeds total escrowed amount.")
-        elif calculated_total < total_escrowed_btc - tolerance:
-             dust = total_escrowed_btc - calculated_total
-             logger.warning(f"{log_prefix}: Rounding dust detected in BTC release calculation. Amount: {dust}. Fee: {market_fee_btc}, Payout: {vendor_payout_btc}, Total: {total_escrowed_btc}")
-             # Decide policy: add dust to vendor payout? Market fee? Ignore?
-             # Current policy: Dust is lost to rounding.
-
-        logger.debug(f"{log_prefix}: Calculated BTC payout: Vendor={vendor_payout_btc}, Fee={market_fee_btc} ({market_fee_percent}%)")
-
-    except (InvalidOperation, ValueError, TypeError) as e:
-        logger.error(f"{log_prefix}: Error calculating BTC release payout/fee: {e}", exc_info=True)
-        raise ValueError("Failed to calculate BTC release payout/fee amounts.") from e
-
-    # --- Prepare Unsigned PSBT via Bitcoin Service ---
-    prepared_psbt: Optional[str] = None
-    try:
-        # Call the specific BTC prepare function
-        prepared_psbt = bitcoin_service.prepare_btc_release_tx(
-            order=order, vendor_payout_amount_btc=vendor_payout_btc, # Pass standard BTC amount
-            vendor_address=vendor_payout_address
-        )
-
-        if not prepared_psbt or not isinstance(prepared_psbt, str) or len(prepared_psbt) < 10:
-            raise CryptoProcessingError(f"Failed to get valid prepared BTC PSBT data (Result: '{prepared_psbt}').")
-
-        logger.info(f"{log_prefix}: Successfully prepared unsigned BTC PSBT data.")
-
-    except CryptoProcessingError as crypto_err:
-        logger.error(f"{log_prefix}: Failed to prepare BTC release PSBT: {crypto_err}", exc_info=True)
-        raise # Re-raise specific error
-    except Exception as e:
-        logger.exception(f"{log_prefix}: Unexpected error preparing BTC release PSBT: {e}")
-        raise CryptoProcessingError(f"Unexpected error preparing BTC release PSBT: {e}") from e
-
-    # --- Construct Metadata Dictionary ---
-    metadata: Dict[str, Any] = {
-        'type': 'btc_psbt', # Specific type for BTC
-        'data': prepared_psbt,
-        'payout': str(vendor_payout_btc), # Store STANDARD BTC as string
-        'fee': str(market_fee_btc),       # Store STANDARD BTC as string
-        'vendor_address': vendor_payout_address,
-        'ready_for_broadcast': False,
-        'signatures': {},
-        'prepared_at': timezone.now().isoformat()
-    }
-    return metadata
-
-# <<< END OF FILE: backend/store/services/bitcoin_escrow_service.py >>>
+# <<< END OF PYTHON CODE BLOCK 1 >>>

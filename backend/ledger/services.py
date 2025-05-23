@@ -1,12 +1,23 @@
 # backend/ledger/services.py
 # --- Revision History ---
-# [Rev 2.0 - 2025-04-11] Gemini:
+# <<< ENTERPRISE GRADE REVISION: v2.2.0 - Standardize Imports >>> # <<< NEW REVISION
+# Revision Notes: # <<< NEW REVISION
+# - v2.2.0 (2025-05-03): # <<< NEW REVISION
+#   - FIXED: Changed relative import `from .models import ...` to absolute # <<< NEW REVISION
+#     import `from backend.ledger.models import ...` to resolve # <<< NEW REVISION
+#     conflicting model loading errors (`RuntimeError`). # <<< NEW REVISION
+# - v2.1.1 (2025-04-29):
+#   - FIXED: Pylance `reportInvalidTypeForm` errors ("Variable not allowed in type expression")
+#     by importing the concrete custom user model ('backend.store.models.User' based on
+#     AUTH_USER_MODEL) as `ConcreteUser` and using it for `user:` type hints.
+#     Kept `User = get_user_model()` for runtime compatibility if needed elsewhere.
+# - [Rev 2.0 - 2025-04-11] Gemini:
 #  - FIXED: test_unlock_funds_validation - Modified unlock_funds to raise
 #    InvalidLedgerOperationError for non-positive amounts, matching test expectation.
-# [Rev 1.1 - 2025-04-09] Gemini: # Date Corrected (example)
+# - [Rev 1.1 - 2025-04-09] Gemini: # Date Corrected (example)
 #         - FIXED: Potential AttributeError with redis_lock by removing explicit '_redis=None'...
 #         - FIXED: AttributeError: module 'ledger.tasks' has no attribute 'LedgerTransaction'...
-# [Rev 1.0 - 2025-04-07] Previous:
+# - [Rev 1.0 - 2025-04-07] Previous:
 #  - Added Explicit Retries...
 #  - Added Distributed Locking...
 #  - Enhanced Error Handling...
@@ -27,7 +38,8 @@ insufficient funds or invalid operations.
 
 import logging
 from decimal import Decimal, InvalidOperation # Ensure InvalidOperation is imported
-from typing import Optional, Tuple, Set, Union # Added Union
+from typing import Optional, Tuple, Set, Union, Type, Any # Added Union, Type, Any
+import datetime # Added for revision date
 
 # Django Core Imports
 from django.db import transaction, IntegrityError
@@ -35,18 +47,31 @@ from django.db import transaction, IntegrityError
 from django.core.exceptions import ValidationError, ObjectDoesNotExist # Used as base for custom exceptions, Added ObjectDoesNotExist
 from django.contrib.auth import get_user_model # Use get_user_model for flexibility
 
+# <<< FIX: Import concrete User model for type hinting (Included from v2.1.1) >>>
+try:
+    # Import YOUR custom user model based on AUTH_USER_MODEL = 'store.User'
+    from backend.store.models import User as ConcreteUser # Use absolute path confirms User in store.models
+except ImportError:
+    # Fallback if the import fails (shouldn't happen if AUTH_USER_MODEL is correct)
+    ConcreteUser = Type[Any] # type: ignore
+    logging.warning("Could not import custom ConcreteUser 'backend.store.models.User' for type hinting. Falling back.")
+
+
 # Local Application Imports
 # Ensure these paths are correct for your project structure.
 # Using try-except for robustness during imports.
 try:
-    from .models import (
+    # <<< FIX: Use absolute backend.ledger path >>> # <<< CHANGED IN v2.2.0
+    # from .models import ( # OLD
+    from backend.ledger.models import ( # FIXED
         UserBalance,
         LedgerTransaction,
         TRANSACTION_TYPE_CHOICES, # Assumed to contain LOCK_FUNDS, UNLOCK_FUNDS after model update
         CURRENCY_CHOICES,
     )
     # Assuming 'Order' model is defined elsewhere, adjust as necessary.
-    from store.models import Order # Replace 'store' if Order is in another app
+    # Use absolute import path starting from 'backend' for modules in OTHER apps (store)
+    from backend.store.models import Order # Replace 'store' if Order is in another app
 
     # Custom exceptions are defined within this service file itself.
 
@@ -60,8 +85,8 @@ except ImportError as e:
 # Setup Logger (Ideally configured via Django settings)
 logger = logging.getLogger(__name__)
 
-# Get the configured User model
-User = get_user_model()
+# Get the configured User model (keep for runtime checks, even if hints use ConcreteUser)
+User = get_user_model() # This line remains
 
 # --- Pre-compute valid choices for efficiency ---
 # Assumes choices are defined as ((value1, label1), (value2, label2), ...)
@@ -76,10 +101,11 @@ try:
     if 'UNLOCK_FUNDS' not in VALID_TRANSACTION_TYPES:
         logger.warning("Ledger Service: 'UNLOCK_FUNDS' not found in TRANSACTION_TYPE_CHOICES. unlock_funds will fail.")
 
-except (IndexError, TypeError) as e: # Catch potential errors if choices format is wrong
+except (AttributeError, IndexError, TypeError) as e: # Catch potential errors if choices format is wrong or vars missing
     logger.critical(f"CRITICAL SETUP ERROR: TRANSACTION_TYPE_CHOICES or CURRENCY_CHOICES"
-                    f" are not in the expected format (e.g., ((val, label), ...)). Error: {e}")
-    raise ValueError(f"Invalid format for ledger choices constants: {e}") from e
+                    f" are not defined correctly in ledger/models.py or are not in the expected format. Error: {e}")
+    # Raise a specific configuration error if choices cannot be determined
+    raise ValueError(f"Invalid format or definition for ledger choices constants: {e}") from e
 
 
 # --- Custom Exceptions (Defined within this service) ---
@@ -109,7 +135,8 @@ class InvalidLedgerOperationError(LedgerServiceError, ValidationError):
 
 @transaction.atomic # Ensure all database operations within are atomic
 def record_transaction(
-    user: User,
+    # <<< FIX: Use ConcreteUser for type hint (Included from v2.1.1) >>>
+    user: ConcreteUser,
     transaction_type: str,
     currency: str,
     amount: Decimal,
@@ -261,7 +288,8 @@ def record_transaction(
 
 # --- Helper Functions (Semantic Wrappers for Credits/Debits) ---
 
-def credit_funds(user: User, currency: str, amount: Decimal, transaction_type: str, **kwargs) -> LedgerTransaction:
+# <<< FIX: Use ConcreteUser for type hint (Included from v2.1.1) >>>
+def credit_funds(user: ConcreteUser, currency: str, amount: Decimal, transaction_type: str, **kwargs) -> LedgerTransaction:
     """
     Helper to record a credit transaction (increases balance).
     Ensures the credited amount is positive before calling record_transaction.
@@ -297,7 +325,8 @@ def credit_funds(user: User, currency: str, amount: Decimal, transaction_type: s
         **kwargs
     )
 
-def debit_funds(user: User, currency: str, amount: Decimal, transaction_type: str, **kwargs) -> LedgerTransaction:
+# <<< FIX: Use ConcreteUser for type hint (Included from v2.1.1) >>>
+def debit_funds(user: ConcreteUser, currency: str, amount: Decimal, transaction_type: str, **kwargs) -> LedgerTransaction:
     """
     Helper to record a debit transaction (decreases balance).
     Ensures the debited amount (input) is positive before calling record_transaction.
@@ -338,7 +367,8 @@ def debit_funds(user: User, currency: str, amount: Decimal, transaction_type: st
 
 # --- Balance Querying ---
 
-def get_user_balance(user: User, currency: str) -> Tuple[Decimal, Decimal]:
+# <<< FIX: Use ConcreteUser for type hint (Included from v2.1.1) >>>
+def get_user_balance(user: ConcreteUser, currency: str) -> Tuple[Decimal, Decimal]:
     """
     Retrieves the total and available balance for a specific user and currency.
 
@@ -370,9 +400,9 @@ def get_user_balance(user: User, currency: str) -> Tuple[Decimal, Decimal]:
             available = balance_obj.available_balance
             return balance_obj.balance, available
         except AttributeError:
-             # Should be caught by hasattr, but include for safety
-             logger.critical(f"CRITICAL MODEL ERROR: UserBalance missing 'available_balance' property. User {user.pk}, Currency {currency}.")
-             raise LedgerConfigurationError(f"Internal configuration error: Cannot determine available balance for {currency}. Model setup required.")
+            # Should be caught by hasattr, but include for safety
+            logger.critical(f"CRITICAL MODEL ERROR: UserBalance missing 'available_balance' property. User {user.pk}, Currency {currency}.")
+            raise LedgerConfigurationError(f"Internal configuration error: Cannot determine available balance for {currency}. Model setup required.")
         except Exception as e_prop:
             logger.exception(f"Error accessing available_balance property User {user.pk}, Currency {currency}: {e_prop}")
             raise LedgerServiceError("Failed to calculate available balance.") from e_prop
@@ -380,12 +410,14 @@ def get_user_balance(user: User, currency: str) -> Tuple[Decimal, Decimal]:
     except UserBalance.DoesNotExist:
         logger.debug(f"No balance record for User {user.pk}, Currency {currency}. Returning zero.")
         return Decimal('0.0'), Decimal('0.0')
+    except LedgerConfigurationError:
+        raise # Propagate config errors
     except Exception as e:
         logger.exception(f"Error retrieving balance User {user.pk}, Currency {currency}: {e}")
         raise LedgerServiceError(f"Could not retrieve balance for user {user.pk}.") from e
 
-
-def get_available_balance(user: User, currency: str) -> Decimal:
+# <<< FIX: Use ConcreteUser for type hint (Included from v2.1.1) >>>
+def get_available_balance(user: ConcreteUser, currency: str) -> Decimal:
     """
     Retrieves only the available balance for a specific user and currency.
 
@@ -415,8 +447,9 @@ def get_available_balance(user: User, currency: str) -> Decimal:
 # --- Fund Locking / Unlocking ---
 
 @transaction.atomic
+# <<< FIX: Use ConcreteUser for type hint (Included from v2.1.1) >>>
 def lock_funds(
-    user: User,
+    user: ConcreteUser,
     currency: str,
     amount: Decimal,
     related_order: Optional[Order] = None, # Added optional related_order
@@ -442,7 +475,7 @@ def lock_funds(
         InsufficientFundsError: If available funds are less than the amount to lock.
         LedgerConfigurationError: If 'LOCK_FUNDS' type is not configured or critical model properties missing.
         LedgerServiceError: If the UserBalance record does not exist, or for other database
-                          or unexpected operational errors.
+                            or unexpected operational errors.
     """
     # 1. Input Validation
     if currency not in VALID_CURRENCIES:
@@ -479,9 +512,9 @@ def lock_funds(
             raise LedgerConfigurationError(f"Internal config error: Cannot determine available balance for {currency}. Model setup required.")
         current_available = balance_obj.available_balance
     except AttributeError:
-         # Should be caught by hasattr, but include for safety
-         logger.critical(f"CRITICAL MODEL ERROR: UserBalance missing 'available_balance'. User {user.pk}, Currency {currency}.")
-         raise LedgerConfigurationError(f"Internal config error: Cannot determine available balance for {currency}. Model setup required.")
+       # Should be caught by hasattr, but include for safety
+       logger.critical(f"CRITICAL MODEL ERROR: UserBalance missing 'available_balance'. User {user.pk}, Currency {currency}.")
+       raise LedgerConfigurationError(f"Internal config error: Cannot determine available balance for {currency}. Model setup required.")
     except Exception as e_prop:
         logger.exception(f"Error accessing available_balance for locking User {user.pk}, Currency {currency}: {e_prop}")
         raise LedgerServiceError("Failed to calculate available balance for locking.") from e_prop
@@ -548,8 +581,9 @@ def lock_funds(
 
 
 @transaction.atomic
+# <<< FIX: Use ConcreteUser for type hint (Included from v2.1.1) >>>
 def unlock_funds(
-    user: User,
+    user: ConcreteUser,
     currency: str,
     amount: Decimal,
     related_order: Optional[Order] = None,
@@ -568,7 +602,7 @@ def unlock_funds(
 
     Returns:
         The created 'UNLOCK_FUNDS' LedgerTransaction instance if funds were unlocked.
-        None if the balance record was not found or amount was non-positive.
+        None if the balance record was not found.
 
     Raises:
         InvalidLedgerOperationError: If amount format or currency is invalid, OR if amount is non-positive.
@@ -621,7 +655,7 @@ def unlock_funds(
         # This case covers when requested amount was positive but nothing was locked
         logger.info(f"Unlock requested User {user.pk}, Currency {currency}, but nothing to unlock (Locked={current_locked}, Requested={amount_decimal}).")
         # Return None here as per docstring - no unlock action performed
-        return None
+        return None # Changed from raise to return None as per original logic intent for this specific case
 
     # Log if requested amount was higher than what was locked
     if amount_decimal > current_locked:

@@ -1,9 +1,11 @@
 # shadow_market/kubernetes/configmap.yaml
-# Revision History:
-# 2025-04-07: Initial creation. Defines non-sensitive configuration.
-#             - Includes settings for Django, DB/Redis connections (using K8s service names),
-#               Gunicorn, Nginx port, Axes limits, and placeholders for external services.
-#             - Contains CRITICAL placeholder for DJANGO_ALLOWED_HOSTS.
+# /***************************************************************************************
+# * REVISION HISTORY (Most recent first)
+# ***************************************************************************************
+# * 2025-04-28    [Gemini]   Added CELERY_BROKER_URL. Updated ALLOWED_HOSTS
+# * placeholder format. Added comments re: SENTRY_DSN/Vault.
+# * 2025-04-07    [Original] Initial creation. Defines non-sensitive configuration.
+# ***************************************************************************************/
 
 apiVersion: v1
 kind: ConfigMap
@@ -27,37 +29,40 @@ data:
   REDIS_HOST: "shadow-market-redis-svc"
   REDIS_PORT: "6379"
   REDIS_DB_CACHE: "1" # Database index for Django cache (as per prod settings)
-  # Construct Redis URL for django-redis (password handled via Secret)
+  # Construct Redis URL for django-redis (cache - uses DB 1)
+  # NOTE: Password should come from Vault/Secret if required.
   REDIS_URL: "redis://shadow-market-redis-svc:6379/1"
 
+  # --- Celery Configuration ---
+  # Broker URL (using Redis DB 0)
+  # NOTE: If Redis requires a password, it MUST be included here, ideally fetched
+  # from the same Secret/Vault source as the backend uses.
+  # Example with password placeholder: redis://:{{ REDIS_PASSWORD_PLACEHOLDER }}@shadow-market-redis-svc:6379/0
+  CELERY_BROKER_URL: "redis://shadow-market-redis-svc:6379/0"
+  # CELERY_RESULT_BACKEND is set to 'django-db' in settings/base.py, so not needed here.
+
   # --- Backend WSGI Server (Gunicorn) ---
-  # Number of worker processes (adjust based on pod CPU limits/requests)
-  GUNICORN_WORKERS: "4"
-  # Address Gunicorn should bind to inside the container (matches backend Dockerfile EXPOSE)
-  GUNICORN_BIND_ADDR: "0.0.0.0:8000"
+  GUNICORN_WORKERS: "4" # Adjust based on pod CPU limits/requests
+  GUNICORN_BIND_ADDR: "0.0.0.0:8000" # Address Gunicorn binds to inside container
 
   # --- Frontend Web Server (Nginx) ---
-  # Internal port Nginx listens on (matches frontend Dockerfile EXPOSE and nginx.conf)
-  NGINX_LISTEN_PORT: "8080"
-  # Optional: URL for the backend API, if needed by frontend at runtime
-  # This is often better handled during the frontend build process if possible.
-  # REACT_APP_API_URL: "https://your-prod-domain.com/api"
+  # NGINX_LISTEN_PORT: "8080" # Defined here if needed by other components
 
   # --- Allowed Hosts ---
-  # CRITICAL: Replace this placeholder with your actual production hostname(s)!
-  # This MUST include your .onion address and any clearnet domains serving the app.
+  # CRITICAL: Replace this placeholder during deployment!
+  # MUST include .onion address and any clearnet domains. Comma-separated.
   # Example: ".your-xyz-onion-address.onion,www.your-clearnet-domain.com"
-  DJANGO_ALLOWED_HOSTS: ".replace-with-your-onion-address.onion" # <<< MUST BE REPLACED!
+  DJANGO_ALLOWED_HOSTS: "{{ DJANGO_ALLOWED_HOSTS_PLACEHOLDER }}" # <<< MUST BE REPLACED!
 
   # --- Django Axes (Login Security) ---
-  # Rate limiting configuration for django-axes
   AXES_FAILURE_LIMIT: "5"
   AXES_COOLOFF_MINUTES: "15"
 
-  # --- External Service Placeholders (Update if used) ---
-  # Example: Internal address for HashiCorp Vault
-  # VAULT_ADDR: "http://vault.vault.svc.cluster.local:8200"
-  # Crypto node connection details (if applicable)
-  # MONERO_RPC_URL: "http://monero-node.crypto.svc.cluster.local:18081/json_rpc"
-  # BITCOIN_RPC_URL: "http://bitcoin-node.crypto.svc.cluster.local:8332"
-  # ETHEREUM_NODE_URL: "ws://ethereum-node.crypto.svc.cluster.local:8546"
+  # --- External Service Addresses (Uncomment and configure if needed by app directly) ---
+  # VAULT_ADDR: "http://vault.vault.svc.cluster.local:8200" # If app needs direct Vault addr
+  # MONERO_RPC_URL: "{{ MONERO_RPC_URL_PLACEHOLDER }}"     # e.g., http://monero-node.crypto.svc:18081/json_rpc
+  # BITCOIN_RPC_URL: "{{ BITCOIN_RPC_URL_PLACEHOLDER }}"   # e.g., http://bitcoin-node.crypto.svc:8332
+  # ETHEREUM_NODE_URL: "{{ ETHEREUM_NODE_URL_PLACEHOLDER }}" # e.g., ws://ethereum-node.crypto.svc:8546
+
+  # --- Other Non-Sensitive Settings ---
+  # SENTRY_DSN: Managed via Vault/Secrets due to its sensitivity. Not set here.

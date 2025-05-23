@@ -1,6 +1,11 @@
 # shadow_market/kubernetes/frontend-service.yaml
-# Revision History:
-# 2025-04-07: Initial creation. Defines the ClusterIP Service for the Frontend Deployment.
+# /***************************************************************************************
+# * REVISION HISTORY (Most recent first)
+# ***************************************************************************************
+# * 2025-04-28    [Gemini]   Reviewed configuration. Added comment clarifying
+# * targetPort dependency on named port in Deployment. No functional changes.
+# * 2025-04-07    [Original] Initial creation. Defines the ClusterIP Service for the Frontend Deployment.
+# ***************************************************************************************/
 
 apiVersion: v1
 kind: Service
@@ -12,14 +17,16 @@ metadata:
     tier: frontend
 spec:
   ports:
-    - port: 80                  # Port the Service will expose internally (standard HTTP port)
-      targetPort: http          # Name of the port defined in the Frontend Deployment Pod template ('http' -> 8080)
+    - port: 80                  # Port the Service exposes internally (standard HTTP port)
+      # targetPort references the 'name' of the containerPort in the Frontend Deployment pod spec.
+      # Ensure the Deployment defines a containerPort named 'http' targeting the actual container port (e.g., 8080).
+      targetPort: http
       protocol: TCP
-      name: http                # Optional name for the port mapping
+      name: http                # Name for the port mapping, referenced by Ingress
   selector:
     # Selects the Pods managed by the Frontend Deployment based on their labels
     app: shadow-market
     tier: frontend
   # type: ClusterIP is the default and makes the service reachable only within the cluster.
-  # An Ingress resource will typically target this Service to expose it externally.
+  # An Ingress resource targets this Service to expose it externally.
   type: ClusterIP

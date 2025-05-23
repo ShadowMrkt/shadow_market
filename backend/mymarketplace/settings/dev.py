@@ -11,18 +11,20 @@ and verbose logging.
 
 Inherits base settings from .base and overrides specifics for development.
 """
-# <<< ENTERPRISE GRADE REVISION: v1.0.2 - Set Console Handler Level to DEBUG >>>
+# <<< ENTERPRISE GRADE REVISION: v1.0.4 - Remove redundant 'withdraw' app addition >>>
 # Revision Notes:
-# - v1.0.2: (Current - 2025-04-06) # Updated date
-#   - FIXED: Explicitly set the 'level' of the 'console' handler to 'DEBUG' within
-#     the LOGGING dictionary modifications. This ensures that DEBUG level messages
-#     processed by loggers (like 'store.services') are actually output to the console.
+# - v1.0.4: (Current - 2025-05-03) # Updated date
+#   - FIXED: Removed the explicit addition of 'backend.withdraw' to INSTALLED_APPS.
+#     This was causing a duplicate app label error, implying the app is already
+#     correctly registered in the base settings file (base.py).
+# - v1.0.3: (2025-05-03)
+#   - FIXED: Added 'backend.withdraw' to INSTALLED_APPS (Reverted in v1.0.4).
+# - v1.0.2: (2025-04-06)
+#   - FIXED: Explicitly set the 'level' of the 'console' handler to 'DEBUG'.
 # - v1.0.1:
-#   - FIXED: Explicitly configured the 'store.services' logger in the LOGGING dictionary
-#     to ensure DEBUG level messages are captured and output to the console during
-#     development and testing (when using appropriate pytest flags like -s).
-#   - ADDED: More defensive checks around LOGGING dictionary modification to prevent KeyErrors.
-# - v1.0.0: Initial development settings file, inheriting from base.
+#   - FIXED: Explicitly configured the 'store.services' logger.
+#   - ADDED: Defensive checks around LOGGING dictionary modification.
+# - v1.0.0: Initial development settings file.
 
 import sys
 # print(f"DEBUG sys.path = {sys.path}") # Keep for initial debug if needed
@@ -109,24 +111,24 @@ try:
     # Ensure LOGGING dictionary exists (create if not, though it should come from base)
     if 'LOGGING' not in locals() or not isinstance(LOGGING, dict): # noqa: F405
         LOGGING = { # noqa: F405
-             "version": 1,
-             "disable_existing_loggers": False,
+            "version": 1,
+            "disable_existing_loggers": False,
         }
 
     # Ensure formatters and handlers are defined before referencing in loggers
     if 'formatters' not in LOGGING: LOGGING['formatters'] = {} # noqa: F405
     if 'simple' not in LOGGING['formatters']: # noqa: F405
         LOGGING['formatters']['simple'] = { # noqa: F405
-             "format": "{levelname} {name}:{lineno} {message}",
-             "style": "{",
+            "format": "{levelname} {name}:{lineno} {message}",
+            "style": "{",
         }
     if 'handlers' not in LOGGING: LOGGING['handlers'] = {} # noqa: F405
     if 'console' not in LOGGING['handlers']: # noqa: F405
-          LOGGING['handlers']['console'] = { # noqa: F405
-             "class": "logging.StreamHandler",
-             "formatter": "simple",
-             # "level": "DEBUG", # Will be set below
-          }
+        LOGGING['handlers']['console'] = { # noqa: F405
+            "class": "logging.StreamHandler",
+            "formatter": "simple",
+            # "level": "DEBUG", # Will be set below
+        }
 
     # >>> FIX v1.0.2: Ensure console handler level is DEBUG <<<
     if 'console' in LOGGING['handlers']: # noqa: F405
@@ -134,8 +136,8 @@ try:
         LOGGING['handlers']['console']['level'] = 'DEBUG' # <<< EXPLICITLY SET LEVEL
         # >>> END FIX v1.0.2 <<<
     else:
-         # This case should ideally not happen if base.py defines a console handler
-         warnings.warn("Could not find 'console' handler in LOGGING dict to set level and formatter.")
+        # This case should ideally not happen if base.py defines a console handler
+        warnings.warn("Could not find 'console' handler in LOGGING dict to set level and formatter.")
 
 
     # Ensure loggers dict exists
@@ -196,12 +198,19 @@ else:
     MARKET_XMR_WALLET_RPC_URL = None
     warnings.warn("MARKET_XMR_WALLET_RPC_URL could not be constructed. Check related environment variables/defaults.")
 
+# --- Add Local Applications ---
+# >>> BLOCK REMOVED in v1.0.4 <<<
+# The logic previously here to append 'backend.withdraw' was removed as it caused
+# duplicate app registration errors. Assumes 'backend.withdraw' is correctly
+# listed in INSTALLED_APPS within the base settings file (base.py).
 
 # --- Django Debug Toolbar Configuration ---
 # Provides valuable debugging information in the browser.
-# Check if INSTALLED_APPS and MIDDLEWARE are available from base settings
 DEBUG_TOOLBAR_ENABLED = False
-if 'INSTALLED_APPS' in locals() and 'MIDDLEWARE' in locals(): # noqa: F405 (INSTALLED_APPS/MIDDLEWARE from base.py)
+# Check if INSTALLED_APPS and MIDDLEWARE are available from base settings and are lists
+if 'INSTALLED_APPS' in locals() and isinstance(INSTALLED_APPS, list) and \
+   'MIDDLEWARE' in locals() and isinstance(MIDDLEWARE, list): # noqa: F405
+    # This block will only execute if both INSTALLED_APPS and MIDDLEWARE are found and are lists
     try:
         import debug_toolbar # noqa: F401 (check import)
 
@@ -211,8 +220,6 @@ if 'INSTALLED_APPS' in locals() and 'MIDDLEWARE' in locals(): # noqa: F405 (INST
 
         # Add Debug Toolbar middleware. Insert *after* security/encoding middleware
         # but *before* middleware that might modify the response significantly.
-        # CommonMiddleware or SessionMiddleware are typical insertion points.
-        # This approach is more robust than using a fixed index.
         try:
             # Attempt to insert after GZipMiddleware if it exists
             gzip_index = MIDDLEWARE.index('django.middleware.gzip.GZipMiddleware') # noqa: F405
@@ -237,14 +244,20 @@ if 'INSTALLED_APPS' in locals() and 'MIDDLEWARE' in locals(): # noqa: F405 (INST
     except ImportError:
         warnings.warn("Django Debug Toolbar not installed. Skipping configuration.")
     except NameError:
-        warnings.warn("Could not configure Django Debug Toolbar. 'INSTALLED_APPS' or 'MIDDLEWARE' not found (expected from base.py).")
+        # This shouldn't happen if the outer checks pass, but defensively handle
+        warnings.warn("Could not configure Django Debug Toolbar. 'INSTALLED_APPS' or 'MIDDLEWARE' unexpectedly not found (check base.py).")
+
 else:
-    warnings.warn("Could not configure Django Debug Toolbar. 'INSTALLED_APPS' or 'MIDDLEWARE' not found (expected from base.py).")
+    # INSTALLED_APPS or MIDDLEWARE missing or not a list
+    warnings.warn("Could not configure Django Debug Toolbar. 'INSTALLED_APPS' or 'MIDDLEWARE' not found or not a list (expected from base.py).")
 
 
 # --- Django REST Framework (DRF) Development Settings ---
-# Assumes REST_FRAMEWORK dictionary is defined in base.py
-if 'rest_framework' in INSTALLED_APPS and 'REST_FRAMEWORK' in locals(): # noqa: F405
+# Assumes REST_FRAMEWORK dictionary is defined in base.py and DRF is installed
+# Check existence before attempting modifications
+if 'INSTALLED_APPS' in locals() and isinstance(INSTALLED_APPS, list) and \
+   'rest_framework' in INSTALLED_APPS and \
+   'REST_FRAMEWORK' in locals() and isinstance(REST_FRAMEWORK, dict): # noqa: F405
     try:
         # Ensure Browsable API is available for easy manual testing via browser
         if 'DEFAULT_RENDERER_CLASSES' in REST_FRAMEWORK: # noqa: F405
@@ -254,17 +267,22 @@ if 'rest_framework' in INSTALLED_APPS and 'REST_FRAMEWORK' in locals(): # noqa: 
                 REST_FRAMEWORK['DEFAULT_RENDERER_CLASSES'] = tuple(renderers) # noqa: F405
                 warnings.warn("DEVELOPMENT SETTINGS: DRF BrowsableAPIRenderer enabled.")
         else:
-            # If no renderers defined, add Browsable API as default (alongside JSON)
-             REST_FRAMEWORK['DEFAULT_RENDERER_CLASSES'] = ( # noqa: F405
-                 'rest_framework.renderers.JSONRenderer',
-                 'rest_framework.renderers.BrowsableAPIRenderer',
-             )
-             warnings.warn("DEVELOPMENT SETTINGS: DRF DEFAULT_RENDERER_CLASSES not found in base, setting JSONRenderer and BrowsableAPIRenderer.")
+            # If no renderers defined in base, add Browsable API as default (alongside JSON)
+            REST_FRAMEWORK['DEFAULT_RENDERER_CLASSES'] = ( # noqa: F405
+                'rest_framework.renderers.JSONRenderer',
+                'rest_framework.renderers.BrowsableAPIRenderer',
+            )
+            warnings.warn("DEVELOPMENT SETTINGS: DRF DEFAULT_RENDERER_CLASSES not found in base, setting JSONRenderer and BrowsableAPIRenderer.")
 
     except NameError:
-        warnings.warn("Could not configure DRF development settings. 'REST_FRAMEWORK' not found (expected from base.py).")
+        # Should not happen due to 'in locals()' check, but for safety:
+        warnings.warn("Could not configure DRF development settings. 'REST_FRAMEWORK' unexpectedly not found.")
     except KeyError as e:
         warnings.warn(f"Could not configure DRF development settings. Missing key in REST_FRAMEWORK dict: {e}")
+elif 'INSTALLED_APPS' in locals() and isinstance(INSTALLED_APPS, list) and 'rest_framework' in INSTALLED_APPS: # noqa: F405
+     warnings.warn("Could not configure DRF development settings. 'REST_FRAMEWORK' dictionary not found (expected from base.py).")
+# else: # DRF not in INSTALLED_APPS or INSTALLED_APPS missing/invalid
+#     pass # No need to warn if DRF isn't even installed/expected
 
 
 # --- Celery Development Settings (Optional) ---
@@ -320,11 +338,11 @@ warnings.warn(
 print("*" * 60, file=sys.stderr)
 print("*" + " " * 58 + "*", file=sys.stderr)
 print("**** CAUTION: RUNNING IN DEVELOPMENT MODE (dev.py) ****", file=sys.stderr)
-print("**** DEBUG=True. Security settings relaxed for LOCAL  ****", file=sys.stderr)
-print("**** HTTP testing ONLY. Review warnings above.       ****", file=sys.stderr)
+print("**** DEBUG=True. Security settings relaxed for LOCAL  ****", file=sys.stderr)
+print("**** HTTP testing ONLY. Review warnings above.       ****", file=sys.stderr)
 print("**** ****", file=sys.stderr)
-print("**** DO NOT use this configuration for staging,      ****", file=sys.stderr)
-print("**** production, or any environment with real data.  ****", file=sys.stderr)
+print("**** DO NOT use this configuration for staging,      ****", file=sys.stderr)
+print("**** production, or any environment with real data.  ****", file=sys.stderr)
 print("*" + " " * 58 + "*", file=sys.stderr)
 print("*" * 60, file=sys.stderr)
 

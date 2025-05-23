@@ -1,0 +1,80 @@
+// frontend/middleware.js
+// /***************************************************************************************
+// * REVISION HISTORY (Most recent first)
+// ***************************************************************************************
+// * 2025-04-28    [Gemini]   Initial creation for CSP Nonce implementation.
+// * - Generates a unique nonce per request using crypto.
+// * - Constructs CSP header dynamically, adding nonce to script-src.
+// * - Removes 'unsafe-inline' and 'unsafe-eval' from script-src for production safety.
+// * - Passes nonce via X-CSP-Nonce header for _document.js to use.
+// * - Copies other CSP directives from original next.config.js.
+// ***************************************************************************************/
+
+import { NextResponse } from 'next/server';
+import { randomBytes } from 'crypto';
+
+// Helper function to build the dynamic Content-Security-Policy string.
+const buildDynamicCsp = (nonce, apiUrl) => {
+  const directives = {
+    'default-src': ["'self'"],
+    // IMPORTANT: Replaced 'unsafe-inline' and 'unsafe-eval' with the nonce directive.
+    // 'unsafe-eval' might be needed for development HMR; consider conditionally adding it based on NODE_ENV.
+    'script-src': ["'self'", `'nonce-${nonce}'`], // Add nonce here!
+    'style-src': ["'self'", "'unsafe-inline'"], // Keep 'unsafe-inline' for styles if needed
+    'img-src': ["'self'", "data:"],
+    'font-src': ["'self'"],
+    'object-src': ["'none'"],
+    'frame-ancestors': ["'none'"],
+    'form-action': ["'self'"],
+    'base-uri': ["'self'"],
+    'connect-src': ["'self'", apiUrl || 'http://localhost:8000'], // Use consistent API URL handling
+    'report-uri': ["/csp-violation-report-endpoint/"], // Keep reporting endpoint
+  };
+
+  return Object.entries(directives)
+    .map(([key, value]) => `${key} ${value.join(' ')}`)
+    .join('; ');
+};
+
+export function middleware(request) {
+  // 1. Generate nonce
+  const nonce = randomBytes(16).toString('base64');
+
+  // 2. Get API URL (ensure consistency with how it's determined elsewhere)
+  //    Middleware might not have direct access to process.env the same way as next.config.js
+  //    depending on the edge runtime. Pass it during build or use runtime env vars if needed.
+  //    Using a placeholder or default for now.
+  const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+
+  // 3. Build dynamic CSP string
+  const csp = buildDynamicCsp(nonce, apiUrl);
+
+  // 4. Clone request headers so we can set new ones
+  const requestHeaders = new Headers(request.headers);
+
+  // 5. Set new headers
+  requestHeaders.set('Content-Security-Policy', csp);
+  requestHeaders.set('X-CSP-Nonce', nonce); // Pass nonce to _document.js
+
+  // 6. Return response with new headers attached to the request (for Next.js internals)
+  return NextResponse.next({
+    request: {
+      // New request headers
+      headers: requestHeaders,
+    },
+  });
+}
+
+// Optional: Define which paths the middleware should run on.
+// export const config = {
+//   matcher: [
+//     /*
+//      * Match all request paths except for the ones starting with:
+//      * - api (API routes)
+//      * - _next/static (static files)
+//      * - _next/image (image optimization files)
+//      * - favicon.ico (favicon file)
+//      */
+//     '/((?!api|_next/static|_next/image|favicon.ico).*)',
+//   ],
+// }

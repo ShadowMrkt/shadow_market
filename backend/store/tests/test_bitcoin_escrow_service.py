@@ -1,6 +1,17 @@
 # backend/store/tests/test_bitcoin_escrow_service.py
 
 # --- Revision History ---
+# <<< ENTERPRISE GRADE REVISION: v1.6.0 - Test Fix >>> # <<< UPDATED REVISION
+# v1.6.0 (2025-05-18): Gemini # <<< UPDATED DATE & NOTE
+#   - FIXED: Corrected keyword argument in `test_sign_order_release_buyer_first_btc`
+#     mock assertion for `sign_btc_multisig_tx` from `signing_key_input`
+#     to `private_key_wif` to match the actual call signature, resolving test failure.
+# <<< ENTERPRISE GRADE REVISION: v1.5.0 - Standardize local imports >>>
+# v1.5.0 (2025-04-29): Gemini
+#   - FIXED: Standardized local application imports (store.models, ledger.models,
+#     store.services.*, ledger.*) to use absolute paths from `backend.`
+#     (e.g., `from backend.store.models import ...`). This resolves collection
+#     errors caused by inconsistent import paths (`Conflicting '...' models`).
 # v1.4.0 (2025-04-09): The Void
 #   - FIXED: In `mark_disputed` fixture, added 'requester' field (pointing to order.buyer)
 #     to the `defaults` dict in `Dispute.objects.get_or_create` call to satisfy
@@ -58,25 +69,25 @@ from django.core.exceptions import ValidationError as DjangoValidationError, Fie
 from django.db import transaction, IntegrityError # Added IntegrityError
 from django.utils import timezone
 
-# --- Local Imports ---
+# --- Local Imports (Using backend.* absolute paths) --- <<< CORRECTED IMPORTS >>>
 # Models
-from store.models import Order, Product, User, GlobalSettings, CryptoPayment, Category, OrderStatus as OrderStatusChoices, Dispute # noqa - Added Dispute for potential check
-from ledger.models import UserBalance, LedgerTransaction # noqa
+from backend.store.models import Order, Product, User, GlobalSettings, CryptoPayment, Category, OrderStatus as OrderStatusChoices, Dispute # noqa - Added Dispute for potential check
+from backend.ledger.models import UserBalance, LedgerTransaction # noqa
 
 # Services and Exceptions
-# --- Updated Imports (v1.0.0 Refactor) ---
+# --- Updated Imports (v1.0.0 Refactor & v1.5.0 Path Fix) ---
 # Assuming primary BTC escrow logic is here:
-from store.services import bitcoin_escrow_service
+from backend.store.services import bitcoin_escrow_service
 # Assuming shared helpers/constants are here:
-from store.services import common_escrow_utils
+from backend.store.services import common_escrow_utils
 # Keep direct bitcoin_service import if needed for non-escrow BTC functions:
-from store.services import bitcoin_service
+from backend.store.services import bitcoin_service
 # Ledger service remains the same:
-from ledger import services as ledger_service # Explicit import for clarity
-from ledger.services import InsufficientFundsError, InvalidLedgerOperationError # noqa
-from ledger.exceptions import LedgerError # noqa
+from backend.ledger import services as ledger_service # Explicit import for clarity
+from backend.ledger.services import InsufficientFundsError, InvalidLedgerOperationError # noqa
+from backend.ledger.exceptions import LedgerError # noqa
 # Store/Escrow Exceptions remain the same:
-from store.exceptions import EscrowError, CryptoProcessingError # noqa
+from backend.store.exceptions import EscrowError, CryptoProcessingError # noqa
 # --- End Updated Imports ---
 
 DjangoUser = django_get_user_model()
@@ -374,12 +385,12 @@ def setup_btc_escrow(db, mock_settings_btc_escrow) -> Callable[[Order, str, Opti
         if script_value:
             # Use the field name that matches the service code logic
             if hasattr(order, 'btc_redeem_script'):
-                 setattr(order, 'btc_redeem_script', script_value)
-                 update_fields_order.append('btc_redeem_script')
+                setattr(order, 'btc_redeem_script', script_value)
+                update_fields_order.append('btc_redeem_script')
             # Add check for tapscript if that's also a possibility
             elif hasattr(order, 'btc_tapscript'):
-                 setattr(order, 'btc_tapscript', script_value)
-                 update_fields_order.append('btc_tapscript')
+                setattr(order, 'btc_tapscript', script_value)
+                update_fields_order.append('btc_tapscript')
 
 
         order.save(update_fields=list(set(update_fields_order)))
@@ -443,17 +454,14 @@ def order_payment_confirmed_btc(order_escrow_created_btc, confirm_btc_payment, m
     return confirm_btc_payment(order_escrow_created_btc, MOCK_TX_HASH_BTC, mock_settings_btc_escrow.BITCOIN_CONFIRMATIONS_NEEDED + 5)
 
 
-# <<< backend/store/tests/test_bitcoin_escrow_service.py Part 1 of 2 >>>
-# <<< backend/store/tests/test_bitcoin_escrow_service.py Part 2 of 2 >>>
-
 # Generic mark_shipped helper - Adapt for BTC
 @pytest.fixture
 def mark_btc_shipped(db, mock_settings_btc_escrow, global_settings_btc) -> Callable[[Order, str], Order]:
     """ Helper fixture to simulate marking a BTC order as shipped. """
     # Requires common_escrow_utils for helpers
     try:
-        # Attempt to import helpers assumed to be in common_escrow_utils
-        from store.services.common_escrow_utils import _get_currency_precision, _get_withdrawal_address
+        # Attempt to import helpers assumed to be in common_escrow_utils (using absolute path)
+        from backend.store.services.common_escrow_utils import _get_currency_precision, _get_withdrawal_address # <<< CORRECTED IMPORT >>>
     except ImportError:
         pytest.fail("Could not import helper functions (_get_currency_precision, _get_withdrawal_address) from common_escrow_utils in mark_btc_shipped fixture.")
 
@@ -615,9 +623,9 @@ def order_disputed_btc(order_shipped_btc, mark_disputed) -> Order:
     try:
         # Ensure the related dispute object was created/retrieved
         if not hasattr(disputed_order, 'dispute') or disputed_order.dispute is None:
-             raise AssertionError(f"Fixture Validation FAIL (order_disputed_btc): Related Dispute object missing.")
+            raise AssertionError(f"Fixture Validation FAIL (order_disputed_btc): Related Dispute object missing.")
     except Dispute.DoesNotExist:
-         raise AssertionError(f"Fixture Validation FAIL (order_disputed_btc): Related Dispute object DoesNotExist.")
+        raise AssertionError(f"Fixture Validation FAIL (order_disputed_btc): Related Dispute object DoesNotExist.")
     return disputed_order
 
 
@@ -651,7 +659,7 @@ class TestBitcoinEscrowService:
     # === Test BTC Escrow Creation ===
 
     # Patch the actual BTC service function responsible for multisig address creation
-    @patch('store.services.bitcoin_service.create_btc_multisig_address')
+    @patch('backend.store.services.bitcoin_service.create_btc_multisig_address') # <<< CORRECTED PATH >>>
     def test_create_escrow_btc_success(self, mock_create_btc_addr, order_pending_btc, market_user_btc, buyer_user_btc, vendor_user_btc, mock_settings_btc_escrow, global_settings_btc):
         """ Test successful creation of BTC escrow. """
         order = order_pending_btc
@@ -667,10 +675,10 @@ class TestBitcoinEscrowService:
         # --- FIX v1.3.0: Align mock return key with service logic ---
         # Mock the bitcoin_service call, providing 'redeemScript'
         mock_create_btc_addr.return_value = {
-             'address': MOCK_BTC_MULTISIG_ADDRESS,
-             'redeemScript': 'dummy_redeem_script_hex', # Use key expected by service
-             'internal_pubkey': 'dummy_internal_pubkey_hex', # Keep other keys if needed
-             'control_block': 'dummy_control_block_hex'
+                'address': MOCK_BTC_MULTISIG_ADDRESS,
+                'redeemScript': 'dummy_redeem_script_hex', # Use key expected by service
+                'internal_pubkey': 'dummy_internal_pubkey_hex', # Keep other keys if needed
+                'control_block': 'dummy_control_block_hex'
         }
         # --- End FIX ---
 
@@ -680,14 +688,14 @@ class TestBitcoinEscrowService:
         try:
             # Prefer explicit bitcoin_escrow_service if functions moved there
             if hasattr(bitcoin_escrow_service, 'create_escrow'):
-                 bitcoin_escrow_service.create_escrow(order)
+                    bitcoin_escrow_service.create_escrow(order)
             # Fallback to common_escrow_utils if it acts as dispatcher
             elif hasattr(common_escrow_utils, 'create_escrow_for_order'):
-                 common_escrow_utils.create_escrow_for_order(order)
+                    common_escrow_utils.create_escrow_for_order(order)
             else:
-                 pytest.fail("Cannot find create_escrow function in bitcoin_escrow_service or common_escrow_utils.")
+                    pytest.fail("Cannot find create_escrow function in bitcoin_escrow_service or common_escrow_utils.")
         except Exception as e:
-             pytest.fail(f"Service call failed: {e}")
+            pytest.fail(f"Service call failed: {e}")
 
 
         order.refresh_from_db()
@@ -700,19 +708,19 @@ class TestBitcoinEscrowService:
         # Check script field (prefer tapscript, fallback to redeem_script)
         script_field_value = None
         if hasattr(order, 'btc_tapscript'):
-             script_field_value = order.btc_tapscript
-             script_field_name = 'btc_tapscript'
+            script_field_value = order.btc_tapscript
+            script_field_name = 'btc_tapscript'
         elif hasattr(order, 'btc_redeem_script'):
-             script_field_value = order.btc_redeem_script
-             script_field_name = 'btc_redeem_script'
+            script_field_value = order.btc_redeem_script
+            script_field_name = 'btc_redeem_script'
         else:
-             script_field_name = 'script (tapscript/redeem_script)' # For error message
+            script_field_name = 'script (tapscript/redeem_script)' # For error message
 
         # --- FIX v1.3.0: Align expected script with mock ---
         expected_script = 'dummy_redeem_script_hex' # Match mock return value
         # --- End FIX ---
         if script_field_value != expected_script:
-             raise AssertionError(f"Order {script_field_name} mismatch. Got: '{script_field_value}', Expected: '{expected_script}'")
+            raise AssertionError(f"Order {script_field_name} mismatch. Got: '{script_field_value}', Expected: '{expected_script}'")
 
         if order.payment_deadline is None: raise AssertionError("Payment deadline not set.")
 
@@ -733,7 +741,7 @@ class TestBitcoinEscrowService:
         if payment.confirmations_needed != mock_settings_btc_escrow.BITCOIN_CONFIRMATIONS_NEEDED: raise AssertionError("Payment confirmations needed mismatch.")
 
     # Test failure during BTC multisig address creation
-    @patch('store.services.bitcoin_service.create_btc_multisig_address', side_effect=CryptoProcessingError("BTC Gen Failed"))
+    @patch('backend.store.services.bitcoin_service.create_btc_multisig_address', side_effect=CryptoProcessingError("BTC Gen Failed")) # <<< CORRECTED PATH >>>
     def test_create_escrow_btc_crypto_fail(self, mock_create_btc_addr, order_pending_btc, market_user_btc, buyer_user_btc, vendor_user_btc, global_settings_btc):
         """ Test create_escrow handles crypto service failure (BTC). """
         order = order_pending_btc
@@ -743,13 +751,13 @@ class TestBitcoinEscrowService:
 
         # Expect CryptoProcessingError raised by the service (either bitcoin_escrow_service or common_escrow_utils)
         with pytest.raises(CryptoProcessingError, match="Failed to generate BTC escrow details: BTC Gen Failed"):
-             # ASSUMPTION: Function name is create_escrow
-             if hasattr(bitcoin_escrow_service, 'create_escrow'):
-                 bitcoin_escrow_service.create_escrow(order)
-             elif hasattr(common_escrow_utils, 'create_escrow_for_order'):
-                  common_escrow_utils.create_escrow_for_order(order)
-             else:
-                 pytest.fail("Cannot find create_escrow function.")
+            # ASSUMPTION: Function name is create_escrow
+            if hasattr(bitcoin_escrow_service, 'create_escrow'):
+                bitcoin_escrow_service.create_escrow(order)
+            elif hasattr(common_escrow_utils, 'create_escrow_for_order'):
+                common_escrow_utils.create_escrow_for_order(order)
+            else:
+                pytest.fail("Cannot find create_escrow function.")
 
         # Verify order state remains unchanged
         order.refresh_from_db()
@@ -761,12 +769,12 @@ class TestBitcoinEscrowService:
     # === Test BTC Payment Confirmation ===
 
     # Patch User.objects.get and ledger service calls
-    @patch('store.models.User.objects.get')
-    @patch('store.services.bitcoin_service.scan_for_payment_confirmation')
-    @patch('ledger.services.credit_funds')
-    @patch('ledger.services.lock_funds')
-    @patch('ledger.services.debit_funds')
-    @patch('ledger.services.unlock_funds')
+    @patch('backend.store.models.User.objects.get') # <<< CORRECTED PATH >>>
+    @patch('backend.store.services.bitcoin_service.scan_for_payment_confirmation') # <<< CORRECTED PATH >>>
+    @patch('backend.ledger.services.credit_funds') # <<< CORRECTED PATH >>>
+    @patch('backend.ledger.services.lock_funds') # <<< CORRECTED PATH >>>
+    @patch('backend.ledger.services.debit_funds') # <<< CORRECTED PATH >>>
+    @patch('backend.ledger.services.unlock_funds') # <<< CORRECTED PATH >>>
     def test_check_confirm_btc_success(self, mock_ledger_unlock, mock_ledger_debit, mock_ledger_lock, mock_ledger_credit, mock_scan_btc, mock_user_get, order_escrow_created_btc, market_user_btc, mock_settings_btc_escrow):
         """ Test successful BTC payment confirmation check, including ledger updates. """
         order = order_escrow_created_btc
@@ -804,11 +812,11 @@ class TestBitcoinEscrowService:
         # Call the service function (assuming check_confirm in bitcoin_escrow_service)
         try:
             if hasattr(bitcoin_escrow_service, 'check_confirm'):
-                 bitcoin_escrow_service.check_confirm(payment.id)
+                bitcoin_escrow_service.check_confirm(payment.id)
             elif hasattr(common_escrow_utils, 'check_and_confirm_payment'):
-                 common_escrow_utils.check_and_confirm_payment(payment.id)
+                common_escrow_utils.check_and_confirm_payment(payment.id)
             else:
-                 pytest.fail("Cannot find check_confirm or check_and_confirm_payment function.")
+                pytest.fail("Cannot find check_confirm or check_and_confirm_payment function.")
         except Exception as e:
             pytest.fail(f"Service call failed: {e}")
 
@@ -855,7 +863,7 @@ class TestBitcoinEscrowService:
 
     # --- Test Mark Shipped ---
     # Patch the BTC-specific prepare release function (internal helper in bitcoin_escrow_service)
-    @patch('store.services.bitcoin_escrow_service._prepare_btc_release')
+    @patch('backend.store.services.bitcoin_escrow_service._prepare_btc_release') # <<< CORRECTED PATH >>>
     def test_mark_shipped_btc_success(self, mock_prepare_btc_release, order_payment_confirmed_btc, vendor_user_btc, global_settings_btc):
         """ Test successful marking of a BTC order as shipped by the vendor. """
         order = order_payment_confirmed_btc
@@ -865,7 +873,7 @@ class TestBitcoinEscrowService:
 
         # Calculate expected values for metadata mock
         expected_payout_std = from_atomic(Decimal('975000'), 8) # Example calculation (0.01 - 2.5% fee)
-        expected_fee_std = from_atomic(Decimal('25000'), 8)    # Example calculation
+        expected_fee_std = from_atomic(Decimal('25000'), 8)     # Example calculation
         # Use timezone.now() for comparison, allow slight difference
         now_for_mock = timezone.now()
         mock_prepared_at_iso = now_for_mock.isoformat()
@@ -881,15 +889,15 @@ class TestBitcoinEscrowService:
         # Call the service function (assuming it's in bitcoin_escrow_service now)
         try:
             if hasattr(bitcoin_escrow_service, 'mark_order_shipped'):
-                 bitcoin_escrow_service.mark_order_shipped(order, vendor_user_btc, tracking_info="TRACK123BTC")
+                bitcoin_escrow_service.mark_order_shipped(order, vendor_user_btc, tracking_info="TRACK123BTC")
             # Fallback check for common_escrow_utils (though less likely for mark_shipped)
             elif hasattr(common_escrow_utils, 'mark_order_shipped'):
-                 # If this path exists, the test will fail due to the AttributeError from previous run
-                 common_escrow_utils.mark_order_shipped(order, vendor_user_btc, tracking_info="TRACK123BTC")
+                # If this path exists, the test will fail due to the AttributeError from previous run
+                common_escrow_utils.mark_order_shipped(order, vendor_user_btc, tracking_info="TRACK123BTC")
             else:
-                 pytest.fail("Cannot find mark_order_shipped function.")
+                pytest.fail("Cannot find mark_order_shipped function.")
         except Exception as e:
-             pytest.fail(f"Service call failed: {e}")
+            pytest.fail(f"Service call failed: {e}")
 
         # Assert final state
         order.refresh_from_db()
@@ -915,9 +923,9 @@ class TestBitcoinEscrowService:
         try:
             prepared_at_dt = datetime.datetime.fromisoformat(prepared_at_str)
             if abs(prepared_at_dt - now_for_mock) > datetime.timedelta(seconds=5):
-                 raise AssertionError(f"Metadata prepared_at timestamp difference too large: {prepared_at_dt} vs {now_for_mock}")
+                raise AssertionError(f"Metadata prepared_at timestamp difference too large: {prepared_at_dt} vs {now_for_mock}")
         except ValueError:
-             raise AssertionError("Metadata prepared_at is not a valid ISO format string.")
+            raise AssertionError("Metadata prepared_at is not a valid ISO format string.")
 
 
         if hasattr(order, 'tracking_info') and order.tracking_info != "TRACK123BTC": raise AssertionError("Tracking info mismatch.")
@@ -928,7 +936,7 @@ class TestBitcoinEscrowService:
     # === Test BTC Release Signing ===
 
     # Patch the BTC signing function in bitcoin_service
-    @patch('store.services.bitcoin_service.sign_btc_multisig_tx')
+    @patch('backend.store.services.bitcoin_service.sign_btc_multisig_tx') # <<< CORRECTED PATH >>>
     def test_sign_order_release_buyer_first_btc(self, mock_sign_btc, order_shipped_btc, buyer_user_btc):
         """ Test buyer signing the BTC release transaction first. """
         order = order_shipped_btc
@@ -944,18 +952,20 @@ class TestBitcoinEscrowService:
         # Call the service function (assuming sign_release in bitcoin_escrow_service)
         try:
             if hasattr(bitcoin_escrow_service, 'sign_release'):
-                 success, is_ready = bitcoin_escrow_service.sign_release(order, buyer_user_btc, buyer_key_info)
+                success, is_ready = bitcoin_escrow_service.sign_release(order, buyer_user_btc, buyer_key_info)
             elif hasattr(common_escrow_utils, 'sign_order_release'):
-                 success, is_ready = common_escrow_utils.sign_order_release(order, buyer_user_btc, buyer_key_info)
+                success, is_ready = common_escrow_utils.sign_order_release(order, buyer_user_btc, buyer_key_info)
             else:
-                 pytest.fail("Cannot find sign_release or sign_order_release function.")
+                pytest.fail("Cannot find sign_release or sign_order_release function.")
         except Exception as e:
-             pytest.fail(f"Service call failed: {e}")
+            pytest.fail(f"Service call failed: {e}")
 
 
         if success is not True: raise AssertionError("Signing should be successful.")
         if is_ready is not False: raise AssertionError("Release should not be ready.")
+        # --- FIX v1.6.0: Correct keyword argument in mock assertion ---
         mock_sign_btc.assert_called_once_with(psbt_base64=initial_metadata_data, private_key_wif=buyer_key_info)
+        # --- End FIX ---
         order.refresh_from_db()
         updated_metadata = order.release_metadata
         if updated_metadata.get('data') != MOCK_SIGNED_PSBT_BUYER: raise AssertionError("Metadata 'data' not updated.")
@@ -968,9 +978,9 @@ class TestBitcoinEscrowService:
     # === Test BTC Release Broadcast ===
 
     # Patch User.get, the BTC broadcast function, and ledger credit
-    @patch('store.models.User.objects.get')
-    @patch('store.services.bitcoin_service.finalize_and_broadcast_btc_release')
-    @patch('ledger.services.credit_funds')
+    @patch('backend.store.models.User.objects.get') # <<< CORRECTED PATH >>>
+    @patch('backend.store.services.bitcoin_service.finalize_and_broadcast_btc_release') # <<< CORRECTED PATH >>>
+    @patch('backend.ledger.services.credit_funds') # <<< CORRECTED PATH >>>
     def test_broadcast_release_btc_success(self, mock_ledger_credit, mock_btc_broadcast, mock_user_get, order_ready_for_broadcast_btc, market_user_btc):
         """ Test successful broadcast of a finalized BTC release transaction. """
         order = order_ready_for_broadcast_btc
@@ -994,22 +1004,22 @@ class TestBitcoinEscrowService:
                 if market_user_btc and pk_kw == market_user_btc.pk: return market_user_btc
                 if market_user_btc and pk_kw == MARKET_USER_ID_FROM_LOGS: return market_user_btc
                 raise DjangoUser.DoesNotExist(f"Mock User.get: PK {pk_kw} not found.")
-            username_kw = kwargs.get('username')
             # Handle username lookup if common_escrow_utils._get_market_user() uses it initially
+            username_kw = kwargs.get('username')
             if username_kw:
-                 if market_user_btc and username_kw == market_user_btc.username: return market_user_btc
-                 raise DjangoUser.DoesNotExist(f"Mock User.get: Username {username_kw} not found.")
+                if market_user_btc and username_kw == market_user_btc.username: return market_user_btc
+                raise DjangoUser.DoesNotExist(f"Mock User.get: Username {username_kw} not found.")
             raise DjangoUser.DoesNotExist(f"Mock User.get: Query {kwargs} not handled.")
         mock_user_get.side_effect = user_get_side_effect
 
         # Call the service function (assuming broadcast_release in bitcoin_escrow_service)
         try:
             if hasattr(bitcoin_escrow_service, 'broadcast_release'):
-                 success = bitcoin_escrow_service.broadcast_release(order.id)
+                success = bitcoin_escrow_service.broadcast_release(order.id)
             elif hasattr(common_escrow_utils, 'broadcast_release_transaction'):
-                 success = common_escrow_utils.broadcast_release_transaction(order.id)
+                success = common_escrow_utils.broadcast_release_transaction(order.id)
             else:
-                 pytest.fail("Cannot find broadcast_release or broadcast_release_transaction function.")
+                pytest.fail("Cannot find broadcast_release or broadcast_release_transaction function.")
         except Exception as e:
             pytest.fail(f"Service call failed: {e}")
 
@@ -1039,9 +1049,9 @@ class TestBitcoinEscrowService:
     # === Test BTC Dispute Resolution ===
 
     # Patch User.get, the BTC dispute broadcast function, and ledger credit
-    @patch('store.models.User.objects.get')
-    @patch('store.services.bitcoin_service.create_and_broadcast_dispute_tx')
-    @patch('ledger.services.credit_funds')
+    @patch('backend.store.models.User.objects.get') # <<< CORRECTED PATH >>>
+    @patch('backend.store.services.bitcoin_service.create_and_broadcast_dispute_tx') # <<< CORRECTED PATH >>>
+    @patch('backend.ledger.services.credit_funds') # <<< CORRECTED PATH >>>
     def test_resolve_dispute_btc_full_buyer(self, mock_ledger_credit, mock_dispute_broadcast, mock_user_get, order_disputed_btc, moderator_user_btc, market_user_btc):
         """ Test BTC dispute resolution: 100% released to buyer. """
         order = order_disputed_btc
@@ -1075,19 +1085,19 @@ class TestBitcoinEscrowService:
             # Handle username lookup if needed for _get_market_user
             username_kw = kwargs.get('username')
             if username_kw:
-                 if market_user_btc and username_kw == market_user_btc.username: return market_user_btc
-                 raise DjangoUser.DoesNotExist(f"Mock User.get (Dispute): Username {username_kw} not found.")
+                if market_user_btc and username_kw == market_user_btc.username: return market_user_btc
+                raise DjangoUser.DoesNotExist(f"Mock User.get (Dispute): Username {username_kw} not found.")
             raise DjangoUser.DoesNotExist(f"Mock User.get (Dispute): Query {kwargs} not handled.")
         mock_user_get.side_effect = user_get_side_effect_dispute
 
         # Call the service function (assuming resolve_dispute in bitcoin_escrow_service)
         try:
             if hasattr(bitcoin_escrow_service, 'resolve_dispute'):
-                 success = bitcoin_escrow_service.resolve_dispute(order=order, moderator=moderator_user_btc, resolution_notes="Full BTC refund.", release_to_buyer_percent=100)
+                success = bitcoin_escrow_service.resolve_dispute(order=order, moderator=moderator_user_btc, resolution_notes="Full BTC refund.", release_to_buyer_percent=100)
             elif hasattr(common_escrow_utils, 'resolve_dispute'):
-                 success = common_escrow_utils.resolve_dispute(order=order, moderator=moderator_user_btc, resolution_notes="Full BTC refund.", release_to_buyer_percent=100)
+                success = common_escrow_utils.resolve_dispute(order=order, moderator=moderator_user_btc, resolution_notes="Full BTC refund.", release_to_buyer_percent=100)
             else:
-                 pytest.fail("Cannot find resolve_dispute function.")
+                pytest.fail("Cannot find resolve_dispute function.")
         except Exception as e:
             pytest.fail(f"Service call failed: {e}")
 
@@ -1106,8 +1116,8 @@ class TestBitcoinEscrowService:
 
         # Check optional fields like resolved_by, notes, buyer_percent on Order if they exist
         if hasattr(order, 'dispute_resolved_by'):
-             if order.dispute_resolved_by != moderator_user_btc:
-                 raise AssertionError("dispute_resolved_by mismatch.")
+            if order.dispute_resolved_by != moderator_user_btc:
+                raise AssertionError("dispute_resolved_by mismatch.")
         if hasattr(order, 'dispute_resolution_notes'):
             if order.dispute_resolution_notes != "Full BTC refund.": # Match notes used in service call
                 raise AssertionError("dispute_resolution_notes mismatch.")
@@ -1117,8 +1127,8 @@ class TestBitcoinEscrowService:
                 if order.dispute_buyer_percent != Decimal('100.0'):
                     raise AssertionError("dispute_buyer_percent mismatch (Decimal).")
             except InvalidOperation: # Handle if it's an Int field
-                 if order.dispute_buyer_percent != 100:
-                     raise AssertionError("dispute_buyer_percent mismatch (Int).")
+                if order.dispute_buyer_percent != 100:
+                    raise AssertionError("dispute_buyer_percent mismatch (Int).")
 
         if order.release_tx_broadcast_hash != MOCK_TX_HASH_BTC: raise AssertionError("Release TX hash mismatch.")
 
@@ -1138,9 +1148,9 @@ class TestBitcoinEscrowService:
         if mock_ledger_credit.call_count != len(expected_ledger_calls): raise AssertionError("Ledger credit call count mismatch.")
 
 
-# === Test Placeholders / Future Work ===
-# Add tests for signing with real crypto mocks if applicable to BTC service
-# Add tests for edge cases in amount calculations (BTC specific)
-# Add tests for BTC timeout logic if different from generic
+    # === Test Placeholders / Future Work ===
+    # Add tests for signing with real crypto mocks if applicable to BTC service
+    # Add tests for edge cases in amount calculations (BTC specific)
+    # Add tests for BTC timeout logic if different from generic
 
 # <<< END OF FILE: backend/store/tests/test_bitcoin_escrow_service.py >>>

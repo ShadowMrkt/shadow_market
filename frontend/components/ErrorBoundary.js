@@ -1,5 +1,9 @@
 // frontend/components/ErrorBoundary.js
 // --- REVISION HISTORY ---
+// 2025-04-28: Rev 3 - [Gemini] Integrated Sentry error reporting in componentDidCatch.
+//           - Added import for @sentry/nextjs.
+//           - Added Sentry.captureException call.
+//           - Added comments regarding Sentry setup prerequisites.
 // 2025-04-07: Rev 2 - Migrated styles to CSS Module, integrated dark theme variables.
 //           - Removed inline styles object.
 //           - Created and imported ErrorBoundary.module.css.
@@ -12,6 +16,10 @@
 //           - Displays a simple fallback UI.
 
 import React from 'react';
+// <<< ADDED: Import Sentry SDK >>>
+// Ensure you have run `npm install --save @sentry/nextjs` or `yarn add @sentry/nextjs`
+// Also ensure Sentry is initialized in your Next.js project (next.config.js, etc.)
+import * as Sentry from "@sentry/nextjs";
 import styles from './ErrorBoundary.module.css'; // Import CSS Module
 
 class ErrorBoundary extends React.Component {
@@ -29,19 +37,32 @@ class ErrorBoundary extends React.Component {
     // Store errorInfo as well for potentially more detailed logging/display
     this.setState({ errorInfo: errorInfo });
 
-    // Log the error and component stack trace
+    // Log the error locally for immediate visibility during development/debugging
     console.error("ErrorBoundary caught an error:", error, errorInfo);
 
-    // --- TODO: CRITICAL FOR PRODUCTION ---
-    // Integrate with an error reporting service (e.g., Sentry, LogRocket, Datadog).
-    // Replace console.error with service-specific logging.
-    // Example: Sentry.captureException(error, { extra: errorInfo });
-    // Example: logErrorToMyService(error, errorInfo.componentStack);
+    // <<< UPDATED: Send error to Sentry >>>
+    // Send the error and associated component stack trace to Sentry
+    try {
+        Sentry.captureException(error, {
+            extra: {
+                // errorInfo contains componentStack which provides context
+                componentStack: errorInfo?.componentStack
+            },
+            // Optionally add tags or user context if available
+            // tags: { ... },
+            // user: { ... },
+        });
+        console.log("Error reported to Sentry via ErrorBoundary.");
+    } catch (sentryError) {
+        console.error("Failed to report error to Sentry:", sentryError);
+    }
+    // --- END UPDATE ---
+
+    // You might keep or remove the console.error above depending on preference
+    // Sentry will capture it, but local logs can be useful too.
   }
 
   // Simple retry: reload the page.
-  // More sophisticated retries might involve resetting specific context state,
-  // but window reload is often the most reliable fallback for unexpected errors.
   handleRetry = () => {
     this.setState({ hasError: false, error: null, errorInfo: null }); // Reset state
     window.location.reload();
@@ -52,8 +73,6 @@ class ErrorBoundary extends React.Component {
       // Fallback UI Rendering
       return (
         <div className={styles.fallbackContainer} role="alert">
-          {/* Optional: Add an icon */}
-          {/* <div className={styles.icon}>⚠️</div> */}
           <h2 className={styles.fallbackTitle}>Oops! Something Went Wrong</h2>
           <p className={styles.fallbackMessage}>
             An unexpected error occurred in the application. Please try refreshing the page.
@@ -76,7 +95,6 @@ class ErrorBoundary extends React.Component {
             </details>
           )}
 
-          {/* Use global button style */}
           <button onClick={this.handleRetry} className="button button-primary mt-3">
             Refresh Page
           </button>

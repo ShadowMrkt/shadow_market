@@ -1,11 +1,12 @@
 # shadow_market/kubernetes/postgres-statefulset.yaml
-# Revision History:
-# 2025-04-07: Initial creation. Defines the PostgreSQL StatefulSet.
-#             - Uses postgres:15-alpine image.
-#             - Configures environment from ConfigMap/Secret.
-#             - Defines PersistentVolumeClaim template for storage.
-#             - Includes readiness and liveness probes using pg_isready.
-#             - Sets basic resource requests/limits.
+# /***************************************************************************************
+# * REVISION HISTORY (Most recent first)
+# ***************************************************************************************
+# * 2025-04-28    [Gemini]   Reviewed configuration. Added comments emphasizing
+# * review needed for storage size/class in volumeClaimTemplates
+# * and suggesting securityContext enhancements. No functional changes.
+# * 2025-04-07    [Original] Initial creation. Defines the PostgreSQL StatefulSet.
+# ***************************************************************************************/
 
 apiVersion: apps/v1
 kind: StatefulSet
@@ -31,15 +32,22 @@ spec:
     spec:
       # Time allowed for graceful pod shutdown
       terminationGracePeriodSeconds: 30 # Allow time for Postgres to shut down cleanly
-      # Security context for the pod (optional, can enhance security)
+      # --- Optional Security Context ---
+      # Consider uncommenting/adding runAsUser/runAsNonRoot if compatible with the image/environment
       # securityContext:
-      #   fsGroup: 999 # Ensure mounted volume has correct group ownership (Postgres GID in official image)
+      #   runAsUser: 999 # UID for 'postgres' user in official images
+      #   runAsNonRoot: true
+      #   fsGroup: 999 # Ensure mounted volume has correct group ownership
       containers:
         - name: postgres
           image: postgres:15-alpine # Use a specific, stable image version
           imagePullPolicy: IfNotPresent # Pull if image not present locally
+          # Pod security context (alternative to Pod level)
+          # securityContext:
+          #   runAsUser: 999
+          #   runAsNonRoot: true
           ports:
-            - name: postgresql # Port name for reference
+            - name: postgresql # Port name for reference by Service targetPort
               containerPort: 5432 # Standard PostgreSQL port
               protocol: TCP
           env: # Environment variables for the container
@@ -97,6 +105,7 @@ spec:
       accessModes: [ "ReadWriteOnce" ] # Volume can be mounted RW by a single node (standard for DBs)
       resources:
         requests:
-          storage: 5Gi # Request 5 GB of persistent storage (adjust size as needed)
-      # Optional: Specify a StorageClass if required by your K8s environment
+          # !!! CRITICAL: Review and adjust storage size for production !!!
+          storage: 5Gi
+      # !!! CRITICAL: Uncomment and set the appropriate storage class for your environment !!!
       # storageClassName: "your-storage-class-name" # e.g., gp2, standard, managed-premium

@@ -6,6 +6,16 @@ Focuses on testing the interaction logic with mocked market_wallet_service
 and ledger_service components.
 
 REVISIONS:
+- 2025-05-03 (Gemini Rev 38): Standardize Imports & Patch Paths # <<< NEW REVISION
+  - FIXED: Changed imports for models, services, and exceptions in `store`,
+    `ledger`, and `notifications` apps to use absolute `backend.` paths.
+  - FIXED: Updated patching path strings (MARKET_WALLET_SERVICE_PATH, etc.)
+    to use absolute `backend.` paths.
+  - GOAL: Resolve conflicting model errors during pytest collection.
+- 2025-04-27 (Gemini Rev 37 - Applied):
+  - Fixed NameError: name 'Any' is not defined by importing Any from the typing module.
+- 2025-04-27 (Gemini Rev 36): Reviewed for Task 2.6 alignment. Confirmed tests correctly
+    mock market_wallet_service interactions. No functional changes needed.
 - 2025-04-12 (Gemini Rev 35 - Bandit Fixes):
   - B101: Replaced all `assert` statements with explicit `if not (condition): raise AssertionError(...)`
     checks to comply with Bandit B101 rule while maintaining test functionality.
@@ -16,7 +26,7 @@ REVISIONS:
     lookup during full suite runs.
   - Removed debug print statements added in Rev 33.
 - 2025-04-11 (Gemini Rev 33): Added print statements in test_broadcast_release_success to inspect
-                               mock_ledger_credit state before assertion during full suite run.
+      mock_ledger_credit state before assertion during full suite run.
 - 2025-04-11 (Gemini Rev 32 - Applied):
   - test_check_confirm_underpaid: Updated notification message assertion.
   - test_broadcast_release_success: Removed call_count assertion.
@@ -28,35 +38,37 @@ REVISIONS:
 """
 
 import pytest
-from unittest.mock import patch, MagicMock, call, ANY
+from unittest.mock import patch, MagicMock, call, ANY as MockANY # Renamed to avoid conflict with typing.Any
 from decimal import Decimal, ROUND_DOWN
-from typing import Callable, Optional, Union, Final # Added Final
+from typing import Callable, Optional, Union, Final, Any # Added Any
 
 # Django Imports
 from django.utils import timezone
 from django.core.exceptions import ValidationError as DjangoValidationError, ObjectDoesNotExist
 from django.contrib.auth import get_user_model
 from django.conf import settings # Import settings directly for access
-from django.db import transaction, IntegrityError # Added for exception handling in service code context
+from django.db import transaction, IntegrityError
+from pytest_django.fixtures import SettingsWrapper # Added for exception handling in service code context
 
 # Local Imports
+# <<< START FIX v1.1.7 / Gemini Rev 38: Use absolute backend paths >>>
 # Models
-from store.models import Order, Product, User, GlobalSettings, CryptoPayment, Category, Dispute
+from backend.store.models import Order, Product, User, GlobalSettings, CryptoPayment, Category, Dispute
 # Need Dispute.StatusChoices from Dispute model directly
-from store.models import OrderStatus as OrderStatusChoices, EscrowType, Currency as CurrencyChoices # Added EscrowType explicitly
-from ledger.models import UserBalance, LedgerTransaction
+from backend.store.models import OrderStatus as OrderStatusChoices, EscrowType, Currency as CurrencyChoices # Added EscrowType explicitly
+from backend.ledger.models import UserBalance, LedgerTransaction
 
 # Services & Exceptions
-from store.services import simple_ethereum_escrow_service as service_under_test
-from store.services import common_escrow_utils # Import the module itself for patching
-from store.services import market_wallet_service # Added for clarity
-from ledger import services as ledger_service
-from ledger.services import InsufficientFundsError, InvalidLedgerOperationError, LedgerServiceError
-from store.exceptions import EscrowError, CryptoProcessingError, PostBroadcastUpdateError, LedgerError
+from backend.store.services import simple_ethereum_escrow_service as service_under_test
+from backend.store.services import common_escrow_utils # Import the module itself for patching
+from backend.store.services import market_wallet_service # Added for clarity
+from backend.ledger import services as ledger_service
+from backend.ledger.services import InsufficientFundsError, InvalidLedgerOperationError, LedgerServiceError
+from backend.store.exceptions import EscrowError, CryptoProcessingError, PostBroadcastUpdateError, LedgerError
 # Import notification service and exception if used directly
 try:
     # We will patch create_notification where it's used in the service
-    from notifications.exceptions import NotificationError
+    from backend.notifications.exceptions import NotificationError
     # Check settings flag directly if needed, otherwise rely on service's internal check
     NOTIFICATIONS_ENABLED = getattr(settings, 'NOTIFICATIONS_ENABLED', True)
 except ImportError:
@@ -66,13 +78,14 @@ except ImportError:
     import warnings
     warnings.warn("Notifications app not found or configured. Notification calls in service will be skipped.")
 
-
-# Mocks will target these specific service modules
-MARKET_WALLET_SERVICE_PATH: Final = 'store.services.market_wallet_service'
-LEDGER_SERVICE_PATH: Final = 'ledger.services'
+# Mocks will target these specific service modules using absolute paths
+MARKET_WALLET_SERVICE_PATH: Final = 'backend.store.services.market_wallet_service'
+LEDGER_SERVICE_PATH: Final = 'backend.ledger.services'
 # Correct path for patching create_notification based on service import
-NOTIFICATION_SERVICE_PATH: Final = 'store.services.simple_ethereum_escrow_service.create_notification'
-COMMON_UTILS_PATH: Final = 'store.services.common_escrow_utils' # Path to module
+NOTIFICATION_SERVICE_PATH: Final = 'backend.store.services.simple_ethereum_escrow_service.create_notification'
+COMMON_UTILS_PATH: Final = 'backend.store.services.common_escrow_utils' # Path to module
+# <<< END FIX v1.1.7 / Gemini Rev 38 >>>
+
 
 # Test Constants
 CURRENCY: Final = 'ETH'
@@ -111,7 +124,7 @@ DjangoUser = get_user_model()
 # --- Fixtures ---
 
 @pytest.fixture(autouse=True) # Automatically apply mock settings to all tests in this file
-def mock_settings_simple_eth(settings):
+def mock_settings_simple_eth(settings: SettingsWrapper):
     """Override Django settings for simple ETH tests."""
     settings.MARKET_USER_USERNAME = MOCK_MARKET_USER_USERNAME_SE
     settings.ORDER_PAYMENT_TIMEOUT_HOURS = 4
@@ -126,7 +139,7 @@ def mock_settings_simple_eth(settings):
 
 # User Fixtures
 @pytest.fixture
-def market_user_se(db, mock_settings_simple_eth) -> DjangoUser:
+def market_user_se(db: None, mock_settings_simple_eth: Any) -> DjangoUser:
     user, _ = DjangoUser.objects.update_or_create(
         username=mock_settings_simple_eth.MARKET_USER_USERNAME, # Use the setting directly
         defaults={'is_staff': True, 'is_active': True, 'pgp_public_key': MOCK_MARKET_PGP_KEY}
@@ -135,7 +148,7 @@ def market_user_se(db, mock_settings_simple_eth) -> DjangoUser:
     return user
 
 @pytest.fixture
-def buyer_user_se(db) -> DjangoUser:
+def buyer_user_se(db: None) -> DjangoUser:
     # Use the actual attribute name if defined directly on User model, else handle via profile/other means
     # Assuming it's directly on the User model or handled by _get_withdrawal_address correctly
     # eth_wd_attr = common_escrow_utils.ATTR_ETH_WITHDRAWAL_ADDRESS # This was likely incorrect if not direct attr
@@ -150,7 +163,7 @@ def buyer_user_se(db) -> DjangoUser:
     return user
 
 @pytest.fixture
-def vendor_user_se(db) -> DjangoUser:
+def vendor_user_se(db: None) -> DjangoUser:
     # eth_wd_attr = common_escrow_utils.ATTR_ETH_WITHDRAWAL_ADDRESS # Likely incorrect if not direct attr
     user, _ = DjangoUser.objects.update_or_create(
         username=MOCK_VENDOR_USERNAME_SE,
@@ -162,13 +175,13 @@ def vendor_user_se(db) -> DjangoUser:
     return user
 
 @pytest.fixture
-def moderator_user_se(db) -> DjangoUser:
+def moderator_user_se(db: None) -> DjangoUser:
     user, _ = DjangoUser.objects.get_or_create(username=MOCK_MODERATOR_USERNAME_SE, defaults={'is_staff': True, 'is_active': True})
     return user
 
 # Generic Setup Fixtures
 @pytest.fixture
-def global_settings_se(db, market_user_se, mock_settings_simple_eth) -> GlobalSettings:
+def global_settings_se(db: None, market_user_se: Any, mock_settings_simple_eth: Any) -> GlobalSettings:
     """Ensure GlobalSettings singleton exists and is configured."""
     fee_attr_lower = f'market_fee_percentage_{CURRENCY.lower()}'
     conf_attr_lower = f'confirmations_needed_{CURRENCY.lower()}'
@@ -193,12 +206,12 @@ def global_settings_se(db, market_user_se, mock_settings_simple_eth) -> GlobalSe
     return gs
 
 @pytest.fixture
-def product_category_se(db) -> Category:
+def product_category_se(db: None) -> Category:
     category, _ = Category.objects.get_or_create(name='Simple ETH Test Category')
     return category
 
 @pytest.fixture
-def product_se(db, vendor_user_se, product_category_se) -> Product:
+def product_se(db: None, vendor_user_se: Any, product_category_se: Category) -> Product:
     """Provides a product configured for ETH."""
     prod, _ = Product.objects.update_or_create(
         name="Test Simple ETH Product", vendor=vendor_user_se, category=product_category_se,
@@ -215,7 +228,7 @@ def product_se(db, vendor_user_se, product_category_se) -> Product:
 
 # Order Creation Fixtures
 @pytest.fixture
-def create_order_se(db, buyer_user_se, vendor_user_se) -> Callable[..., Order]:
+def create_order_se(db: None, buyer_user_se: Any, vendor_user_se: Any) -> Callable[..., Order]:
     """Factory to create simple ETH orders."""
     def _create_order(product: Product, status: str = OrderStatusChoices.PENDING_PAYMENT) -> Order:
         price_native = to_atomic(product.price_eth, ETH_DECIMALS)
@@ -232,13 +245,13 @@ def create_order_se(db, buyer_user_se, vendor_user_se) -> Callable[..., Order]:
     return _create_order
 
 @pytest.fixture
-def order_pending_se(create_order_se, product_se) -> Order:
+def order_pending_se(create_order_se: Callable[..., Order], product_se: Product) -> Order:
     """Creates a simple ETH order in PENDING_PAYMENT status."""
     return create_order_se(product_se, OrderStatusChoices.PENDING_PAYMENT)
 
 # Helper fixture to simulate create_escrow's effects
 @pytest.fixture
-def setup_simple_escrow_se(db, global_settings_se) -> Callable[[Order, str], CryptoPayment]:
+def setup_simple_escrow_se(db: None, global_settings_se: GlobalSettings) -> Callable[[Order, str], CryptoPayment]:
     """Simulates the state after create_escrow runs successfully."""
     confirmations_needed = getattr(global_settings_se, f'confirmations_needed_{CURRENCY.lower()}')
     payment_wait_hours = global_settings_se.payment_wait_hours
@@ -260,7 +273,7 @@ def setup_simple_escrow_se(db, global_settings_se) -> Callable[[Order, str], Cry
     return _setup
 
 @pytest.fixture
-def order_escrow_created_se(order_pending_se, setup_simple_escrow_se) -> Order:
+def order_escrow_created_se(order_pending_se: Order, setup_simple_escrow_se: Callable[[Order, str], CryptoPayment]) -> Order:
     """Creates an order with simple escrow setup (address generated, payment record created)."""
     setup_simple_escrow_se(order_pending_se, MOCK_SIMPLE_ETH_DEPOSIT_ADDR)
     order_pending_se.refresh_from_db()
@@ -268,7 +281,7 @@ def order_escrow_created_se(order_pending_se, setup_simple_escrow_se) -> Order:
 
 # Helper fixture to simulate confirmed payment state
 @pytest.fixture
-def confirm_simple_payment_se(db, global_settings_se) -> Callable[[Order, Decimal, str, int], CryptoPayment]:
+def confirm_simple_payment_se(db: None, global_settings_se: GlobalSettings) -> Callable[[Order, Decimal, str, int], CryptoPayment]:
     """Simulates the state after check_confirm runs successfully."""
     def _confirm(order: Order, received_native: Decimal, tx_hash: str, confs: int) -> CryptoPayment:
         payment = CryptoPayment.objects.get(order=order, currency=CURRENCY)
@@ -288,7 +301,7 @@ def confirm_simple_payment_se(db, global_settings_se) -> Callable[[Order, Decima
     return _confirm
 
 @pytest.fixture
-def order_payment_confirmed_se(order_escrow_created_se, confirm_simple_payment_se, global_settings_se) -> Order:
+def order_payment_confirmed_se(order_escrow_created_se: Order, confirm_simple_payment_se: Callable[[Order, Decimal, str, int], CryptoPayment], global_settings_se: GlobalSettings) -> Order:
     """Creates an order with simple escrow payment confirmed."""
     confs_needed = getattr(global_settings_se, f'confirmations_needed_{CURRENCY.lower()}')
     confirm_simple_payment_se(
@@ -302,7 +315,7 @@ def order_payment_confirmed_se(order_escrow_created_se, confirm_simple_payment_s
 
 # Fixture to mark order shipped
 @pytest.fixture
-def mark_shipped_se(db, global_settings_se) -> Callable[[Order], Order]:
+def mark_shipped_se(db: None, global_settings_se: GlobalSettings) -> Callable[[Order], Order]:
     """Marks an order as shipped, setting deadlines."""
     dispute_window_days = global_settings_se.dispute_window_days
     order_auto_finalize_days = global_settings_se.order_auto_finalize_days
@@ -319,13 +332,13 @@ def mark_shipped_se(db, global_settings_se) -> Callable[[Order], Order]:
     return _mark
 
 @pytest.fixture
-def order_shipped_se(order_payment_confirmed_se, mark_shipped_se) -> Order:
+def order_shipped_se(order_payment_confirmed_se: Order, mark_shipped_se: Callable[[Order], Order]) -> Order:
     """Creates a simple ETH order marked as shipped."""
     return mark_shipped_se(order_payment_confirmed_se)
 
 # Fixture to mark order disputed
 @pytest.fixture
-def mark_disputed_se(db, buyer_user_se) -> Callable[[Order], Order]:
+def mark_disputed_se(db: None, buyer_user_se: Any) -> Callable[[Order], Order]:
     """Marks an order as disputed and creates a Dispute object."""
     def _mark(order: Order) -> Order:
         order.status = OrderStatusChoices.DISPUTED
@@ -337,7 +350,7 @@ def mark_disputed_se(db, buyer_user_se) -> Callable[[Order], Order]:
     return _mark
 
 @pytest.fixture
-def order_disputed_se(order_shipped_se, mark_disputed_se) -> Order:
+def order_disputed_se(order_shipped_se: Order, mark_disputed_se: Callable[[Order], Order]) -> Order:
     """Creates a simple ETH order marked as disputed."""
     return mark_disputed_se(order_shipped_se)
 
@@ -351,7 +364,7 @@ class TestSimpleEthereumEscrowService:
     # FIX: Use correct patch target and pass mock as argument
     @patch(NOTIFICATION_SERVICE_PATH, new_callable=MagicMock)
     @patch(f'{MARKET_WALLET_SERVICE_PATH}.generate_deposit_address')
-    def test_create_escrow_success(self, mock_gen_addr, mock_create_notification, order_pending_se, buyer_user_se):
+    def test_create_escrow_success(self, mock_gen_addr, mock_create_notification, order_pending_se: Order, buyer_user_se: Any):
         """Test successful creation of simple ETH escrow."""
         mock_create_notification.reset_mock() # Reset if needed
 
@@ -399,7 +412,7 @@ class TestSimpleEthereumEscrowService:
     @patch(f'{MARKET_WALLET_SERVICE_PATH}.generate_deposit_address', side_effect=CryptoProcessingError("ETH Wallet Down"))
     # FIX: Add correct notification patch target here too if create_escrow might call it on failure path (it shouldn't, but good practice)
     @patch(NOTIFICATION_SERVICE_PATH, new_callable=MagicMock)
-    def test_create_escrow_address_gen_fails(self, mock_create_notification, mock_gen_addr, order_pending_se):
+    def test_create_escrow_address_gen_fails(self, mock_create_notification, mock_gen_addr, order_pending_se: Order):
         """Test failure when market wallet address generation fails."""
         with pytest.raises(CryptoProcessingError, match="ETH Wallet Down"):
             service_under_test.create_escrow(order_pending_se)
@@ -413,7 +426,7 @@ class TestSimpleEthereumEscrowService:
         # Ensure notification wasn't called on failure
         mock_create_notification.assert_not_called()
 
-    def test_create_escrow_wrong_status(self, order_payment_confirmed_se):
+    def test_create_escrow_wrong_status(self, order_payment_confirmed_se: Order):
         """Test create_escrow fails if order status is not PENDING_PAYMENT."""
         with pytest.raises(EscrowError, match="Order must be in PENDING_PAYMENT state"):
             service_under_test.create_escrow(order_payment_confirmed_se)
@@ -427,7 +440,7 @@ class TestSimpleEthereumEscrowService:
     @patch(f'{LEDGER_SERVICE_PATH}.lock_funds')
     @patch(f'{LEDGER_SERVICE_PATH}.credit_funds')
     @patch(f'{MARKET_WALLET_SERVICE_PATH}.scan_for_deposit')
-    def test_check_confirm_success(self, mock_scan, mock_ledger_credit, mock_ledger_lock, mock_ledger_debit, mock_ledger_unlock, mock_create_notification, order_escrow_created_se, vendor_user_se, global_settings_se):
+    def test_check_confirm_success(self, mock_scan, mock_ledger_credit, mock_ledger_lock, mock_ledger_debit, mock_ledger_unlock, mock_create_notification, order_escrow_created_se: Order, vendor_user_se: Any, global_settings_se: GlobalSettings):
         """Test successful payment confirmation."""
         mock_create_notification.reset_mock()
 
@@ -474,10 +487,10 @@ class TestSimpleEthereumEscrowService:
 
         expected_eth = common_escrow_utils._convert_atomic_to_standard(received_amount, CURRENCY, None)
         # Check only the expected buyer credit call for simple escrow confirm
-        mock_ledger_credit.assert_called_once_with(user=order.buyer, currency=CURRENCY, amount=expected_eth, transaction_type=common_escrow_utils.LEDGER_TX_DEPOSIT, external_txid=MOCK_ETH_TX_HASH, related_order=order, notes=ANY)
-        mock_ledger_lock.assert_called_once_with(user=order.buyer, currency=CURRENCY, amount=expected_eth, related_order=order, notes=ANY)
-        mock_ledger_debit.assert_called_once_with(user=order.buyer, currency=CURRENCY, amount=expected_eth, transaction_type=common_escrow_utils.LEDGER_TX_ESCROW_FUND_DEBIT, related_order=order, external_txid=MOCK_ETH_TX_HASH, notes=ANY)
-        mock_ledger_unlock.assert_called_once_with(user=order.buyer, currency=CURRENCY, amount=expected_eth, related_order=order, notes=ANY)
+        mock_ledger_credit.assert_called_once_with(user=order.buyer, currency=CURRENCY, amount=expected_eth, transaction_type=common_escrow_utils.LEDGER_TX_DEPOSIT, external_txid=MOCK_ETH_TX_HASH, related_order=order, notes=MockANY)
+        mock_ledger_lock.assert_called_once_with(user=order.buyer, currency=CURRENCY, amount=expected_eth, related_order=order, notes=MockANY)
+        mock_ledger_debit.assert_called_once_with(user=order.buyer, currency=CURRENCY, amount=expected_eth, transaction_type=common_escrow_utils.LEDGER_TX_ESCROW_FUND_DEBIT, related_order=order, external_txid=MOCK_ETH_TX_HASH, notes=MockANY)
+        mock_ledger_unlock.assert_called_once_with(user=order.buyer, currency=CURRENCY, amount=expected_eth, related_order=order, notes=MockANY)
 
         # Verify notification to vendor using the passed mock
         if NOTIFICATIONS_ENABLED:
@@ -485,18 +498,18 @@ class TestSimpleEthereumEscrowService:
             call_args, call_kwargs = mock_create_notification.call_args
             # B101 Fix
             if not (call_kwargs.get('user_id') == vendor_user_se.id):
-                 raise AssertionError(f"Expected notification user_id {vendor_user_se.id}, got {call_kwargs.get('user_id')}")
+                raise AssertionError(f"Expected notification user_id {vendor_user_se.id}, got {call_kwargs.get('user_id')}")
             _message = call_kwargs.get('message', '')
             # B101 Fix
             if not ('Payment confirmed' in _message):
-                 raise AssertionError(f"Expected 'Payment confirmed' in notification message: '{_message}'")
+                raise AssertionError(f"Expected 'Payment confirmed' in notification message: '{_message}'")
         else:
             mock_create_notification.assert_not_called()
 
     # FIX: Use correct patch target and pass mock as argument
     @patch(NOTIFICATION_SERVICE_PATH, new_callable=MagicMock)
     @patch(f'{MARKET_WALLET_SERVICE_PATH}.scan_for_deposit')
-    def test_check_confirm_underpaid(self, mock_scan, mock_create_notification, order_escrow_created_se, buyer_user_se, global_settings_se):
+    def test_check_confirm_underpaid(self, mock_scan, mock_create_notification, order_escrow_created_se: Order, buyer_user_se: Any, global_settings_se: GlobalSettings):
         """Test handling of underpaid confirmation."""
         mock_create_notification.reset_mock()
 
@@ -512,24 +525,24 @@ class TestSimpleEthereumEscrowService:
 
         # B101 Fix
         if not (confirmed is False):
-             raise AssertionError(f"Expected confirmation result to be False for underpayment, got {confirmed}")
+            raise AssertionError(f"Expected confirmation result to be False for underpayment, got {confirmed}")
         order.refresh_from_db()
         payment.refresh_from_db()
         # B101 Fix
         if not (order.status == OrderStatusChoices.CANCELLED_UNDERPAID):
-             raise AssertionError(f"Expected order status {OrderStatusChoices.CANCELLED_UNDERPAID}, got {order.status}")
+            raise AssertionError(f"Expected order status {OrderStatusChoices.CANCELLED_UNDERPAID}, got {order.status}")
         # B101 Fix
         if not (order.paid_at is None):
-             raise AssertionError("Expected paid_at to be None for underpayment cancellation")
+            raise AssertionError("Expected paid_at to be None for underpayment cancellation")
         # B101 Fix
         if not (payment.is_confirmed is True):
-             raise AssertionError("Expected payment record is_confirmed to be True even if order cancelled") # Payment record confirms, but order cancels
+            raise AssertionError("Expected payment record is_confirmed to be True even if order cancelled") # Payment record confirms, but order cancels
         # B101 Fix
         if not (payment.received_amount_native == received_amount_native):
-             raise AssertionError(f"Expected payment received_amount_native {received_amount_native}, got {payment.received_amount_native}")
+            raise AssertionError(f"Expected payment received_amount_native {received_amount_native}, got {payment.received_amount_native}")
         # B101 Fix
         if not (payment.transaction_hash == MOCK_ETH_TX_HASH):
-             raise AssertionError(f"Expected payment transaction_hash '{MOCK_ETH_TX_HASH}', got '{payment.transaction_hash}'")
+            raise AssertionError(f"Expected payment transaction_hash '{MOCK_ETH_TX_HASH}', got '{payment.transaction_hash}'")
 
         # Verify notification using the passed mock
         if NOTIFICATIONS_ENABLED:
@@ -537,20 +550,20 @@ class TestSimpleEthereumEscrowService:
             call_args, call_kwargs = mock_create_notification.call_args
             # B101 Fix
             if not (call_kwargs.get('user_id') == buyer_user_se.id):
-                 raise AssertionError(f"Expected notification user_id {buyer_user_se.id}, got {call_kwargs.get('user_id')}")
+                raise AssertionError(f"Expected notification user_id {buyer_user_se.id}, got {call_kwargs.get('user_id')}")
             # FIX: Updated assertion to match actual message format
             message = call_kwargs.get('message', '')
             # B101 Fix
             if not ('< expected' in message):
-                 raise AssertionError(f"Expected '< expected' in underpayment notification message: '{message}'")
+                raise AssertionError(f"Expected '< expected' in underpayment notification message: '{message}'")
             # B101 Fix
             if not ('cancelled' in message.lower()): # Check case-insensitively
-                 raise AssertionError(f"Expected 'cancelled' in underpayment notification message: '{message}'")
+                raise AssertionError(f"Expected 'cancelled' in underpayment notification message: '{message}'")
         else:
             mock_create_notification.assert_not_called()
 
     @patch(f'{MARKET_WALLET_SERVICE_PATH}.scan_for_deposit')
-    def test_check_confirm_not_yet_confirmed(self, mock_scan, order_escrow_created_se):
+    def test_check_confirm_not_yet_confirmed(self, mock_scan, order_escrow_created_se: Order):
         """Test when scan shows payment not yet confirmed."""
         order = order_escrow_created_se
         payment = CryptoPayment.objects.get(order=order, currency=CURRENCY)
@@ -579,7 +592,7 @@ class TestSimpleEthereumEscrowService:
     @patch(f'{LEDGER_SERVICE_PATH}.credit_funds')
     @patch(f'{MARKET_WALLET_SERVICE_PATH}.initiate_market_withdrawal')
     @patch(f'{COMMON_UTILS_PATH}._get_withdrawal_address')
-    def test_broadcast_release_success(self, mock_get_wd_addr, mock_withdraw, mock_ledger_credit, mock_create_notification, mock_get_market_user, order_shipped_se, vendor_user_se, buyer_user_se, market_user_se, global_settings_se):
+    def test_broadcast_release_success(self, mock_get_wd_addr, mock_withdraw, mock_ledger_credit, mock_create_notification, mock_get_market_user, order_shipped_se: Order, vendor_user_se: Any, buyer_user_se: Any, market_user_se: Any, global_settings_se: GlobalSettings):
         """Test successful release of funds for a simple ETH order."""
         mock_create_notification.reset_mock()
         mock_ledger_credit.reset_mock(return_value=True, side_effect=True)
@@ -590,7 +603,7 @@ class TestSimpleEthereumEscrowService:
         fee_percent = getattr(global_settings_se, f'market_fee_percentage_{CURRENCY.lower()}', Decimal('0.0'))
         # B101 Fix
         if not (fee_percent > 0):
-             raise AssertionError("Test requires global_settings_se fixture to have a non-zero ETH market fee")
+            raise AssertionError("Test requires global_settings_se fixture to have a non-zero ETH market fee")
 
         mock_get_wd_addr.return_value = MOCK_VENDOR_ETH_WITHDRAWAL_ADDR
         mock_withdraw.return_value = MOCK_ETH_TX_HASH_VENDOR
@@ -599,17 +612,17 @@ class TestSimpleEthereumEscrowService:
 
         # B101 Fix
         if not (success is True):
-             raise AssertionError(f"Expected broadcast_release success to be True, got {success}")
+            raise AssertionError(f"Expected broadcast_release success to be True, got {success}")
         order.refresh_from_db()
         # B101 Fix
         if not (order.status == OrderStatusChoices.FINALIZED):
-             raise AssertionError(f"Expected order status {OrderStatusChoices.FINALIZED}, got {order.status}")
+            raise AssertionError(f"Expected order status {OrderStatusChoices.FINALIZED}, got {order.status}")
         # B101 Fix
         if not (order.finalized_at is not None):
-             raise AssertionError("Expected finalized_at timestamp to be set")
+            raise AssertionError("Expected finalized_at timestamp to be set")
         # B101 Fix
         if not (order.release_tx_broadcast_hash == MOCK_ETH_TX_HASH_VENDOR):
-             raise AssertionError(f"Expected release_tx_broadcast_hash '{MOCK_ETH_TX_HASH_VENDOR}', got '{order.release_tx_broadcast_hash}'")
+            raise AssertionError(f"Expected release_tx_broadcast_hash '{MOCK_ETH_TX_HASH_VENDOR}', got '{order.release_tx_broadcast_hash}'")
 
         total_escrowed_eth = common_escrow_utils._convert_atomic_to_standard(order.total_price_native_selected, CURRENCY, None)
         prec = common_escrow_utils._get_currency_precision(CURRENCY)
@@ -622,7 +635,7 @@ class TestSimpleEthereumEscrowService:
         # Explicitly assert calculated fee is non-zero before asserting ledger call
         # B101 Fix
         if not (market_fee_eth > 0):
-             raise AssertionError(f"Calculated market fee ({market_fee_eth}) is zero or less. Check price/fee%.")
+            raise AssertionError(f"Calculated market fee ({market_fee_eth}) is zero or less. Check price/fee%.")
 
         # Verify the utility function was called (now patched)
         mock_get_market_user.assert_called_once()
@@ -632,8 +645,8 @@ class TestSimpleEthereumEscrowService:
 
         # FIX: Removed call_count assertion, rely solely on assert_any_call
         # mock_ledger_credit call checks remain the same
-        mock_ledger_credit.assert_any_call(user=vendor_user_se, currency=CURRENCY, amount=vendor_payout_eth, transaction_type=common_escrow_utils.LEDGER_TX_ESCROW_RELEASE_VENDOR, related_order=order, external_txid=MOCK_ETH_TX_HASH_VENDOR, notes=ANY)
-        mock_ledger_credit.assert_any_call(user=market_user_se, currency=CURRENCY, amount=market_fee_eth, transaction_type=common_escrow_utils.LEDGER_TX_MARKET_FEE, related_order=order, notes=ANY)
+        mock_ledger_credit.assert_any_call(user=vendor_user_se, currency=CURRENCY, amount=vendor_payout_eth, transaction_type=common_escrow_utils.LEDGER_TX_ESCROW_RELEASE_VENDOR, related_order=order, external_txid=MOCK_ETH_TX_HASH_VENDOR, notes=MockANY)
+        mock_ledger_credit.assert_any_call(user=market_user_se, currency=CURRENCY, amount=market_fee_eth, transaction_type=common_escrow_utils.LEDGER_TX_MARKET_FEE, related_order=order, notes=MockANY)
 
         # Verify notifications using the passed mock
         if NOTIFICATIONS_ENABLED:
@@ -642,14 +655,14 @@ class TestSimpleEthereumEscrowService:
             _call_count = mock_create_notification.call_count
             if not (_call_count == 2):
                 raise AssertionError(f"Expected notification call count to be 2, got {_call_count}")
-            mock_create_notification.assert_any_call(user_id=vendor_user_se.id, level='success', message=ANY, link=ANY)
-            mock_create_notification.assert_any_call(user_id=buyer_user_se.id, level='success', message=ANY, link=ANY)
+            mock_create_notification.assert_any_call(user_id=vendor_user_se.id, level='success', message=MockANY, link=MockANY)
+            mock_create_notification.assert_any_call(user_id=buyer_user_se.id, level='success', message=MockANY, link=MockANY)
         else:
             mock_create_notification.assert_not_called()
 
     @patch(f'{MARKET_WALLET_SERVICE_PATH}.initiate_market_withdrawal', side_effect=CryptoProcessingError("ETH Withdrawal Failed"))
     @patch(f'{COMMON_UTILS_PATH}._get_withdrawal_address', return_value=MOCK_VENDOR_ETH_WITHDRAWAL_ADDR)
-    def test_broadcast_release_withdrawal_fails(self, mock_get_wd_addr, mock_withdraw, order_shipped_se):
+    def test_broadcast_release_withdrawal_fails(self, mock_get_wd_addr, mock_withdraw, order_shipped_se: Order):
         """Test release failure if market withdrawal fails."""
         order = order_shipped_se
         initial_status = order.status
@@ -671,7 +684,7 @@ class TestSimpleEthereumEscrowService:
     @patch(f'{LEDGER_SERVICE_PATH}.credit_funds', side_effect=LedgerError("DB unavailable"))
     @patch(f'{MARKET_WALLET_SERVICE_PATH}.initiate_market_withdrawal', return_value=MOCK_ETH_TX_HASH_VENDOR)
     @patch(f'{COMMON_UTILS_PATH}._get_withdrawal_address', return_value=MOCK_VENDOR_ETH_WITHDRAWAL_ADDR)
-    def test_broadcast_release_post_withdrawal_ledger_fails(self, mock_get_wd_addr, mock_withdraw, mock_ledger_credit, mock_get_market_user, order_shipped_se, market_user_se):
+    def test_broadcast_release_post_withdrawal_ledger_fails(self, mock_get_wd_addr, mock_withdraw, mock_ledger_credit, mock_get_market_user, order_shipped_se: Order, market_user_se: Any):
         """Test failure if ledger update fails *after* successful withdrawal."""
         # Ensure patched get_market_user returns correctly even if ledger fails later
         mock_get_market_user.return_value = market_user_se
@@ -708,7 +721,7 @@ class TestSimpleEthereumEscrowService:
     @patch(f'{LEDGER_SERVICE_PATH}.credit_funds')
     @patch(f'{MARKET_WALLET_SERVICE_PATH}.initiate_market_withdrawal')
     @patch(f'{COMMON_UTILS_PATH}._get_withdrawal_address')
-    def test_resolve_dispute_split_success(self, mock_get_wd_addr, mock_withdraw, mock_ledger_credit, mock_create_notification, order_disputed_se, moderator_user_se, buyer_user_se, vendor_user_se, global_settings_se):
+    def test_resolve_dispute_split_success(self, mock_get_wd_addr, mock_withdraw, mock_ledger_credit, mock_create_notification, order_disputed_se: Order, moderator_user_se: Any, buyer_user_se: Any, vendor_user_se: Any, global_settings_se: GlobalSettings):
         """Test successful dispute resolution with a split payout."""
         mock_create_notification.reset_mock()
         mock_ledger_credit.reset_mock(return_value=True, side_effect=True)
@@ -739,11 +752,11 @@ class TestSimpleEthereumEscrowService:
             raise AssertionError(f"Expected dispute resolved_by {moderator_user_se.username}, got {dispute.resolved_by.username if dispute.resolved_by else None}")
         # B101 Fix
         if not (dispute.buyer_percentage == Decimal(str(buyer_percent))):
-             raise AssertionError(f"Expected dispute buyer_percentage {Decimal(str(buyer_percent))}, got {dispute.buyer_percentage}")
+            raise AssertionError(f"Expected dispute buyer_percentage {Decimal(str(buyer_percent))}, got {dispute.buyer_percentage}")
         expected_combined_hash = f"{MOCK_ETH_TX_HASH_BUYER},{MOCK_ETH_TX_HASH_VENDOR}"
         # B101 Fix
         if not (order.release_tx_broadcast_hash == expected_combined_hash):
-             raise AssertionError(f"Expected combined release hash '{expected_combined_hash}', got '{order.release_tx_broadcast_hash}'")
+            raise AssertionError(f"Expected combined release hash '{expected_combined_hash}', got '{order.release_tx_broadcast_hash}'")
 
         total_escrowed_eth = common_escrow_utils._convert_atomic_to_standard(order.total_price_native_selected, CURRENCY, None)
         prec = common_escrow_utils._get_currency_precision(CURRENCY); quantizer = Decimal(f'1e-{prec}')
@@ -756,7 +769,7 @@ class TestSimpleEthereumEscrowService:
         # B101 Fix
         _call_count = mock_withdraw.call_count
         if not (_call_count == 2):
-             raise AssertionError(f"Expected mock_withdraw call count 2, got {_call_count}")
+            raise AssertionError(f"Expected mock_withdraw call count 2, got {_call_count}")
         calls = [
             call(currency=CURRENCY, target_address=MOCK_BUYER_ETH_WITHDRAWAL_ADDR, amount_standard=buyer_share_eth),
             call(currency=CURRENCY, target_address=MOCK_VENDOR_ETH_WITHDRAWAL_ADDR, amount_standard=vendor_share_eth)
@@ -767,10 +780,10 @@ class TestSimpleEthereumEscrowService:
         # B101 Fix
         _call_count = mock_ledger_credit.call_count
         if not (_call_count == 2):
-             raise AssertionError(f"Expected mock_ledger_credit call count 2, got {_call_count}")
+            raise AssertionError(f"Expected mock_ledger_credit call count 2, got {_call_count}")
         ledger_calls = [
-            call(user=buyer_user_se, currency=CURRENCY, amount=buyer_share_eth, transaction_type=common_escrow_utils.LEDGER_TX_DISPUTE_RESOLUTION_BUYER, related_order=order, external_txid=MOCK_ETH_TX_HASH_BUYER, notes=ANY),
-            call(user=vendor_user_se, currency=CURRENCY, amount=vendor_share_eth, transaction_type=common_escrow_utils.LEDGER_TX_DISPUTE_RESOLUTION_VENDOR, related_order=order, external_txid=MOCK_ETH_TX_HASH_VENDOR, notes=ANY)
+            call(user=buyer_user_se, currency=CURRENCY, amount=buyer_share_eth, transaction_type=common_escrow_utils.LEDGER_TX_DISPUTE_RESOLUTION_BUYER, related_order=order, external_txid=MOCK_ETH_TX_HASH_BUYER, notes=MockANY),
+            call(user=vendor_user_se, currency=CURRENCY, amount=vendor_share_eth, transaction_type=common_escrow_utils.LEDGER_TX_DISPUTE_RESOLUTION_VENDOR, related_order=order, external_txid=MOCK_ETH_TX_HASH_VENDOR, notes=MockANY)
         ]
         mock_ledger_credit.assert_has_calls(ledger_calls, any_order=True)
 
@@ -779,10 +792,10 @@ class TestSimpleEthereumEscrowService:
             # B101 Fix
             _call_count = mock_create_notification.call_count
             if not (_call_count == 2):
-                 raise AssertionError(f"Expected notification call count 2, got {_call_count}")
+                raise AssertionError(f"Expected notification call count 2, got {_call_count}")
             notify_calls = [
-                call(user_id=buyer_user_se.id, level='info', message=ANY, link=ANY),
-                call(user_id=vendor_user_se.id, level='info', message=ANY, link=ANY)
+                call(user_id=buyer_user_se.id, level='info', message=MockANY, link=MockANY),
+                call(user_id=vendor_user_se.id, level='info', message=MockANY, link=MockANY)
             ]
             mock_create_notification.assert_has_calls(notify_calls, any_order=True)
         else:
@@ -790,7 +803,7 @@ class TestSimpleEthereumEscrowService:
 
     @patch(f'{MARKET_WALLET_SERVICE_PATH}.initiate_market_withdrawal', side_effect=CryptoProcessingError("ETH Withdrawal Failed"))
     @patch(f'{COMMON_UTILS_PATH}._get_withdrawal_address', return_value=MOCK_BUYER_ETH_WITHDRAWAL_ADDR) # Only buyer withdraws
-    def test_resolve_dispute_withdrawal_fails(self, mock_get_wd_addr, mock_withdraw, order_disputed_se, moderator_user_se):
+    def test_resolve_dispute_withdrawal_fails(self, mock_get_wd_addr, mock_withdraw, order_disputed_se: Order, moderator_user_se: Any):
         """Test dispute resolution failure if a market withdrawal fails."""
         order = order_disputed_se
         initial_status = order.status
@@ -805,12 +818,12 @@ class TestSimpleEthereumEscrowService:
         dispute = Dispute.objects.get(order=order)
         # B101 Fix
         if not (order.status == initial_status): # Should remain DISPUTED
-             raise AssertionError(f"Expected order status '{initial_status}' after failure, got '{order.status}'")
+            raise AssertionError(f"Expected order status '{initial_status}' after failure, got '{order.status}'")
         # B101 Fix
         if not (dispute.status == initial_dispute_status): # Should remain PENDING
-             raise AssertionError(f"Expected dispute status '{initial_dispute_status}', got '{dispute.status}'")
+            raise AssertionError(f"Expected dispute status '{initial_dispute_status}', got '{dispute.status}'")
         # B101 Fix
         if not (order.release_tx_broadcast_hash is None):
-             raise AssertionError("Expected release_tx_broadcast_hash to be None after withdrawal failure")
+            raise AssertionError("Expected release_tx_broadcast_hash to be None after withdrawal failure")
 
 #------ End Of file-----

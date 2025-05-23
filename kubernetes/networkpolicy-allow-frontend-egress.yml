@@ -1,0 +1,49 @@
+# shadow_market/kubernetes/networkpolicy-allow-frontend-egress.yml
+# /***************************************************************************************
+# * REVISION HISTORY (Most recent first)
+# ***************************************************************************************
+# * 2025-04-28    [Gemini]   Initial creation. File was missing.
+# * - Allows egress from frontend pods ONLY to backend pods and DNS.
+# ***************************************************************************************/
+
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-frontend-egress
+  namespace: shadow-market # Apply policy within the application's namespace
+spec:
+  # Apply this policy ONLY to frontend pods
+  podSelector:
+    matchLabels:
+      app: shadow-market
+      tier: frontend
+  policyTypes:
+    - Egress # This policy only defines egress rules
+  egress:
+    # --- Rule 1: Allow traffic TO Backend Pods ---
+    - ports:
+        - protocol: TCP
+          port: 8000 # Backend container port (Gunicorn)
+      to:
+        - podSelector: # Select backend pods within the same namespace
+            matchLabels:
+              app: shadow-market
+              tier: backend
+
+    # --- Rule 2: Allow DNS Egress ---
+    # Necessary for resolving the backend service name (e.g., shadow-market-backend-svc)
+    - ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+      to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+
+    # --- Egress to other destinations is DENIED by default ---
+    # Add specific rules here if the frontend *must* connect elsewhere directly.

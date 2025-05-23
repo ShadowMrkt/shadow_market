@@ -1,6 +1,9 @@
 # backend/store/permissions.py
-# <<< ENTERPRISE GRADE REVISION: v1.1.0 - Permissions Clarity & Best Practices >>>
+# <<< ENTERPRISE GRADE REVISION: v1.1.1 - Fix TYPE_CHECKING Import Path >>> # <<< UPDATED REVISION
 # Revision Notes:
+# - v1.1.1 (2025-04-29): # <<< UPDATED DATE & NOTE
+#   - FIXED: Corrected model import path within TYPE_CHECKING block from
+#     `store.models` to `backend.store.models` for consistency.
 # - v1.1.0 (2025-04-07):
 #   - ENHANCED: Updated docstrings for object-level permissions (IsOwnerOrVendorReadOnly,
 #     IsBuyerOrVendorOfOrder, IsTicketRequesterAssigneeOrStaff) to strongly recommend using
@@ -44,8 +47,8 @@ from rest_framework.views import APIView # For type hinting view
 # Recommended approach: Use settings.AUTH_USER_MODEL string when defining FKs/M2Ms
 # and use TYPE_CHECKING block for type hints in permissions/serializers etc.
 if TYPE_CHECKING:
-    # Adjust the import path based on your project structure
-    from store.models import User as UserModelType
+    # --- FIXED IMPORT PATH ---
+    from backend.store.models import User as UserModelType
 else:
     # Provide a fallback type or Any if full model import isn't feasible/safe here
     UserModelType = Any # Or consider importing AbstractBaseUser if applicable
@@ -235,9 +238,9 @@ class IsPgpAuthenticated(permissions.BasePermission):
             try:
                 pgp_auth_time = datetime.fromisoformat(pgp_auth_timestamp_str)
             except ValueError:
-                 logger.error(f"User '{user_identifier}' access denied by IsPgpAuthenticated: Could not parse timestamp '{pgp_auth_timestamp_str}' from session key '{self.SESSION_KEY}'. Removing invalid key.")
-                 request.session.pop(self.SESSION_KEY, None)
-                 return False
+                logger.error(f"User '{user_identifier}' access denied by IsPgpAuthenticated: Could not parse timestamp '{pgp_auth_timestamp_str}' from session key '{self.SESSION_KEY}'. Removing invalid key.")
+                request.session.pop(self.SESSION_KEY, None)
+                return False
 
             # Ensure the stored time is timezone-aware for comparison with django_timezone.now()
             if not pgp_auth_time.tzinfo:
@@ -374,5 +377,30 @@ class IsTicketRequesterAssigneeOrStaff(permissions.BasePermission):
 
         # Grant access if any condition is met
         return bool(is_requester or is_assignee or is_general_staff)
+
+
+# --- Added IsBuyer Permission ---
+class IsBuyer(permissions.BasePermission):
+    """
+    Allows access only if the authenticated user is the buyer of the object.
+    Assumes the object `obj` has a `buyer` attribute linking to a user object.
+    """
+    message = 'You must be the buyer to perform this action.'
+
+    def has_object_permission(self, request: HttpRequest, view: APIView, obj: Any) -> bool:
+        """Check if the request user is the buyer of the object."""
+        user = request.user
+
+        # Must be authenticated
+        if not (user and user.is_authenticated):
+            return False
+
+        # Check if object has 'buyer' attribute
+        if not hasattr(obj, 'buyer'):
+            logger.warning(f"Object {type(obj).__name__} (PK: {getattr(obj, 'pk', 'N/A')}) lacks 'buyer' attribute for IsBuyer check.")
+            return False
+
+        # Check if user matches the buyer
+        return obj.buyer == user
 
 # --- End of Permission Classes ---

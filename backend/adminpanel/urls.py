@@ -9,16 +9,13 @@ urlpatterns = [
     path('', views.admin_dashboard, name='dashboard'),  # Main admin dashboard
     path('users/', views.user_list, name='user_list'),
     path('users/<int:user_id>/', views.user_detail, name='user_detail'),
-    path('users/<int:user_id>/ban/', views.ban_user, name='user_ban'),
-    # Consider adding unban URL here if needed (or confirm ban_user handles both)
-    # path('users/<int:user_id>/unban/', views.ban_user, name='user_unban'),
+    path('users/<int:user_id>/ban/', views.ban_user, name='user_ban'), # Handles ban/unban via POST check
 
     path('orders/', views.order_list, name='order_list'),
     path('orders/<uuid:order_id>/', views.order_detail, name='order_detail'),
     # Note: Dispute resolution handled via POST to order_detail
-    # Consider adding specific dispute action URLs if logic becomes complex
 
-    # --- VENDOR APPLICATION URLs ---
+    # --- VENDOR APPLICATION URLs (Primary Workflow) ---
     path(
         'applications/pending/', # List applications needing review
         views.vendor_application_list,
@@ -30,19 +27,18 @@ urlpatterns = [
         name='review_vendor_application'
     ),
 
-    # --- (Legacy?) Vendor Management Action URLs ---
-    # TODO: Review if these direct user actions are still needed or if they should operate via the Application model/views
-    path('users/<int:user_id>/approve-vendor/', views.approve_vendor, name='vendor_approve'),
-    path('users/<int:user_id>/reject-vendor/', views.reject_vendor, name='vendor_reject'),
-    path('users/<int:user_id>/mark-bond-paid/', views.mark_bond_paid, name='vendor_bond_paid_mark'),
-    path('users/<int:user_id>/forfeit-bond/', views.forfeit_bond, name='vendor_bond_forfeit'),
+    # --- Specific Vendor Action URLs (Manual Overrides / Post-Approval Actions) ---
+    # TODO: Review the necessity and security of these direct actions.
+    #       Ensure templates link appropriately and permissions are strict.
+    # path('users/<int:user_id>/approve-vendor/', views.approve_vendor, name='vendor_approve'), # REMOVED - Use application review view
+    # path('users/<int:user_id>/reject-vendor/', views.reject_vendor, name='vendor_reject'),    # REMOVED - Use application review view
+    path('users/<int:user_id>/mark-bond-paid/', views.mark_bond_paid, name='vendor_bond_paid_mark'), # Manual override for bond check
+    path('users/<int:user_id>/forfeit-bond/', views.forfeit_bond, name='vendor_bond_forfeit'),     # Action to seize paid bond
 
     # Owner Specific Views
     path('owner/', views.owner_dashboard, name='owner_dashboard'),
     path('owner/settings/', views.update_global_settings, name='update_settings'),
     path('owner/emergency/', views.emergency_actions, name='emergency_actions'),
 
-    # Removed old/replaced URLs are commented out below or removed entirely for clarity.
-    # path('owner/', views.owner_panel, name='owner_panel'), # Replaced by owner_dashboard
-    # path('admin/', views.admin_panel, name='admin_panel'), # Replaced by admin_dashboard
-]
+]# Note: The above URLs are designed to be descriptive and follow a RESTful pattern.
+#       Ensure that the views.py file contains the corresponding view functions.

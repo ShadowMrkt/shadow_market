@@ -5,49 +5,42 @@
 from __future__ import annotations
 
 # <<< ENTERPRISE GRADE REVISIONS >>>
+# - v1.3.4: (2025-05-04) - Improve Input Validation & Error Handling by Gemini
+#   - Enhanced `get_key_details` input validation logging to show snippet of invalid key data.
+#   - Modified `get_key_details` to catch potential `ValueError` from the external `validate_pgp_public_key`
+#     and convert it to a `PGPKeyError` for consistent error handling within the service. This aims
+#     to better handle the numerous 'Malformed block structure' errors seen in tests, potentially
+#     originating from the validator or the test data fed into it.
+#   - Added check for specific GPG import error ("no valid OpenPGP data found").
+# - v1.3.3: (2025-05-04) - Enhanced ValueError Logging by Gemini
+#   - Added detailed logging within ValueError blocks to show the problematic input values, aiding test debugging.
+# - v1.3.2: (2025-05-03) - Address Stale Pylance 'reportInvalidTypeForm' Errors by Gemini
+#   - Reviewed Pylance errors regarding `bool` in type expressions (reportInvalidTypeForm).
+#   - Confirmed `from __future__ import annotations` is present (added in v1.2.0)
+#     which correctly resolves this type of Pylance error by treating hints as strings.
+#   - Verified that the `bool` annotations at the previously reported locations are syntactically correct.
+#   - Conclusion: The reported Pylance errors were likely stale; no code changes needed.
+# - v1.3.1: (2025-05-03) - Enforced absolute imports by Gemini
+#   - Updated imports for store.models and store.validators to use 'backend.' prefix.
+#   - Aims to resolve Django model registry conflicts.
 # - v1.3.0: (2025-04-06) - Enterprise Grade Refactor by Gemini based on User Requirements
-#   - SECURITY (Initialization):
-#     - Ensured GPG_HOME directory exists, creating with 0o700 if needed, using absolute paths.
-#     - Added strict checks for presence of GPG_HOME setting (PGPConfigurationError).
-#     - Added explicit checks for runtime availability of User model and PGP validator (PGPInitializationError).
-#     - Added early GPG functionality check (list_keys) during __init__.
-#   - SECURITY (Key Handling):
-#     - Enhanced temporary key import/cleanup in get_key_details, verify_pgp_challenge, verify_action_signature,
-#       and verify_message_signature using robust finally blocks and critical logging on cleanup failure.
-#     - Ensured external validator (validate_pgp_public_key) is called in get_key_details.
-#   - SECURITY (Challenge/Response - Login & Actions):
-#     - Replaced any non-secure random generation with `secrets.token_hex` for nonces.
-#     - Implemented caching of SHA256 *hashes* of challenges, not plaintext.
-#     - Ensured cache entries are deleted *immediately* upon retrieval in verification methods to prevent replay attacks.
-#     - Implemented constant-time hash comparison (`hmac.compare_digest`) in verification methods.
-#     - Standardized clear and unambiguous challenge text format (user, timestamp, nonce, action, context).
-#     - Used specific cache keys including user ID, action, and nonce where applicable.
-#   - SECURITY (Encryption/Decryption):
-#     - Added prominent comments explaining the security implications and operational requirements of using `always_trust=True` during encryption.
-#     - Improved error handling/logging for encryption/decryption failures, including GPG status/stderr.
-#     - Added graceful handling of potential UnicodeDecodeError during decryption.
-#   - SECURITY (Signature Verification):
-#     - Added robust checks in verification methods: `verified.valid`, case-insensitive `verified.fingerprint` match, `verified.data` presence.
-#     - Added constant-time comparison of signed data hash vs. expected hash where applicable.
-#     - Updated `verify_message_signature` stub to include these checks, while still noting it needs full implementation (e.g., for detached signatures).
-#   - ROBUSTNESS & LOGGING:
-#     - Refined custom exception hierarchy (PGPError, PGPInitializationError, PGPConfigurationError, PGPKeyError, etc.).
-#     - Implemented dedicated security logging (`security_logger`) for critical auth/verification events.
-#     - Improved standard logging (`logger`) for operational details.
-#     - Maintained strict type hinting.
-#     - Ensured `_ensure_service` helper robustly checks for service availability.
+#   - SECURITY (Initialization): Ensured GPG_HOME, checks, early GPG test.
+#   - SECURITY (Key Handling): Enhanced temp key handling, external validator use.
+#   - SECURITY (Challenge/Response): Secure nonces, hashed challenges, cache deletion, constant-time compare.
+#   - SECURITY (Encryption/Decryption): `always_trust` clarification, improved error handling.
+#   - SECURITY (Signature Verification): Robust checks, constant-time compare.
+#   - ROBUSTNESS & LOGGING: Custom exceptions, security logger, type hints, _ensure_service helper.
 # - v1.2.0: (2025-04-06) - Fix GPGError AttributeError, TypeError Hint, Cleanup by Gemini
-#   - FIXED: `AttributeError: module 'gnupg' has no attribute 'GPGError'` in encrypt/decrypt methods.
-#   - ADDED: `from __future__ import annotations` to resolve Pylance type hint errors.
-#   - IMPROVED: Added `if fingerprint:` check in `get_key_details` finally block to prevent errors.
-#   - ADDED: Comments clarifying expected arguments for `verify_message_signature` due to test `TypeError`.
-#   - ADDED: Prominent TODO for `verify_message_signature` stub implementation.
+#   - FIXED: `AttributeError: module 'gnupg' has no attribute 'GPGError'`.
+#   - ADDED: `from __future__ import annotations`.
+#   - IMPROVED: Fingerprint check in `get_key_details` finally block.
+#   - ADDED: Comments for `verify_message_signature`.
+#   - ADDED: TODO for `verify_message_signature`.
 # - v1.1.0: (2025-04-06) - Add Singleton Instance and Module Wrappers by Gemini
-#   - FIXED: `AttributeError` in tests calling module-level functions.
-#   - Added a module-level instance `_pgp_service_instance` of the `PGPService` class.
-#   - Added module-level wrapper functions (`get_key_details`, `generate_pgp_challenge`, etc.)
-#   - Renamed class method `encrypt_message` to `encrypt_message_for_recipient`.
-#   - Added stub method `verify_message_signature`.
+#   - FIXED: `AttributeError` in tests.
+#   - Added module-level instance and wrapper functions.
+#   - Renamed `encrypt_message` to `encrypt_message_for_recipient`.
+#   - Added stub `verify_message_signature`.
 
 import gnupg
 import os
@@ -67,15 +60,17 @@ from django.core.exceptions import ImproperlyConfigured, ValidationError as Djan
 # --- Local Imports ---
 # Use TYPE_CHECKING to avoid circular imports but allow type hints
 if TYPE_CHECKING:
-    from store.models import User
-    from store.validators import validate_pgp_public_key
+    # Use absolute paths starting from 'backend.'
+    from backend.store.models import User
+    from backend.store.validators import validate_pgp_public_key
 
 # Explicit try/except for runtime import checks - critical for service usability
 _MODEL_VALIDATOR_AVAILABLE = False # Flag for successful import
 try:
     # These imports ARE needed at runtime for the service to function
-    from store.models import User
-    from store.validators import validate_pgp_public_key
+    # Use absolute paths starting from 'backend.'
+    from backend.store.models import User
+    from backend.store.validators import validate_pgp_public_key
     _MODEL_VALIDATOR_AVAILABLE = True
 except ImportError as e:
     # Use basic config if Django logging isn't ready
@@ -271,24 +266,36 @@ class PGPService:
             PGPInitializationError: If GPG service is unavailable.
             ValueError: If input key data is invalid.
         """
+        # v1.3.4: Enhanced logging for invalid input
         if not isinstance(public_key_data, str) or not public_key_data.strip():
-             raise ValueError("Public key data must be a non-empty string.")
+            key_snippet = repr(public_key_data[:100]) + ('...' if len(str(public_key_data)) > 100 else '') if isinstance(public_key_data, str) else 'N/A'
+            logger.warning(f"get_key_details received invalid public_key_data (type: {type(public_key_data)}, empty: {not public_key_data.strip() if isinstance(public_key_data, str) else 'N/A'}, data snippet: {key_snippet})")
+            raise ValueError("Public key data must be a non-empty string.")
 
         gpg = self._check_gpg_instance()
         fingerprint: Optional[str] = None # Store fingerprint for cleanup
 
         try:
             # 1. Validate format and basic security checks (delegated)
-            # This validator MUST raise DjangoValidationError on failure
+            # This validator MUST raise DjangoValidationError or potentially ValueError on failure
             try:
+                # Ensure the validator is actually callable
+                if not callable(validate_pgp_public_key):
+                     raise PGPInitializationError("PGP public key validator function is not callable or available.")
                 validate_pgp_public_key(public_key_data)
-            except DjangoValidationError as e:
-                logger.warning(f"PGP Key validation failed by external validator: {e}")
+            # v1.3.4: Catch ValueError as well as DjangoValidationError
+            except (DjangoValidationError, ValueError) as e:
+                key_snippet = public_key_data[:100] + ('...' if len(public_key_data) > 100 else '')
+                logger.warning(f"PGP Key validation failed by external validator: {e}. Key Snippet: {key_snippet!r}")
                 # Convert to our specific PGPKeyError
-                raise PGPKeyError(f"PGP Key validation failed: {e}") from e
+                # Add specific message for common test error
+                if 'Malformed block structure' in str(e):
+                     raise PGPKeyError(f"PGP Key validation failed (Malformed Structure - Validator): {e}") from e
+                else:
+                    raise PGPKeyError(f"PGP Key validation failed (Validator): {e}") from e
             except Exception as val_e: # Catch unexpected errors from validator
-                 logger.error(f"Unexpected error during PGP key validation call: {val_e}", exc_info=True)
-                 raise PGPKeyError(f"Unexpected error during PGP key validation: {val_e}") from val_e
+                logger.error(f"Unexpected error during PGP key validation call: {val_e}", exc_info=True)
+                raise PGPKeyError(f"Unexpected error during PGP key validation: {val_e}") from val_e
 
             # 2. Import key into GPG keyring
             import_result = gpg.import_keys(public_key_data.strip())
@@ -296,7 +303,11 @@ class PGPService:
                 stderr = getattr(import_result, 'stderr', 'N/A')
                 status = getattr(import_result, 'results', 'N/A')
                 logger.error(f"GPG key import failed. Status: {status}, Stderr: {stderr}")
-                raise PGPKeyError(f"GPG key import failed. Status: {status}")
+                # v1.3.4: Check if stderr indicates malformed key, similar to validation error
+                if 'no valid OpenPGP data found' in stderr:
+                     raise PGPKeyError(f"GPG key import failed (Malformed Structure - GPG Import): Status: {status}")
+                else:
+                    raise PGPKeyError(f"GPG key import failed. Status: {status}")
             fingerprint = import_result.fingerprints[0] # Get the fingerprint for listing and cleanup
             logger.debug(f"Successfully imported key with fingerprint: {fingerprint}")
 
@@ -331,7 +342,7 @@ class PGPService:
                     logger.debug(f"Attempted cleanup of temporary key {fingerprint}. Status: {delete_status}")
                     # Log warning if deletion status doesn't clearly indicate success or key not found
                     if 'deleted' not in delete_status.lower() and 'not found' not in delete_status.lower():
-                        logger.warning(f"GPG key deletion for {fingerprint} might not have been fully successful. Status: {delete_status}, Stderr: {getattr(delete_result, 'stderr', 'N/A')}")
+                         logger.warning(f"GPG key deletion for {fingerprint} might not have been fully successful. Status: {delete_status}, Stderr: {getattr(delete_result, 'stderr', 'N/A')}")
                 except Exception as del_e:
                     # Log aggressively if cleanup fails, as leaving keys is a risk
                     logger.error(f"CRITICAL: Failed to cleanup temporary key {fingerprint} after get_key_details: {del_e}", exc_info=True)
@@ -357,8 +368,15 @@ class PGPService:
         """
         self._check_gpg_instance() # Basic check, though GPG not directly used here
 
-        if not isinstance(user, User) or not user.pk or not hasattr(user, 'pgp_public_key') or not user.pgp_public_key:
-            raise ValueError(f"Cannot generate PGP challenge: Invalid User object or user lacks a PGP public key. User PK: {getattr(user, 'pk', 'N/A')}")
+        if not isinstance(user, User) or not user.pk:
+            # v1.3.3: Added logging
+            logger.warning(f"generate_pgp_challenge received invalid user (type: {type(user)}, pk: {getattr(user, 'pk', 'N/A')})")
+            raise ValueError("Cannot generate PGP challenge: Invalid User object.")
+        if not hasattr(user, 'pgp_public_key') or not user.pgp_public_key:
+            # v1.3.3: Added logging
+            logger.warning(f"generate_pgp_challenge called for user {user.pk} who lacks a PGP public key.")
+            # Raising ValueError as the condition prevents challenge generation
+            raise ValueError(f"Cannot generate PGP challenge: User {user.username} (ID: {user.pk}) lacks a PGP public key.")
 
         now = timezone.now()
         timestamp = now.isoformat()
@@ -414,7 +432,10 @@ class PGPService:
         gpg = self._check_gpg_instance()
 
         if not isinstance(user, User) or not user.pk or not hasattr(user, 'pgp_public_key') or not user.pgp_public_key or not signed_challenge_data:
-            raise ValueError(f"Invalid input for PGP challenge verification. User PK: {getattr(user, 'pk', 'N/A')}, Has Key: {hasattr(user, 'pgp_public_key') and bool(user.pgp_public_key)}, Has Signature: {bool(signed_challenge_data)}")
+            # v1.3.3: Added logging
+            has_key = hasattr(user, 'pgp_public_key') and bool(user.pgp_public_key) if isinstance(user, User) else False
+            logger.warning(f"verify_pgp_challenge received invalid input: UserPK={getattr(user, 'pk', 'N/A')}, HasKey={has_key}, HasSig={bool(signed_challenge_data)}")
+            raise ValueError(f"Invalid input for PGP challenge verification.")
 
         # --- Cache Handling (Critical Section) ---
         cache_key = f"{self.LOGIN_CHALLENGE_CACHE_PREFIX}{user.pk}"
@@ -438,9 +459,9 @@ class PGPService:
                 security_logger.warning(f"Failed PGP 2FA Login (Cache Miss/Expired): User '{user.username}' (ID: {user.pk}).")
                 return False # Challenge expired or was never issued
         except Exception as cache_e:
-             logger.exception(f"Error accessing or deleting PGP challenge cache for User ID {user.pk}: {cache_e}")
-             security_logger.error(f"System Error during PGP 2FA Login (Cache Access Failed): User '{user.username}' (ID: {user.pk}).")
-             return False # Treat cache errors as verification failure
+            logger.exception(f"Error accessing or deleting PGP challenge cache for User ID {user.pk}: {cache_e}")
+            security_logger.error(f"System Error during PGP 2FA Login (Cache Access Failed): User '{user.username}' (ID: {user.pk}).")
+            return False # Treat cache errors as verification failure
 
         # --- Key Import and Verification ---
         expected_fingerprint: Optional[str] = None
@@ -512,7 +533,7 @@ class PGPService:
                     delete_result = gpg.delete_keys(expected_fingerprint)
                     logger.debug(f"Attempted cleanup of verification key {expected_fingerprint} for user {user.pk}. Status: {getattr(delete_result, 'status', 'N/A')}")
                     if 'deleted' not in getattr(delete_result, 'status', '').lower() and 'not found' not in getattr(delete_result, 'status', '').lower():
-                         logger.warning(f"Verification key deletion for {expected_fingerprint} (User {user.pk}) might not have been fully successful. Status: {getattr(delete_result, 'status', 'N/A')}")
+                            logger.warning(f"Verification key deletion for {expected_fingerprint} (User {user.pk}) might not have been fully successful. Status: {getattr(delete_result, 'status', 'N/A')}")
                 except Exception as del_e:
                     logger.error(f"CRITICAL: Failed to cleanup verification key {expected_fingerprint} for user {user.pk}: {del_e}", exc_info=True)
                     # Do not raise here, allow original outcome, but log failure
@@ -543,9 +564,13 @@ class PGPService:
         self._check_gpg_instance() # Basic check
 
         if not isinstance(user, User) or not user.pk or not action_name:
-            raise ValueError(f"Invalid input for generate_action_challenge: UserPK={getattr(user, 'pk', 'N/A')}, ActionName='{action_name}'")
+            # v1.3.3: Added logging
+            logger.warning(f"generate_action_challenge received invalid input: UserPK={getattr(user, 'pk', 'N/A')}, ActionName='{action_name}'")
+            raise ValueError(f"Invalid input for generate_action_challenge")
         if context and not isinstance(context, dict):
-             raise ValueError("Context must be a dictionary or None.")
+            # v1.3.3: Added logging
+            logger.warning(f"generate_action_challenge received invalid context type: {type(context)}")
+            raise ValueError("Context must be a dictionary or None.")
 
         now = timezone.now()
         timestamp = now.isoformat()
@@ -617,7 +642,10 @@ class PGPService:
 
         # Basic input validation
         if not all([isinstance(user, User), user.pk, hasattr(user, 'pgp_public_key'), user.pgp_public_key, action_name, nonce, signature]):
-             raise ValueError(f"Invalid input for verify_action_signature: UserPK={getattr(user, 'pk', 'N/A')}, HasKey={hasattr(user, 'pgp_public_key') and bool(user.pgp_public_key)}, Action='{action_name}', Nonce={nonce}, Sig={bool(signature)}")
+            # v1.3.3: Added logging
+            has_key = hasattr(user, 'pgp_public_key') and bool(user.pgp_public_key) if isinstance(user, User) else False
+            logger.warning(f"verify_action_signature received invalid input: UserPK={getattr(user, 'pk', 'N/A')}, HasKey={has_key}, Action='{action_name}', Nonce={bool(nonce)}, Sig={bool(signature)}")
+            raise ValueError(f"Invalid input for verify_action_signature")
 
         # --- Cache Handling (Critical Section) ---
         # Retrieve Expected Hash using the unique cache key (user, action, nonce)
@@ -640,9 +668,9 @@ class PGPService:
                 security_logger.warning(f"Failed PGP Action Confirmation (Nonce Expired/Missing): User '{user.username}', Action '{action_name}'.")
                 return False
         except Exception as cache_e:
-             logger.exception(f"Error accessing or deleting PGP action cache for User {user.pk}, Action '{action_name}', Nonce {nonce}: {cache_e}")
-             security_logger.error(f"System Error during PGP Action Confirmation (Cache Access Failed): User '{user.username}', Action '{action_name}'.")
-             return False
+            logger.exception(f"Error accessing or deleting PGP action cache for User {user.pk}, Action '{action_name}', Nonce {nonce}: {cache_e}")
+            security_logger.error(f"System Error during PGP Action Confirmation (Cache Access Failed): User '{user.username}', Action '{action_name}'.")
+            return False
 
         # --- Key Import and Verification ---
         expected_fingerprint: Optional[str] = None
@@ -688,8 +716,8 @@ class PGPService:
             return True
 
         except PGPKeyError: # Handle specific key import error
-             security_logger.error(f"System Error during PGP Action Confirmation (Key Import Failed): User '{user.username}', Action '{action_name}'.")
-             raise
+            security_logger.error(f"System Error during PGP Action Confirmation (Key Import Failed): User '{user.username}', Action '{action_name}'.")
+            raise
         except Exception as e:
             logger.exception(f"Unexpected error verifying PGP action '{action_name}' for {user.username}.")
             security_logger.error(f"System Error during PGP Action Confirmation Verification: User '{user.username}', Action '{action_name}'. Error: {e}")
@@ -703,7 +731,7 @@ class PGPService:
                     delete_result = gpg.delete_keys(expected_fingerprint)
                     logger.debug(f"Attempted cleanup of action verification key {expected_fingerprint} for user {user.pk}, action '{action_name}'. Status: {getattr(delete_result, 'status', 'N/A')}")
                     if 'deleted' not in getattr(delete_result, 'status', '').lower() and 'not found' not in getattr(delete_result, 'status', '').lower():
-                         logger.warning(f"Action verification key deletion for {expected_fingerprint} (User {user.pk}, Action '{action_name}') might not have been fully successful. Status: {getattr(delete_result, 'status', 'N/A')}")
+                            logger.warning(f"Action verification key deletion for {expected_fingerprint} (User {user.pk}, Action '{action_name}') might not have been fully successful. Status: {getattr(delete_result, 'status', 'N/A')}")
                 except Exception as del_e:
                     logger.error(f"CRITICAL: Failed to cleanup action verification key {expected_fingerprint} for user {user.pk}, action '{action_name}': {del_e}", exc_info=True)
 
@@ -722,7 +750,7 @@ class PGPService:
 
         Args:
             recipient_public_key: The ASCII-armored PGP public key (used for logging/context only,
-                                   NOT used for direct import here).
+                                  NOT used for direct import here).
             recipient_fingerprint: The fingerprint of the recipient's key (must exist
                                    in the service's GPG keyring and meet trust assumptions).
             message: The plaintext message string to encrypt.
@@ -739,8 +767,12 @@ class PGPService:
         gpg = self._check_gpg_instance()
 
         if not recipient_fingerprint or not isinstance(recipient_fingerprint, str):
+            # v1.3.3: Added logging
+            logger.warning(f"encrypt_message_for_recipient received invalid recipient_fingerprint: {recipient_fingerprint!r}")
             raise ValueError("Recipient PGP fingerprint is missing or invalid.")
         if not isinstance(message, str): # GPG can encrypt empty data, so allow empty string
+            # v1.3.3: Added logging
+            logger.warning(f"encrypt_message_for_recipient received non-string message type: {type(message)}")
             raise ValueError("Message to encrypt must be a string.")
 
         try:
@@ -778,9 +810,9 @@ class PGPService:
         except Exception as e: # Catch any exception during GPG op or handling
             is_gpg_error = hasattr(gnupg, 'GPGError') and isinstance(e, gnupg.GPGError)
             if is_gpg_error:
-                logger.error(f"GPG error during encryption for key {recipient_fingerprint}: {e}")
+                 logger.error(f"GPG error during encryption for key {recipient_fingerprint}: {e}")
             else:
-                logger.exception(f"Unexpected error during PGP encryption for fingerprint {recipient_fingerprint}...")
+                 logger.exception(f"Unexpected error during PGP encryption for fingerprint {recipient_fingerprint}...")
             # Raise our custom error, chaining the original
             raise PGPEncryptionError(f"Encryption failed for fingerprint {recipient_fingerprint}: {e}") from e
 
@@ -805,6 +837,8 @@ class PGPService:
         gpg = self._check_gpg_instance()
 
         if not encrypted_message or not isinstance(encrypted_message, str):
+            # v1.3.3: Added logging
+            logger.warning(f"decrypt_message received invalid encrypted_message (type: {type(encrypted_message)}, empty: {not encrypted_message if isinstance(encrypted_message, str) else 'N/A'})")
             raise ValueError("Encrypted message is missing or invalid.")
 
         try:
@@ -845,9 +879,9 @@ class PGPService:
         except Exception as e: # Catch any exception during GPG op or handling
             is_gpg_error = hasattr(gnupg, 'GPGError') and isinstance(e, gnupg.GPGError)
             if is_gpg_error:
-                logger.error(f"GPG error during decryption: {e}")
+                 logger.error(f"GPG error during decryption: {e}")
             else:
-                logger.exception(f"Unexpected error during PGP decryption: {e}")
+                 logger.exception(f"Unexpected error during PGP decryption: {e}")
             # Raise our custom error, chaining the original
             raise PGPDecryptionError(f"Decryption failed: {e}") from e
 
@@ -883,11 +917,14 @@ class PGPService:
             ValueError: If input arguments are invalid.
             PGPVerificationError: For unexpected errors during verification steps.
         """
-        logger.debug(f"Calling verify_message_signature for User {user.pk}. NOTE: Assumes clearsigned signature format.")
+        logger.debug(f"Calling verify_message_signature for User {user.pk if user else 'None'}. NOTE: Assumes clearsigned signature format.")
         gpg = self._check_gpg_instance()
 
         if not all([isinstance(user, User), user.pk, hasattr(user, 'pgp_public_key'), user.pgp_public_key, signature, isinstance(expected_message, str)]):
-             raise ValueError("Invalid input to verify_message_signature.")
+            # v1.3.3: Added logging
+            has_key = hasattr(user, 'pgp_public_key') and bool(user.pgp_public_key) if isinstance(user, User) else False
+            logger.warning(f"verify_message_signature received invalid input: UserPK={getattr(user, 'pk', 'N/A')}, HasKey={has_key}, HasSig={bool(signature)}, ExpMsgIsStr={isinstance(expected_message, str)}")
+            raise ValueError("Invalid input to verify_message_signature.")
 
         expected_fingerprint: Optional[str] = None
         try:
@@ -937,24 +974,24 @@ class PGPService:
             return True # All checks passed
 
         except PGPKeyError: # Handle specific key import error
-             raise
+            raise
         except Exception as e:
             is_gpg_error = hasattr(gnupg, 'GPGError') and isinstance(e, gnupg.GPGError)
             if is_gpg_error:
-                logger.error(f"GPG error during message signature verification for User {user.pk}: {e}")
+                 logger.error(f"GPG error during message signature verification for User {user.pk}: {e}")
             else:
-                logger.exception(f"Unexpected error during message signature verification for User {user.pk}: {e}")
+                 logger.exception(f"Unexpected error during message signature verification for User {user.pk}: {e}")
             raise PGPVerificationError(f"Unexpected error during message signature verification for user {user.pk}: {e}") from e
             # Or return False
 
         finally:
             # Clean up key if imported
-             if expected_fingerprint and gpg:
+            if expected_fingerprint and gpg:
                 try:
                     delete_result = gpg.delete_keys(expected_fingerprint)
                     logger.debug(f"Attempted cleanup of message verification key {expected_fingerprint} for user {user.pk}. Status: {getattr(delete_result, 'status', 'N/A')}")
                     if 'deleted' not in getattr(delete_result, 'status', '').lower() and 'not found' not in getattr(delete_result, 'status', '').lower():
-                         logger.warning(f"Message verification key deletion for {expected_fingerprint} (User {user.pk}) might not have been fully successful. Status: {getattr(delete_result, 'status', 'N/A')}")
+                            logger.warning(f"Message verification key deletion for {expected_fingerprint} (User {user.pk}) might not have been fully successful. Status: {getattr(delete_result, 'status', 'N/A')}")
                 except Exception as del_e:
                     logger.error(f"CRITICAL: Failed to cleanup message verification key {expected_fingerprint} for user {user.pk}: {del_e}", exc_info=True)
 
@@ -1044,3 +1081,5 @@ def verify_message_signature(user: User, signature: str, expected_message: str) 
 def is_pgp_service_available() -> bool:
     """ Simple check to see if the PGP service initialized successfully. """
     return _pgp_service_available
+
+# --- End of file ---

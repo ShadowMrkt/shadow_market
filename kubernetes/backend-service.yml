@@ -1,6 +1,11 @@
 # shadow_market/kubernetes/backend-service.yaml
-# Revision History:
-# 2025-04-07: Initial creation. Defines the ClusterIP Service for the Backend Deployment.
+# /***************************************************************************************
+# * REVISION HISTORY (Most recent first)
+# ***************************************************************************************
+# * 2025-04-28    [Gemini]   Reviewed configuration. Added comment confirming
+# * targetPort 'http' matches named port in Deployment. No functional changes.
+# * 2025-04-07    [Original] Initial creation. Defines the ClusterIP Service for the Backend Deployment.
+# ***************************************************************************************/
 
 apiVersion: v1
 kind: Service
@@ -12,10 +17,12 @@ metadata:
     tier: backend
 spec:
   ports:
-    - port: 80                 # Port the Service will expose internally (common choice for HTTP)
-      targetPort: http         # Name of the port defined in the Backend Deployment Pod template ('http' -> 8000)
+    - port: 80                 # Port the Service exposes internally (common choice for HTTP)
+      # targetPort references the 'name' of the containerPort in the Backend Deployment pod spec.
+      # Verified that Backend Deployment defines a containerPort named 'http' targeting port 8000.
+      targetPort: http
       protocol: TCP
-      name: http               # Optional name for the port mapping
+      name: http               # Name for the port mapping, referenced by Ingress and Frontend Egress Policy
   selector:
     # Selects the Pods managed by the Backend Deployment based on their labels
     app: shadow-market

@@ -1,6 +1,18 @@
 # backend/withdraw/tests/test_withdraw_service.py
-# <<< ENTERPRISE GRADE REVISION: v1.2.0 - Refactor Imports & Fixes >>>
+# <<< ENTERPRISE GRADE REVISION: v1.3.1 - Correct Mock Targets for Withdrawals >>>
 # Revision History:
+# - v1.3.1 (2025-05-18):
+#   - FIXED: In `test_request_withdrawal_btc_success`, changed mock target from `send_to_address`
+#     to `initiate_market_withdrawal` to return the mock TX hash.
+#   - FIXED: In `test_request_withdrawal_btc_success`, updated assertion to check call against
+#     `initiate_market_withdrawal` with correct arguments.
+#   - FIXED: In `test_request_withdrawal_broadcast_fail`, changed mock target from `send_to_address.side_effect`
+#     to `initiate_market_withdrawal.side_effect` to correctly simulate broadcast failure.
+# - v1.3.0 (2025-05-03) (Gemini):
+#   - FIXED: Standardized all local application imports to use the 'backend.' prefix
+#     (e.g., 'from backend.withdraw...', 'from backend.ledger...', 'from backend.store...', 'from backend.notifications...')
+#     to resolve conflicting model/module loading errors.
+#   - FIXED: Updated paths in `@patch` decorators to match the standardized import paths.
 # - v1.2.0 (2025-04-09) (Gemini):
 #   - FIXED: Corrected import for `_get_currency_precision` to point to `common_escrow_utils`.
 #   - REMOVED: Unnecessary custom try/except ImportError handling around the helper import.
@@ -19,23 +31,22 @@ from django.core.exceptions import ObjectDoesNotExist, ValidationError as Django
 from django.utils import timezone
 import logging
 
+# <<< FIX v1.3.0: Standardize all imports to use 'backend.' prefix >>>
 # Local Imports
-from withdraw import services as withdraw_service
-from withdraw.models import WithdrawalRequest, WithdrawalStatusChoices # Assuming WithdrawalStatusChoices exists
-from withdraw.exceptions import WithdrawalError
-from ledger.models import UserBalance, LedgerTransaction
-from ledger import services as ledger_service
-from ledger.services import InsufficientFundsError, InvalidLedgerOperationError # Assuming this exists
-from ledger.exceptions import LedgerError
-from store.exceptions import CryptoProcessingError # Assuming crypto errors live here
+from backend.withdraw import services as withdraw_service
+from backend.withdraw.models import WithdrawalRequest, WithdrawalStatusChoices
+from backend.withdraw.exceptions import WithdrawalError
+from backend.ledger.models import UserBalance, LedgerTransaction
+from backend.ledger import services as ledger_service
+from backend.ledger.services import InsufficientFundsError, InvalidLedgerOperationError
+from backend.ledger.exceptions import LedgerError
+from backend.store.exceptions import CryptoProcessingError
 
-# FIX v1.2.0: Import helper from common_escrow_utils
-from store.services import common_escrow_utils
+from backend.store.services import common_escrow_utils
 
-# Import specific crypto services only if needed for mocks, not for direct calls from tests
-from store.services import bitcoin_service, monero_service
-# Import notification service if used
-from notifications import services as notification_service # Assumed import path
+from backend.store.services import bitcoin_service, monero_service
+from backend.notifications import services as notification_service
+# <<< END FIX v1.3.0 >>>
 
 User = get_user_model()
 
@@ -74,7 +85,6 @@ class TestWithdrawService:
 
     def setup_method(self, method):
         """ Reset site owner cache before each test. """
-        # Access cache via the imported service module name
         if hasattr(withdraw_service, '_site_owner_user_cache'):
             withdraw_service._site_owner_user_cache = None
 
@@ -88,27 +98,25 @@ class TestWithdrawService:
         if owner_cached != owner:
             raise AssertionError(f"Cached owner {owner_cached} != first retrieved {owner}")
 
-    # Test helper function indirectly via main service call tests
-
-    @patch('withdraw.services._get_site_owner_user') # Mock helper in withdraw.services
-    @patch('ledger.services.debit_funds')
-    @patch('ledger.services.credit_funds')
-    @patch('withdraw.services._get_crypto_service') # Mock the crypto service getter in withdraw.services
-    @patch('notifications.services.create_notification') # Mock notifications
+    @patch('backend.withdraw.services._get_site_owner_user')
+    @patch('backend.ledger.services.debit_funds')
+    @patch('backend.ledger.services.credit_funds')
+    @patch('backend.withdraw.services._get_crypto_service')
+    @patch('backend.notifications.services.create_notification')
     def test_request_withdrawal_btc_success(self, mock_create_notification, mock_get_crypto_svc, mock_ledger_credit, mock_ledger_debit, mock_get_owner, test_user_withdraw, site_owner_user, mock_settings_withdraw):
         """ Test successful BTC withdrawal request including broadcast. """
         mock_get_owner.return_value = site_owner_user
         amount = Decimal('0.5'); currency = 'BTC'; fee_perc = Decimal('5.0')
-        # FIX v1.2.0: Use imported helper
         precision = common_escrow_utils._get_currency_precision(currency)
         quantizer = Decimal(f'1e-{precision}')
-        amount = amount.quantize(quantizer, rounding=ROUND_DOWN) # Apply precision early if service expects it
+        amount = amount.quantize(quantizer, rounding=ROUND_DOWN)
         expected_fee = (amount * fee_perc / 100).quantize(quantizer, rounding=ROUND_DOWN)
         expected_net = (amount - expected_fee).quantize(quantizer, rounding=ROUND_DOWN)
 
         # Mock the crypto service returned by the getter
         mock_btc_service = MagicMock()
-        mock_btc_service.send_to_address.return_value = MOCK_TX_HASH_WITHDRAW
+        # <<< FIXED v1.3.1: Target initiate_market_withdrawal for return_value >>>
+        mock_btc_service.initiate_market_withdrawal.return_value = MOCK_TX_HASH_WITHDRAW
         mock_get_crypto_svc.return_value = mock_btc_service
 
         # Call the service function
@@ -119,7 +127,6 @@ class TestWithdrawService:
         if withdrawal_request is None: raise AssertionError("withdrawal_request is None")
         if withdrawal_request.user != test_user_withdraw: raise AssertionError("User mismatch")
         if withdrawal_request.currency != currency: raise AssertionError("Currency mismatch")
-        # Compare quantized amount if service applies it early
         if withdrawal_request.requested_amount != amount: raise AssertionError("Requested amount mismatch")
         if withdrawal_request.fee_percentage != fee_perc: raise AssertionError("Fee percentage mismatch")
         if withdrawal_request.fee_amount != expected_fee: raise AssertionError("Fee amount mismatch")
@@ -131,7 +138,7 @@ class TestWithdrawService:
 
         # Assert ledger calls
         mock_ledger_debit.assert_called_once_with(
-            user=test_user_withdraw, currency=currency, amount=amount, # Use quantized amount
+            user=test_user_withdraw, currency=currency, amount=amount,
             transaction_type=withdraw_service.LEDGER_TX_WITHDRAWAL_DEBIT,
             related_withdrawal=withdrawal_request, notes=ANY
         )
@@ -146,16 +153,18 @@ class TestWithdrawService:
 
         # Assert crypto service call
         mock_get_crypto_svc.assert_called_once_with(currency)
-        mock_btc_service.send_to_address.assert_called_once_with(
-             currency=currency, amount_standard=expected_net, address=BTC_ADDR
+        # <<< FIXED v1.3.1: Assert call against initiate_market_withdrawal >>>
+        mock_btc_service.initiate_market_withdrawal.assert_called_once_with(
+            currency=currency,
+            amount_standard=expected_net,
+            target_address=BTC_ADDR
+            # withdrawal_request_id=withdrawal_request.id # Add if your service passes this
         )
         # Assert notification preparation (actual call depends on on_commit trigger)
-        # Check if create_notification was prepared to be called
-        # In a real test environment, you might need to mock transaction.on_commit
 
-    # Example: Insufficient Funds
-    @patch('withdraw.services._get_site_owner_user')
-    @patch('ledger.services.debit_funds')
+
+    @patch('backend.withdraw.services._get_site_owner_user')
+    @patch('backend.ledger.services.debit_funds')
     def test_request_withdrawal_insufficient_funds(self, mock_ledger_debit, mock_get_owner, test_user_withdraw, site_owner_user):
         """ Test withdrawal fails cleanly if user balance is too low. """
         mock_get_owner.return_value = site_owner_user
@@ -170,42 +179,41 @@ class TestWithdrawService:
             raise AssertionError("WithdrawalRequest should not be created on insufficient funds.")
         mock_ledger_debit.assert_not_called()
 
-    # Example: Crypto Broadcast Failure
-    @patch('withdraw.services._get_site_owner_user')
-    @patch('ledger.services.debit_funds')
-    @patch('ledger.services.credit_funds')
-    @patch('withdraw.services._get_crypto_service')
-    @patch('notifications.services.create_notification')
+
+    @patch('backend.withdraw.services._get_site_owner_user')
+    @patch('backend.ledger.services.debit_funds')
+    @patch('backend.ledger.services.credit_funds')
+    @patch('backend.withdraw.services._get_crypto_service')
+    @patch('backend.notifications.services.create_notification')
     def test_request_withdrawal_broadcast_fail(self, mock_create_notification, mock_get_crypto_svc, mock_ledger_credit, mock_ledger_debit, mock_get_owner, test_user_withdraw, site_owner_user, mock_settings_withdraw):
         """ Test withdrawal fails if crypto broadcast returns error. """
         mock_get_owner.return_value = site_owner_user
         amount = Decimal('0.1'); currency = 'BTC'
-        # Quantize amount if service expects it early
         precision = common_escrow_utils._get_currency_precision(currency)
         quantizer = Decimal(f'1e-{precision}')
         amount = amount.quantize(quantizer, rounding=ROUND_DOWN)
 
         mock_btc_service = MagicMock()
         broadcast_error_msg = "RPC Timeout during broadcast"
-        mock_btc_service.send_to_address.side_effect = CryptoProcessingError(broadcast_error_msg)
+        # <<< FIXED v1.3.1: Target initiate_market_withdrawal for side_effect >>>
+        mock_btc_service.initiate_market_withdrawal.side_effect = CryptoProcessingError(broadcast_error_msg)
         mock_get_crypto_svc.return_value = mock_btc_service
 
         with pytest.raises(CryptoProcessingError, match=broadcast_error_msg):
-             withdraw_service.request_withdrawal(
-                 user=test_user_withdraw, currency=currency, amount_standard=amount, withdrawal_address=BTC_ADDR
-             )
+            withdraw_service.request_withdrawal(
+                user=test_user_withdraw, currency=currency, amount_standard=amount, withdrawal_address=BTC_ADDR
+            )
 
         pending_or_complete = WithdrawalRequest.objects.filter(
-             user=test_user_withdraw, currency=currency, requested_amount=amount
+            user=test_user_withdraw, currency=currency, requested_amount=amount
         ).exclude(status=WithdrawalStatusChoices.FAILED).exists()
 
         if pending_or_complete:
-             raise AssertionError("WithdrawalRequest should not be PENDING or COMPLETED after broadcast failure.")
+            raise AssertionError("WithdrawalRequest should not be PENDING or COMPLETED after broadcast failure.")
 
         mock_ledger_debit.assert_called()
         if (amount * mock_settings_withdraw.WITHDRAWAL_FEE_PERCENTAGE / 100) > 0:
-             mock_ledger_credit.assert_called()
-        # Check balances reverted (fetch initial balance first for accurate check)
+            mock_ledger_credit.assert_called()
         initial_balance = Decimal('1.0') # From fixture
         final_balance = UserBalance.objects.get(user=test_user_withdraw, currency=currency).balance
         if final_balance != initial_balance:

@@ -1,15 +1,23 @@
 // frontend/components/Modal.js
 // --- REVISION HISTORY ---
+// 2025-04-28: Rev 3 - [Gemini] Removed redundant event handlers (manual Escape listener, overlay onClick) causing double onClose calls. Relies solely on focus-trap-react's onDeactivate for closing.
+// 2025-04-28: Rev 2 - [Gemini] Implemented focus trapping using focus-trap-react library.
+//             - Added import for FocusTrap.
+//             - Removed manual focus useEffect hook.
+//             - Wrapped modal content div in FocusTrap component.
+//             - Configured FocusTrap activation and options.
 // 2025-04-07: Rev 1 - Migrated styles to CSS Module, added focus trap structure/recommendation.
-//           - Removed inline styles object.
-//           - Created and imported Modal.module.css.
-//           - Styled for dark theme using CSS variables.
-//           - Kept Escape key listener.
-//           - Added refs and structure/comments strongly recommending 'focus-trap-react' for accessibility.
-//           - Added comment recommending React Portals.
-//           - Added revision history block.
+//             - Removed inline styles object.
+//             - Created and imported Modal.module.css.
+//             - Styled for dark theme using CSS variables.
+//             - Kept Escape key listener.
+//             - Added refs and structure/comments strongly recommending 'focus-trap-react' for accessibility.
+//             - Added comment recommending React Portals.
+//             - Added revision history block.
 
-import React, { useEffect, useRef } from 'react';
+import React, { useRef } from 'react'; // Removed useEffect as it's no longer needed
+// <<< ADDED: Import FocusTrap >>>
+import FocusTrap from 'focus-trap-react';
 import styles from './Modal.module.css'; // Import CSS Module
 
 // Recommendation: For robust stacking context and avoiding potential CSS issues,
@@ -18,7 +26,7 @@ import styles from './Modal.module.css'; // Import CSS Module
 
 /**
  * Renders a modal dialog component.
- * Includes overlay, close button, Escape key handling, and structure for focus trapping.
+ * Includes overlay, close button, Escape key handling, and focus trapping via focus-trap-react.
  *
  * @param {object} props - Component props.
  * @param {boolean} props.isOpen - Whether the modal is currently visible.
@@ -30,120 +38,74 @@ import styles from './Modal.module.css'; // Import CSS Module
  */
 const Modal = ({ isOpen, onClose, title, children, modalId = "modal" }) => {
     const modalRef = useRef(null); // Ref for the modal content div
-    const previousFocusRef = useRef(null); // Ref to store previously focused element
 
-    // Handle Escape key press
-    useEffect(() => {
-        const handleEscape = (event) => {
-            if (event.key === 'Escape') {
-                onClose();
-            }
-        };
-
-        if (isOpen) {
-            document.addEventListener('keydown', handleEscape);
-        }
-
-        return () => document.removeEventListener('keydown', handleEscape);
-    }, [isOpen, onClose]);
-
-    // --- Accessibility: Focus Trapping ---
-    // TODO CRITICAL: Implement robust focus trapping. The code below sets up refs,
-    // but manual implementation is complex. Strongly recommend using a library like 'focus-trap-react'.
-    // Example using focus-trap-react: Wrap the inner modal div:
-    // import FocusTrap from 'focus-trap-react';
-    // ...
-    // <FocusTrap active={isOpen} focusTrapOptions={{ initialFocus: false, // Or target specific element
-    //                                                 onDeactivate: onClose,
-    //                                                 clickOutsideDeactivates: true}}>
-    //    <div ref={modalRef} className={styles.modal} onClick={handleModalClick}>...</div>
-    // </FocusTrap>
-    useEffect(() => {
-        if (isOpen) {
-             // Store the element that had focus before the modal opened
-             previousFocusRef.current = document.activeElement;
-
-             // --- Focus Trap Logic Placeholder ---
-             // Library 'focus-trap-react' handles this automatically and robustly.
-             // Manual implementation would involve:
-             // 1. Finding all focusable elements inside modalRef.current.
-             // 2. Setting initial focus (e.g., modalRef.current.focus() or first focusable element).
-             // 3. Adding a keydown listener to trap Tab/Shift+Tab within the modal.
-             // --- End Placeholder ---
-
-             // Make the modal container itself focusable if it doesn't have focusable children initially
-             if (modalRef.current && !modalRef.current.contains(document.activeElement)) {
-                modalRef.current.setAttribute('tabindex', '-1'); // Make it focusable
-                modalRef.current.focus();
-             }
-
-        } else {
-            // Return focus to the element that opened the modal when it closes
-            if (previousFocusRef.current && typeof previousFocusRef.current.focus === 'function') {
-                previousFocusRef.current.focus();
-            }
-            previousFocusRef.current = null; // Clear the ref
-        }
-
-        // Cleanup for manual focus trap listener would go here
-        return () => {
-            // Remove keydown listener if implemented manually
-        };
-    }, [isOpen]); // Rerun when isOpen changes
-
+    // --- REMOVED: Manual Escape key listener useEffect hook ---
+    // FocusTrap handles Escape key deactivation via onDeactivate below.
 
     if (!isOpen) {
         return null;
     }
 
-    // Prevent clicks inside the modal content from triggering the overlay's onClose
+    // Prevent clicks inside the modal content from triggering the overlay's onClose (via focus trap deactivation)
     const handleModalClick = (e) => {
         e.stopPropagation();
     };
 
     const titleId = `${modalId}-title`;
 
+    // Note: focus-trap-react handles click-outside-to-close via clickOutsideDeactivates and onDeactivate
+    // The FocusTrap component handles trapping focus within the inner modal div
     return (
         <div
             className={styles.overlay}
-            onClick={onClose} // Close when clicking the overlay
-            role="dialog"
+            // --- REMOVED: onClick={onClose} from overlay ---
+            // Let focus-trap-react handle clicks outside via onDeactivate
+            role="dialog" // Keep role on overlay for screen reader context if needed, or move to inner div
             aria-modal="true"
-            aria-labelledby={title ? titleId : undefined} // Only label if title exists
+            aria-labelledby={title ? titleId : undefined}
         >
-            {/* Use ref here for focus management */}
-            <div
-                ref={modalRef}
-                className={styles.modal}
-                onClick={handleModalClick} // Prevent closing when clicking inside
-                // Optional: Add aria-describedby if there's a primary descriptive element
-                // aria-describedby={`${modalId}-description`}
+            {/* <<< UPDATED: Wrap modal content in FocusTrap >>> */}
+            <FocusTrap
+                active={isOpen}
+                focusTrapOptions={{
+                    onDeactivate: onClose, // Call onClose when trap deactivates (Escape press OR click outside)
+                    clickOutsideDeactivates: true, // Allow clicking overlay to deactivate trap & trigger onDeactivate
+                    initialFocus: false, // Don't focus first element automatically
+                    fallbackFocus: () => modalRef.current // Focus modal container if no other element found
+                }}
             >
-                {/* Close Button */}
-                <button
-                    className={styles.closeButton}
-                    onClick={onClose}
-                    aria-label="Close Modal"
+                {/* The div that is visually the modal and contains all content */}
+                <div
+                    ref={modalRef}
+                    className={styles.modal}
+                    onClick={handleModalClick} // Prevent closing when clicking INSIDE modal content
+                    // Consider moving role="dialog" and aria attributes here if overlay isn't meant to be the dialog itself
                 >
-                    &times; {/* Multiplication sign used as 'X' */}
-                </button>
+                    {/* Close Button */}
+                    <button
+                        className={styles.closeButton}
+                        onClick={onClose} // Direct click on close button should still work
+                        aria-label="Close Modal"
+                    >
+                        &times; {/* Multiplication sign used as 'X' */}
+                    </button>
 
-                {/* Modal Title */}
-                {title && (
-                    <h2 className={styles.title} id={titleId}> {/* Use ID for aria-labelledby */}
-                        {title}
-                    </h2>
-                )}
+                    {/* Modal Title */}
+                    {title && (
+                        <h2 className={styles.title} id={titleId}> {/* Use ID for aria-labelledby */}
+                            {title}
+                        </h2>
+                    )}
 
-                {/* Modal Content */}
-                {children}
-            </div>
+                    {/* Modal Content */}
+                    {children}
+                </div>
+            </FocusTrap>
+            {/* <<< END UPDATE >>> */}
         </div>
     );
 };
 
 export default Modal;
 
-// TODO: Create Modal.module.css for overlay, modal, closeButton, title styles using CSS variables.
-// TODO: Implement focus trapping using 'focus-trap-react' or manually (manual implementation is complex).
 // TODO: Consider using ReactDOM.createPortal for rendering the modal outside the main app root.

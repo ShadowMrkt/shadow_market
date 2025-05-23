@@ -16,6 +16,10 @@ Compatibility requires a modern Bitcoin Core node. **Bitcoin Core version >= 23.
 """
 # <<< ENTERPRISE GRADE REVISION:
 # Revision Notes:
+# - v2.9.0 (2025-04-27): Gemini
+#   - IMPLEMENTED: `get_wallet_balance` function to retrieve total confirmed balance using RPC `getbalance`.
+#   - ADDED: Error handling for `get_wallet_balance` (RPC, conversion), raising BitcoinServiceError on conversion issues.
+#   - ADDED: Revision tracking for v2.9.0.
 # - v2.8.7 (2025-04-11): Gemini
 #   - FIXED: Broadened exception catching in `_get_market_btc_private_key` to handle
 #     `BitcoinServiceError` and its subclasses (`VaultError`, `CryptoProcessingError`, etc.)
@@ -221,7 +225,8 @@ except (ImportError, ModuleNotFoundError) as lib_err:
 # --- Type Hinting Imports (using real types if available) ---
 if TYPE_CHECKING:
     # Import dependent models only for type hinting if needed
-    from store.models import Order as OrderModelTypeHint, CryptoPayment as CryptoPaymentTypeHint, User as UserModelTypeHint, VendorApplication as VendorApplicationModelTypeHint # Added VendorApplication
+    from backend.store.models import Order as OrderModelTypeHint, CryptoPayment as CryptoPaymentTypeHint, User as UserModelTypeHint, VendorApplication as VendorApplicationModelTypeHint # <<< CORRECTED LINE
+    # ... (rest of the TYPE_CHECKING block) ...# Added VendorApplication
     # Define concrete types for better static analysis if bitcoinlib loaded
     if BITCOINLIB_AVAILABLE:
         BitcoinProxy = Proxy
@@ -293,16 +298,16 @@ else:
 # Moved User import inside TYPE_CHECKING block to avoid circular dependency if User model imports this service
 try:
     # Runtime imports
-    from store.models import Order, CryptoPayment, VendorApplication # Added VendorApplication
+    from backend.store.models import Order, CryptoPayment, VendorApplication # <<< CORRECTED LINE
     # Import User model separately for runtime checks if needed, but avoid circularity
     try:
-        from store.models import User
+        from backend.store.models import User # <<< CORRECTED LINE
         USER_MODEL_IMPORTED = True
     except ImportError:
         User = object # Dummy User class if import fails at runtime
         USER_MODEL_IMPORTED = False
 
-    from vault_integration import get_crypto_secret_from_vault
+    from vault_integration import get_crypto_secret_from_vault # Assuming vault_integration is in python path
     MODELS_AVAILABLE = True # At least Order and CryptoPayment loaded
     VAULT_AVAILABLE = callable(get_crypto_secret_from_vault)
 except ImportError as e:
@@ -1307,62 +1312,60 @@ def import_btc_address_to_node(address: str, label: str = "", rescan: bool = IMP
 # ... (end of import_btc_address_to_node function) ...
 
 
-# --- Added Placeholder for Reconciliation Task [v2.7.2 - Gemini] ---
-# TODO: Implement actual logic to get the total node wallet balance.
-#       This might involve 'getbalances', 'listunspent' aggregation, etc.
-#       depending on how the node wallet is managed (watch-only, full).
+# --- Function Added for Reconciliation Task [v2.9.0 - Gemini] ---
 def get_wallet_balance() -> Decimal:
     """
-    [Placeholder] Returns the total confirmed balance of the node's wallet.
-    Needs implementation based on node capabilities and wallet setup.
+    Returns the total confirmed balance of the node's wallet using RPC 'getbalance'.
+    This balance represents the sum of UTXOs spendable by the node's wallet.
 
     Returns:
-        Decimal: Total wallet balance in BTC.
+        Decimal: Total wallet balance in BTC, quantized to standard precision.
 
     Raises:
-        RpcError: If communication with the node fails.
-        NotImplementedError: If the actual balance retrieval logic is missing.
+        RpcError: If communication with the node fails (propagated from _make_rpc_request).
+        BitcoinServiceError: If the balance value received from the node is invalid or cannot be converted.
     """
-    log_prefix = "[get_wallet_balance(Placeholder)]"
-    logger.warning(f"{log_prefix} Called placeholder function. Needs implementation.")
+    log_prefix = "[get_wallet_balance]"
+    logger.debug(f"{log_prefix} Attempting to retrieve total wallet balance via RPC 'getbalance'...")
 
-    # --- Option 1: Raise NotImplementedError (Safer, forces implementation) ---
-    raise NotImplementedError("Actual node wallet balance retrieval is not implemented.")
+    try:
+        # Call RPC 'getbalance'. _make_rpc_request handles retries and raises RpcError on failure.
+        # The '*' argument in getbalance usually specifies the account (deprecated) or '*' for all.
+        # An empty call typically defaults to the main wallet balance. Check node docs if needed.
+        balance_result = _make_rpc_request("getbalance")
 
-    # --- Option 2: Basic 'getbalances' (Requires node wallet, might include non-escrow funds) ---
-    # try:
-    #     balances = _make_rpc_request("getbalances")
-    #     if balances and isinstance(balances, dict) and 'mine' in balances and 'trusted' in balances['mine']:
-    #         balance_btc_decimal = Decimal(str(balances['mine']['trusted']))
-    #         logger.info(f"{log_prefix} Placeholder returning 'trusted' balance: {balance_btc_decimal:.8f} BTC")
-    #         return balance_btc_decimal.quantize(BTC_DECIMAL_PLACES)
-    #     else:
-    #         logger.error(f"{log_prefix} Placeholder failed: Unexpected format from 'getbalances': {balances}")
-    #         return Decimal('0.0')
-    # except RpcError as e:
-    #     logger.error(f"{log_prefix} Placeholder failed: RPC error calling 'getbalances': {e}")
-    #     raise # Re-raise RpcError
-    # except (InvalidOperation, TypeError, ValueError, KeyError) as e:
-    #     logger.error(f"{log_prefix} Placeholder failed: Error processing 'getbalances' result: {e}")
-    #     return Decimal('0.0')
+        # Validate and convert the result
+        if balance_result is None:
+            # This case might occur if _make_rpc_request returns None instead of raising RpcError,
+            # although the current implementation raises. Handle defensively.
+            logger.error(f"{log_prefix} RPC call 'getbalance' returned None unexpectedly.")
+            raise BitcoinServiceError("Unexpected None result from getbalance RPC call.")
 
-    # --- Option 3: Basic 'listunspent' aggregation (Only works well if ONLY relevant addresses are watched) ---
-    # try:
-    #     all_unspent = _make_rpc_request("listunspent", 1) # Only confirmed
-    #     if isinstance(all_unspent, list):
-    #         total_sats = sum(btc_to_satoshis(utxo['amount']) for utxo in all_unspent if isinstance(utxo, dict) and 'amount' in utxo)
-    #         balance_btc_decimal = satoshis_to_btc(total_sats)
-    #         logger.info(f"{log_prefix} Placeholder returning balance from confirmed listunspent: {balance_btc_decimal:.8f} BTC")
-    #         return balance_btc_decimal
-    #     else:
-    #         logger.error(f"{log_prefix} Placeholder failed: Unexpected format from 'listunspent': {all_unspent}")
-    #         return Decimal('0.0')
-    # except RpcError as e:
-    #     logger.error(f"{log_prefix} Placeholder failed: RPC error calling 'listunspent': {e}")
-    #     raise
-    # except (ValidationError, InvalidOperation, TypeError, ValueError, KeyError) as e:
-    #     logger.error(f"{log_prefix} Placeholder failed: Error processing 'listunspent' result: {e}")
-    #     return Decimal('0.0')
+        # Convert to Decimal, handle potential errors
+        try:
+            balance_btc_decimal = Decimal(str(balance_result)) # Convert result (e.g., float, int) to Decimal
+            if balance_btc_decimal.is_signed():
+                logger.warning(f"{log_prefix} Node returned negative balance: {balance_btc_decimal}. Using 0.0.")
+                # This is unusual; maybe return 0 or raise error depending on desired behavior
+                return Decimal('0.0').quantize(BTC_DECIMAL_PLACES)
+
+            # Quantize to standard BTC precision
+            final_balance = balance_btc_decimal.quantize(BTC_DECIMAL_PLACES, rounding=ROUND_DOWN)
+            logger.info(f"{log_prefix} Successfully retrieved wallet balance: {final_balance:.8f} BTC")
+            return final_balance
+
+        except (InvalidOperation, TypeError, ValueError) as conversion_err:
+            logger.error(f"{log_prefix} Failed to convert balance result ('{balance_result}') to Decimal: {conversion_err}")
+            raise BitcoinServiceError(f"Invalid balance format received from node: {conversion_err}") from conversion_err
+
+    except RpcError:
+        # RpcError already logged by _make_rpc_request. Re-raise for the caller.
+        # logger.error(f"{log_prefix} RPC error calling 'getbalance': {e}") # Redundant logging
+        raise # Propagate the RpcError
+    except Exception as e:
+        # Catch any other unexpected errors during the process
+        logger.exception(f"{log_prefix} Unexpected error retrieving wallet balance: {e}")
+        raise BitcoinServiceError(f"Unexpected error retrieving wallet balance: {e}") from e
 
 
 # Updated v2.7.0: Added optional pubkey sorting

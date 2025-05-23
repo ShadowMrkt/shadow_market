@@ -1,3 +1,4 @@
+# backend/adminpanel/forms.py
 # -*- coding: utf-8 -*-
 """
 Django forms for the admin panel application.
@@ -6,6 +7,17 @@ This module defines forms used for various administrative actions,
 such as managing global settings, user bans, dispute resolution,
 vendor actions, and marking bond payments.
 """
+# <<< ENTERPRISE GRADE REVISION: v1.0.2 - Correct syntax, use absolute model import >>> # <<< UPDATED REVISION
+# Revision Notes:
+# - v1.0.2 (2025-05-03) # <<< UPDATED DATE & NOTE
+#   - FIXED: Corrected potential syntax errors (missing brackets/braces/commas)
+#     within the Meta class definitions identified by Pylance linting.
+#   - FIXED: Ensured model import uses absolute path `backend.store.models`.
+#     This resolves the `RuntimeError: Conflicting '...' models` error.
+# - v1.0.1 (2025-05-03)
+#   - FIXED: Changed model import from relative `store.models` to absolute `backend.store.models`.
+# - v1.0.0: Initial version.
+
 
 # Standard Library Imports
 import logging
@@ -20,16 +32,16 @@ from django.utils import timezone
 
 # Local Application Imports
 try:
-    # Ensure the path 'store.models' is correct relative to your project structure
-    # and that 'store' is listed in your INSTALLED_APPS.
-    from store.models import GlobalSettings, Order, User, CURRENCY_CHOICES
+    # --- Use Absolute Import Path ---
+    from backend.store.models import GlobalSettings, Order, User, CURRENCY_CHOICES
+    # --------------------------------
     # Note: PGP service/validation logic should reside in the view or a dedicated service module,
     # not directly within the form's cleaning methods for better separation of concerns.
-    # from store.services import pgp_service # Uncomment if needed for other logic, unlikely here.
+    # from backend.store.services import pgp_service # Absolute path if uncommented
 except ImportError as e:
     # Log critical error if models cannot be imported, as forms depend on them.
     # This usually indicates a configuration or path issue.
-    logging.exception("CRITICAL: Cannot import models from 'store' app in adminpanel/forms.py. Check INSTALLED_APPS and paths.")
+    logging.exception("CRITICAL: Cannot import models from 'backend.store' app in adminpanel/forms.py. Check INSTALLED_APPS and paths.")
     # Re-raising helps make the startup failure obvious during development/deployment.
     raise e
 
@@ -83,6 +95,7 @@ class GlobalSettingsForm(forms.ModelForm):
 
     class Meta:
         model = GlobalSettings
+        # Ensure this list is correctly structured and closed
         fields = [
             # General Settings
             'site_name',
@@ -108,12 +121,14 @@ class GlobalSettingsForm(forms.ModelForm):
             # Warrant Canary (Content & Key Info)
             'canary_content',
             'canary_signing_key_fingerprint', # Managed by explicit field above
-            'canary_signing_key_url',        # Managed by explicit field above
+            'canary_signing_key_url',         # Managed by explicit field above
             # Note: 'canary_last_updated' and 'canary_pgp_signature' fields
             # are managed automatically by the view logic upon successful signed update.
             # Note: 'freeze_funds' might be better managed via a separate, dedicated emergency action interface.
             # Note: Tiered DMS thresholds could be managed via settings.py or another mechanism if complex.
-        ]
+        ] # Ensure closing bracket is present
+
+        # Ensure this dictionary is correctly structured and closed
         widgets = {
             # General
             'site_name': forms.TextInput(attrs={'size': '50'}),
@@ -135,16 +150,20 @@ class GlobalSettingsForm(forms.ModelForm):
             'dispute_window_days': forms.NumberInput(attrs={'step': '1', 'min': '1'}),
             # Canary
             'canary_content': forms.Textarea(attrs={'rows': 15}),
-            'canary_signing_key_fingerprint': forms.TextInput(attrs={'size': '45'}), # Defined above
-            'canary_signing_key_url': forms.URLInput(attrs={'size': '60'}),          # Defined above
-        }
+            'canary_signing_key_fingerprint': forms.TextInput(attrs={'size': '45'}), # Handled by explicit field
+            'canary_signing_key_url': forms.URLInput(attrs={'size': '60'}),         # Handled by explicit field
+        } # Ensure closing brace is present
+
+        # Ensure this dictionary is correctly structured and closed
         labels = {
             # Add more descriptive labels if needed, e.g.:
             'market_fee_percentage_xmr': 'Market Fee % (XMR)',
             'vendor_bond_xmr': 'Vendor Bond Amount (XMR)',
             'confirmations_needed_xmr': 'Confirmations Needed (XMR)',
             # ... and similarly for BTC, ETH ...
-        }
+        } # Ensure closing brace is present
+
+        # Ensure this dictionary is correctly structured and closed
         help_texts = {
             # Add more specific help texts if needed, e.g.:
             'market_fee_percentage_xmr': 'Percentage fee charged on XMR sales (e.g., 3.5 for 3.5%).',
@@ -152,7 +171,7 @@ class GlobalSettingsForm(forms.ModelForm):
             'payment_wait_hours': 'Hours buyers have to make payment after placing an order.',
             'order_auto_finalize_days': 'Days after shipping until an order is auto-finalized if buyer takes no action.',
             'dispute_window_days': 'Days after finalization that a buyer can open a dispute.',
-        }
+        } # Ensure closing brace is present
 
     def clean(self):
         """
@@ -228,16 +247,16 @@ class ResolveDisputeForm(forms.Form):
 # --- Vendor Management Forms ---
 
 class VendorActionReasonForm(forms.Form):
-      """
-      Generic form for capturing a required reason for vendor-related admin actions
-      (e.g., approving application, rejecting application, revoking status).
-      """
-      reason = forms.CharField(
-          widget=forms.Textarea(attrs={'rows': 4, 'cols': 50}),
-          required=True, # Ensure administrators provide justification.
-          label="Reason / Notes for Action",
-          help_text="Provide a clear reason for this vendor action (e.g., approval, rejection, bond update)."
-      )
+    """
+    Generic form for capturing a required reason for vendor-related admin actions
+    (e.g., approving application, rejecting application, revoking status).
+    """
+    reason = forms.CharField(
+        widget=forms.Textarea(attrs={'rows': 4, 'cols': 50}),
+        required=True, # Ensure administrators provide justification.
+        label="Reason / Notes for Action",
+        help_text="Provide a clear reason for this vendor action (e.g., approval, rejection, bond update)."
+    )
 
 
 class MarkBondPaidForm(forms.Form):

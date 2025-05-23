@@ -2,8 +2,12 @@
 # <<< REVISED FOR ENTERPRISE GRADE: Robust Web3py, Vault Key, Basic Functions + Multi-Sig Placeholders >>>
 
 # --- Revision History ---
+# v1.1.0 (2025-05-03): # <<< NEW REVISION >>>
+#   - FIXED: Standardized local imports ('store.models', 'ledger.models', 'store.validators')
+#     to use the 'backend.' prefix, resolving conflicting model errors.
+# ------------------------
 # 2025-04-11 (Gemini Rev 11): Added placeholder for create_eth_multisig_contract function
-#                              to resolve AttributeError during testing of ethereum_escrow_service.
+#                           to resolve AttributeError during testing of ethereum_escrow_service.
 # ... (Previous revisions from user file) ...
 # - 2025-04-09 (The Void): v1.24.0 - Detailed Skeleton Implementation.
 # <<< END REVISION HISTORY >>>
@@ -13,6 +17,7 @@ import time
 import secrets # <<< ADDED: For placeholder generation >>>
 from decimal import Decimal, InvalidOperation, ROUND_DOWN # <<< ADDED: ROUND_DOWN >>>
 from typing import Optional, Dict, Tuple, List, Any
+import datetime # Added for revision date
 
 # --- Django Imports ---
 from django.conf import settings
@@ -27,11 +32,14 @@ try:
         TransactionNotFound, InvalidAddress, ContractLogicError, BadFunctionCallOutput,
         # Add other specific web3 exceptions you might catch
     )
+    # <<< ADDED: eth-account import >>>
+    # <<< SECURITY NOTE: Ensure eth-account version is up-to-date >>>
+    from eth_account import Account # Needed for key handling / address derivation
     WEB3_AVAILABLE = True
 except ImportError:
     logging.basicConfig() # Ensure logging is configured even if Django isn't fully loaded yet
     logger_init = logging.getLogger(__name__)
-    logger_init.critical("CRITICAL: web3.py library not installed. Ethereum functionality disabled. `pip install web3`")
+    logger_init.critical("CRITICAL: web3.py or eth-account library not installed. Ethereum functionality disabled. `pip install web3 eth-account`")
     WEB3_AVAILABLE = False
     # Define dummies/stubs if library is missing to prevent NameErrors later
     # <<< REFINED DUMMY: Define expected exceptions explicitly >>>
@@ -64,32 +72,44 @@ except ImportError:
         def from_wei(self, *args, **kwargs): return Decimal('0') # Added kwargs
         def to_wei(self, *args, **kwargs): return 0 # Added dummy to_wei
 
+    class DummyAccount: # Dummy for eth-account
+        @staticmethod
+        def from_key(*args, **kwargs): return type('DummyEthAccount', (object,), {'address': '0xDummyAccountAddress'})()
+
     Web3 = DummyWeb3()
     geth_poa_middleware = None
     TransactionNotFound = Web3.exceptions.TransactionNotFound
     InvalidAddress = Web3.exceptions.InvalidAddress
     ContractLogicError = Web3.exceptions.ContractLogicError
     BadFunctionCallOutput = Web3.exceptions.BadFunctionCallOutput
+    Account = DummyAccount # Assign dummy Account class
 
 # --- Local Imports ---
+# <<< FIX v1.1.0: Use backend. prefix for all local imports >>>
 try:
     # <<< BEST PRACTICE: Use more specific types if possible instead of Any >>>
-    from store.models import Order, CryptoPayment, User, GlobalSettings
-    from ledger.models import LedgerTransaction
+    # from store.models import Order, CryptoPayment, User, GlobalSettings # OLD
+    from backend.store.models import Order, CryptoPayment, User, GlobalSettings # FIXED
+    # from ledger.models import LedgerTransaction # OLD
+    from backend.ledger.models import LedgerTransaction # FIXED
     # <<< CHANGE: Use standardized Vault import for key handling >>>
     # Use absolute import from the 'backend' root
     # >>>>> CORRECTED IMPORT: Changed function name <<<<<
-    from vault_integration import get_crypto_secret_from_vault
+    from backend.vault_integration import get_crypto_secret_from_vault # Assuming vault_integration is at backend level
     # >>>>> REMOVED STRAY LINES that followed the import <<<<<
     # <<< CHANGE: Import validator for Ethereum addresses >>>
-    from store.validators import validate_ethereum_address
+    # from store.validators import validate_ethereum_address # OLD
+    from backend.store.validators import validate_ethereum_address # FIXED
     MODELS_AVAILABLE = True
     # >>>>> CORRECTED CHECK: Check the newly imported function name <<<<<
     VAULT_AVAILABLE = callable(get_crypto_secret_from_vault) # Check if it's callable
 except ImportError as e:
-    logging.basicConfig()
-    logger_init = logging.getLogger(__name__)
-    logger_init.critical(f"CRITICAL: Failed to import models/vault/validator in ethereum_service.py: {e}")
+    # Reduce noise during test collection if models are expected to be missing sometimes
+    # Log critically only if truly unexpected
+    if not getattr(settings, 'IGNORE_MISSING_MODEL_IMPORTS', False): # Add setting flag if needed
+        logging.basicConfig()
+        logger_init = logging.getLogger(__name__)
+        logger_init.critical(f"CRITICAL: Failed to import models/vault/validator in ethereum_service.py: {e}")
     # Define dummies
     # <<< REFINED DUMMIES: Use dummy classes/types >>>
     Order = type('DummyOrder', (object,), {})
@@ -133,6 +153,12 @@ GNOSIS_SAFE_SINGLETON_ADDRESS = getattr(settings, 'GNOSIS_SAFE_SINGLETON_ADDRESS
 GNOSIS_SAFE_FACTORY_ABI = '[{"inputs":[],"stateMutability":"nonpayable","type":"constructor"}]' # Placeholder ABI
 GNOSIS_SAFE_PROXY_ABI = '[{"inputs":[],"stateMutability":"nonpayable","type":"constructor"}]' # Placeholder ABI
 GNOSIS_SAFE_EXEC_TX_ABI = '[{"inputs":[],"stateMutability":"nonpayable","type":"constructor"}]' # Placeholder ABI
+
+# <<< Added missing settings lookups >>>
+NODE_URL = getattr(settings, 'ETHEREUM_NODE_URL', None)
+CHAIN_ID = getattr(settings, 'ETHEREUM_CHAIN_ID', None)
+NODE_REQUEST_TIMEOUT = getattr(settings, 'ETHEREUM_NODE_TIMEOUT', 60) # Default timeout
+
 
 # --- Custom Exceptions ---
 class EthereumServiceError(Exception):
@@ -426,7 +452,7 @@ def estimate_gas_price(buffer_percentage: int = 10) -> Optional[int]:
 # <<< CRITICAL WARNING: The following functions are conceptual placeholders. >>>
 # <<< Implementing secure Gnosis Safe multi-sig requires deep expertise in: >>>
 # <<<   - Smart contract interaction (ABIs, encoding, event parsing)       >>>
-# <<<   - Off-chain signature collection and verification (EIP-712)        >>>
+# <<<   - Off-chain signature collection and verification (EIP-712)         >>>
 # <<<   - Gas estimation, transaction relaying, and nonce management       >>>
 # <<<   - Secure deployment/verification of factory/singleton contracts    >>>
 # <<<   - Thorough auditing of both off-chain logic and related contracts. >>>
@@ -692,8 +718,8 @@ def process_withdrawal(user: 'User', amount_eth: Decimal, address: str) -> Tuple
         return True, tx_hash_hex
 
     except (ImportError, RuntimeError) as lib_err: # Catch missing Account class
-         logger.error(f"ETH withdrawal failed for U:{username} due to missing library: {lib_err}")
-         return False, None
+        logger.error(f"ETH withdrawal failed for U:{username} due to missing library: {lib_err}")
+        return False, None
     except InsufficientFundsError as ife:
         # Already logged critically. Return False to indicate failure.
         logger.error(f"Withdrawal failed for U:{username} due to insufficient market funds.")
@@ -937,5 +963,44 @@ def process_escrow_release(order: 'Order', vendor_address: str, payout_eth: Deci
 
     # The calling function needs to handle DB updates (e.g., marking order as released/paid) based on this result.
     return success, tx_hash
+
+# --- Added for Interface Compliance ---
+# <<< BEST PRACTICE: Implement all methods expected by the interface >>>
+def get_market_hot_wallet_balance() -> Decimal:
+    """
+    Returns the balance of the configured market hot wallet address in ETH.
+    """
+    w3 = _get_w3()
+    if not w3 or not MARKET_ETH_EXPECTED_ADDRESS:
+        logger.warning(f"Cannot get market ETH balance. Web3 unavailable or MARKET_ETH_HOT_WALLET_ADDRESS not set.")
+        return Decimal('0.0')
+    try:
+        checksum_address = w3.to_checksum_address(MARKET_ETH_EXPECTED_ADDRESS)
+        balance_wei = w3.eth.get_balance(checksum_address)
+        balance_eth = wei_to_eth(balance_wei)
+        logger.info(f"Market ETH Hot Wallet ({checksum_address}) Balance: {balance_eth:.18f} ETH")
+        return balance_eth
+    except InvalidAddress:
+        logger.error(f"Invalid market ETH address configured: {MARKET_ETH_EXPECTED_ADDRESS}")
+        return Decimal('0.0')
+    except Exception as e:
+        logger.exception(f"Failed to get market ETH balance for address {MARKET_ETH_EXPECTED_ADDRESS}: {e}")
+        return Decimal('0.0')
+
+
+def check_address(address: str) -> bool:
+    """Checks if an ETH address is valid."""
+    w3 = _get_w3()
+    if not w3:
+        logger.warning("Web3 not available, cannot perform full ETH address check.")
+        # Basic check if web3 unavailable
+        return isinstance(address, str) and address.startswith('0x') and len(address) == 42
+    return w3.is_address(address)
+
+
+# <<< BEST PRACTICE: Ensure all functions needed by CryptoServiceInterface are defined >>>
+# Other potential methods if implementing a standard interface:
+# def get_transaction(txid: str) -> Optional[Dict]: ...
+# def get_confirmations(txid: str) -> Optional[int]: ...
 
 #-----End Of File-----

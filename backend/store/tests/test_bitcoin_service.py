@@ -3,6 +3,12 @@
 Enterprise Grade Test Suite for the store.services.bitcoin_service module.
 """
 # Revision History:
+# - v2.9.21 (2025-05-03): Standardize Imports by Gemini # <<< NEW REVISION
+#   - FIXED: Changed `from store.models import ...` to `from backend.store.models import ...`.
+#   - FIXED: Changed `from ledger.models import ...` to `from backend.ledger.models import ...`.
+#   - FIXED: Changed `from store.services import ...` to `from backend.store.services import ...`.
+#   - FIXED: Changed `from store.services.bitcoin_service import ...` to `from backend.store.services.bitcoin_service import ...`.
+#   - GOAL: Resolve `Conflicting 'globalsettings' models` error by ensuring consistent absolute import paths.
 # - v2.9.20 (2025-04-11): Remove Debug Code by Gemini
 #   - REMOVED: Debug print statements from test file (setup/teardown/failing tests).
 #   - REMOVED: Explicit function restoration logic (`_original_get_market_key_func`
@@ -91,9 +97,11 @@ from django.test import override_settings # Removed in v2.9.14 as override wasn'
 MAX_GET_RESULTS = 21
 
 try:
-    from store.models import Order, CryptoPayment, GlobalSettings, Product, Category # LedgerTransaction needed for escrow tests
+    # <<< START FIX v2.9.21: Use absolute backend path >>>
+    from backend.store.models import Order, CryptoPayment, GlobalSettings, Product, Category # LedgerTransaction needed for escrow tests
     # FIX v2.9.4: Import LedgerTransaction if needed by escrow tests later
-    from ledger.models import LedgerTransaction
+    from backend.ledger.models import LedgerTransaction
+    # <<< END FIX v2.9.21 >>>
     MODELS_AVAILABLE_FOR_TEST = True
 except ImportError:
     print("WARNING: Failed to import store models for bitcoin service tests.")
@@ -121,9 +129,11 @@ class InsufficientFundsError(Exception): pass
 
 # --- Local Imports ---
 # Import the service after potentially defining mocks
-from store.services import bitcoin_service
+# <<< START FIX v2.9.21: Use absolute backend path >>>
+from backend.store.services import bitcoin_service
 # <<< START FIX v2.9.12: Import custom ValidationError >>>
-from store.services.bitcoin_service import ValidationError
+from backend.store.services.bitcoin_service import ValidationError
+# <<< END FIX v2.9.21 >>>
 # <<< END FIX v2.9.12 >>>
 
 # <<< REMOVED v2.9.20: No longer need original function reference >>>
@@ -475,7 +485,9 @@ def mock_order(db, mock_product):
 
 @pytest.fixture
 def mock_rpc_proxy():
-    patch_target = 'store.services.bitcoin_service._get_rpc_proxy'
+    # <<< START FIX v2.9.21: Use absolute backend path >>>
+    patch_target = 'backend.store.services.bitcoin_service._get_rpc_proxy'
+    # <<< END FIX v2.9.21 >>>
     with patch(patch_target) as mock_get_proxy:
         mock_instance = MagicMock(name='MockRPCProxyInstance'); mock_instance.getnetworkinfo.return_value = {"version": "mock_node"}; mock_instance.call = MagicMock(name='call')
         mock_get_proxy.return_value = mock_instance
@@ -483,7 +495,9 @@ def mock_rpc_proxy():
 
 @pytest.fixture
 def mock_rpc_request():
-    with patch('store.services.bitcoin_service._make_rpc_request', autospec=True) as mock_func:
+    # <<< START FIX v2.9.21: Use absolute backend path >>>
+    with patch('backend.store.services.bitcoin_service._make_rpc_request', autospec=True) as mock_func:
+    # <<< END FIX v2.9.21 >>>
         yield mock_func
 
 # --- Test Class for Bitcoin Service ---
@@ -558,8 +572,10 @@ class TestBitcoinService:
     # --- Test Secure Key Retrieval ---
 
     # <<< START REFACTOR v2.9.19: Simplify patching >>>
-    @patch('store.services.bitcoin_service.get_crypto_secret_from_vault') # Still needed if helper logic runs elsewhere
-    @patch('store.services.bitcoin_service._get_named_btc_private_key_from_vault') # Patch helper directly
+    # <<< START FIX v2.9.21: Use absolute backend path >>>
+    @patch('backend.store.services.bitcoin_service.get_crypto_secret_from_vault') # Still needed if helper logic runs elsewhere
+    @patch('backend.store.services.bitcoin_service._get_named_btc_private_key_from_vault') # Patch helper directly
+    # <<< END FIX v2.9.21 >>>
     def test_get_market_btc_private_key_success(self, mock_get_named_key, mock_get_secret_outer):
         # Note: mock_get_secret_outer is the vault mock, mock_get_named_key is the helper mock
 
@@ -571,8 +587,10 @@ class TestBitcoinService:
         # Configure the mocked HELPER function to return our mock key
         mock_get_named_key.return_value = mock_key_instance
 
-        with patch('store.services.bitcoin_service.VAULT_AVAILABLE', True), \
-             patch('store.services.bitcoin_service.BITCOINLIB_AVAILABLE', True):
+        # <<< START FIX v2.9.21: Use absolute backend path >>>
+        with patch('backend.store.services.bitcoin_service.VAULT_AVAILABLE', True), \
+             patch('backend.store.services.bitcoin_service.BITCOINLIB_AVAILABLE', True):
+        # <<< END FIX v2.9.21 >>>
 
             # Call the main function. It should call the mocked helper.
             key_obj = bitcoin_service._get_market_btc_private_key()
@@ -594,8 +612,10 @@ class TestBitcoinService:
 
         # Test caching
         mock_get_named_key.reset_mock()
-        with patch('store.services.bitcoin_service.VAULT_AVAILABLE', True), \
-             patch('store.services.bitcoin_service.BITCOINLIB_AVAILABLE', True):
+        # <<< START FIX v2.9.21: Use absolute backend path >>>
+        with patch('backend.store.services.bitcoin_service.VAULT_AVAILABLE', True), \
+             patch('backend.store.services.bitcoin_service.BITCOINLIB_AVAILABLE', True):
+        # <<< END FIX v2.9.21 >>>
             key_obj_2 = bitcoin_service._get_market_btc_private_key() # Should hit cache
 
         if key_obj_2 is not key_obj: # Ensure cached object is returned
@@ -605,7 +625,9 @@ class TestBitcoinService:
     # --- CONTINUATION of backend/store/tests/test_bitcoin_service.py --- (CHUNK 2)
 
     # FIX v2.9.4: Added patch for BITCOINLIB_AVAILABLE
-    @patch('store.services.bitcoin_service.get_crypto_secret_from_vault')
+    # <<< START FIX v2.9.21: Use absolute backend path >>>
+    @patch('backend.store.services.bitcoin_service.get_crypto_secret_from_vault')
+    # <<< END FIX v2.9.21 >>>
     def test_get_market_btc_private_key_vault_fail(self, mock_get_secret):
         # NOTE v2.9.20: This test should now pass cleanly.
         mock_get_secret.return_value = None # Simulate vault failure
@@ -615,8 +637,10 @@ class TestBitcoinService:
         raised_exception = None
         try:
             # Patch both VAULT and BITCOINLIB_AVAILABLE
-            with patch('store.services.bitcoin_service.VAULT_AVAILABLE', True), \
-                 patch('store.services.bitcoin_service.BITCOINLIB_AVAILABLE', True): # Ensure lib check passes
+            # <<< START FIX v2.9.21: Use absolute backend path >>>
+            with patch('backend.store.services.bitcoin_service.VAULT_AVAILABLE', True), \
+                 patch('backend.store.services.bitcoin_service.BITCOINLIB_AVAILABLE', True): # Ensure lib check passes
+            # <<< END FIX v2.9.21 >>>
                 key_obj = bitcoin_service._get_market_btc_private_key()
         except Exception as e:
             raised_exception = e
@@ -644,7 +668,9 @@ class TestBitcoinService:
              raise AssertionError("Cache should be None after vault failure path execution")
 
     # FIX v2.9.4: Corrected patching context (added BITCOINLIB_AVAILABLE=True)
-    @patch('store.services.bitcoin_service.get_crypto_secret_from_vault')
+    # <<< START FIX v2.9.21: Use absolute backend path >>>
+    @patch('backend.store.services.bitcoin_service.get_crypto_secret_from_vault')
+    # <<< END FIX v2.9.21 >>>
     def test_get_market_btc_private_key_invalid_wif(self, mock_get_secret):
         # NOTE v2.9.20: This test should now pass cleanly.
         invalid_wif = "InvalidWIFNotBase58"
@@ -664,19 +690,23 @@ class TestBitcoinService:
             valid_mock_secret.key = valid_mock_key
             return valid_mock_secret
 
-        target_secret_path = 'store.services.bitcoin_service.CBitcoinSecret' # nosec B105
+        # <<< START FIX v2.9.21: Use absolute backend path >>>
+        target_secret_path = 'backend.store.services.bitcoin_service.CBitcoinSecret' # nosec B105
+        # <<< END FIX v2.9.21 >>>
 
         # <<< REMOVED v2.9.20: Debug code removed >>>
         key_obj = None
         raised_exception = None
         try:
             # Patches needed for this specific test's scenario
-            with patch('store.services.bitcoin_service.VAULT_AVAILABLE', True), \
-                 patch('store.services.bitcoin_service.BITCOINLIB_AVAILABLE', True), \
+            # <<< START FIX v2.9.21: Use absolute backend path >>>
+            with patch('backend.store.services.bitcoin_service.VAULT_AVAILABLE', True), \
+                 patch('backend.store.services.bitcoin_service.BITCOINLIB_AVAILABLE', True), \
                  patch(target_secret_path, side_effect=mock_secret_constructor_side_effect, create=True) as mock_secret_in_service, \
-                 patch('store.services.bitcoin_service.security_logger') as mock_sec_logger_context, \
-                 patch('store.services.bitcoin_service.logger') as mock_std_logger, \
-                 patch('store.services.bitcoin_service.CBitcoinSecretError', new=CBitcoinSecretError):
+                 patch('backend.store.services.bitcoin_service.security_logger') as mock_sec_logger_context, \
+                 patch('backend.store.services.bitcoin_service.logger') as mock_std_logger, \
+                 patch('backend.store.services.bitcoin_service.CBitcoinSecretError', new=CBitcoinSecretError):
+            # <<< END FIX v2.9.21 >>>
 
                 key_obj = bitcoin_service._get_market_btc_private_key()
 
@@ -712,15 +742,17 @@ class TestBitcoinService:
             log_args, log_kwargs = mock_sec_logger_context.critical.call_args
             expected_fragments = ["invalid format", "error processing", "cbitcoinsecreterror"]
             if not any(frag in log_args[0].lower() for frag in expected_fragments):
-                    raise AssertionError(f"Critical log message '{log_args[0]}' missing expected content about invalid WIF.")
+                 raise AssertionError(f"Critical log message '{log_args[0]}' missing expected content about invalid WIF.")
             if log_kwargs.get('exc_info') is not False:
-                    raise AssertionError("Log kwargs missing 'exc_info=False'")
+                 raise AssertionError("Log kwargs missing 'exc_info=False'")
 
 
     # --- Test RPC Calls ---
-    @patch('store.services.bitcoin_service.logger')
-    @patch('store.services.bitcoin_service.BITCOINLIB_AVAILABLE', True)
-    @patch('store.services.bitcoin_service._make_rpc_request')
+    # <<< START FIX v2.9.21: Use absolute backend path >>>
+    @patch('backend.store.services.bitcoin_service.logger')
+    @patch('backend.store.services.bitcoin_service.BITCOINLIB_AVAILABLE', True)
+    @patch('backend.store.services.bitcoin_service._make_rpc_request')
+    # <<< END FIX v2.9.21 >>>
     def test_estimate_fee_rate_success(self, mock_rpc_request, mock_logger):
         mock_rpc_request.return_value = {"feerate": "0.00012345", "blocks": 6}
         fee_rate = bitcoin_service.estimate_fee_rate(conf_target=6)
@@ -729,9 +761,11 @@ class TestBitcoinService:
         mock_rpc_request.assert_called_once_with("estimatesmartfee", 6, "CONSERVATIVE")
         mock_logger.error.assert_not_called()
 
-    @patch('store.services.bitcoin_service.logger')
-    @patch('store.services.bitcoin_service.BITCOINLIB_AVAILABLE', True)
-    @patch('store.services.bitcoin_service._make_rpc_request')
+    # <<< START FIX v2.9.21: Use absolute backend path >>>
+    @patch('backend.store.services.bitcoin_service.logger')
+    @patch('backend.store.services.bitcoin_service.BITCOINLIB_AVAILABLE', True)
+    @patch('backend.store.services.bitcoin_service._make_rpc_request')
+    # <<< END FIX v2.9.21 >>>
     def test_estimate_fee_rate_below_minimum(self, mock_rpc_request, mock_logger, settings):
         min_sats_vbyte_setting = Decimal(settings.BITCOIN_MIN_FEERATE_SATS_VBYTE)
         low_fee_btc_kvb_str = "0.00000500"
@@ -748,9 +782,11 @@ class TestBitcoinService:
         if not volatility_warning_found: mock_logger.warning.assert_not_called()
         mock_logger.error.assert_not_called()
 
-    @patch('store.services.bitcoin_service.logger')
-    @patch('store.services.bitcoin_service.BITCOINLIB_AVAILABLE', True)
-    @patch('store.services.bitcoin_service._make_rpc_request')
+    # <<< START FIX v2.9.21: Use absolute backend path >>>
+    @patch('backend.store.services.bitcoin_service.logger')
+    @patch('backend.store.services.bitcoin_service.BITCOINLIB_AVAILABLE', True)
+    @patch('backend.store.services.bitcoin_service._make_rpc_request')
+    # <<< END FIX v2.9.21 >>>
     def test_estimate_fee_rate_rpc_fail(self, mock_rpc_request, mock_logger, settings):
         actual_min_sats_vbyte_setting = settings.BITCOIN_MIN_FEERATE_SATS_VBYTE
         actual_min_sats_vbyte = Decimal(actual_min_sats_vbyte_setting)
@@ -763,9 +799,11 @@ class TestBitcoinService:
         mock_logger.error.assert_called_once()
         mock_logger.warning.assert_called()
 
-    @patch('store.services.bitcoin_service.logger')
-    @patch('store.services.bitcoin_service.BITCOINLIB_AVAILABLE', True)
-    @patch('store.services.bitcoin_service._make_rpc_request')
+    # <<< START FIX v2.9.21: Use absolute backend path >>>
+    @patch('backend.store.services.bitcoin_service.logger')
+    @patch('backend.store.services.bitcoin_service.BITCOINLIB_AVAILABLE', True)
+    @patch('backend.store.services.bitcoin_service._make_rpc_request')
+    # <<< END FIX v2.9.21 >>>
     def test_estimate_fee_rate_rpc_error_no_feerate(self, mock_rpc_request, mock_logger, settings):
         actual_min_sats_vbyte_setting = settings.BITCOIN_MIN_FEERATE_SATS_VBYTE
         actual_min_sats_vbyte = Decimal(actual_min_sats_vbyte_setting)
@@ -780,23 +818,27 @@ class TestBitcoinService:
 
 
     # --- Test Multi-Sig Address Creation ---
-    @patch('store.services.bitcoin_service.logger')
-    @patch('store.services.bitcoin_service.BITCOINLIB_AVAILABLE', False)
+    # <<< START FIX v2.9.21: Use absolute backend path >>>
+    @patch('backend.store.services.bitcoin_service.logger')
+    @patch('backend.store.services.bitcoin_service.BITCOINLIB_AVAILABLE', False)
+    # <<< END FIX v2.9.21 >>>
     def test_create_btc_multisig_address_stub_no_lib(self, mock_logger):
         pks_hex = [TEST_BUYER_PUBKEY_HEX, TEST_VENDOR_PUBKEY_HEX, TEST_MARKET_PUBKEY_ALT_HEX]
         result = bitcoin_service.create_btc_multisig_address(pubkeys_hex=pks_hex, threshold=2)
         if result is not None: raise AssertionError(f"Expected result to be None, got {result}")
         mock_logger.error.assert_called_once_with("[create_btc_taproot_msig_addr] Bitcoinlib unavailable.")
 
-    @patch('store.services.bitcoin_service.logger')
-    @patch('store.services.bitcoin_service.BITCOINLIB_AVAILABLE', True)
-    @patch('store.services.bitcoin_service.CPubKey', new=MockCPubKey)
-    @patch('store.services.bitcoin_service.x', new=bitcoin_test_obj_base.core.x)
-    @patch('store.services.bitcoin_service.OP_N', new=bitcoin_test_obj_base.core.script.OP_N)
-    @patch('store.services.bitcoin_service.OP_CHECKMULTISIG', new=bitcoin_test_obj_base.core.script.OP_CHECKMULTISIG)
-    @patch('store.services.bitcoin_service.CScript', new=MockCScript)
-    @patch('store.services.bitcoin_service.TaprootScriptPath', new=MockTaprootScriptPath)
-    @patch('store.services.bitcoin_service.P2TRBitcoinAddress', new=MockP2TRBitcoinAddress)
+    # <<< START FIX v2.9.21: Use absolute backend path >>>
+    @patch('backend.store.services.bitcoin_service.logger')
+    @patch('backend.store.services.bitcoin_service.BITCOINLIB_AVAILABLE', True)
+    @patch('backend.store.services.bitcoin_service.CPubKey', new=MockCPubKey)
+    @patch('backend.store.services.bitcoin_service.x', new=bitcoin_test_obj_base.core.x)
+    @patch('backend.store.services.bitcoin_service.OP_N', new=bitcoin_test_obj_base.core.script.OP_N)
+    @patch('backend.store.services.bitcoin_service.OP_CHECKMULTISIG', new=bitcoin_test_obj_base.core.script.OP_CHECKMULTISIG)
+    @patch('backend.store.services.bitcoin_service.CScript', new=MockCScript)
+    @patch('backend.store.services.bitcoin_service.TaprootScriptPath', new=MockTaprootScriptPath)
+    @patch('backend.store.services.bitcoin_service.P2TRBitcoinAddress', new=MockP2TRBitcoinAddress)
+    # <<< END FIX v2.9.21 >>>
     def test_create_btc_multisig_address_stub_lib_available_mocked(self, mock_logger, settings):
         pks_hex = [TEST_BUYER_PUBKEY_HEX, TEST_VENDOR_PUBKEY_HEX, TEST_MARKET_PUBKEY_ALT_HEX]
         threshold = settings.MULTISIG_SIGNATURES_REQUIRED
@@ -817,8 +859,10 @@ class TestBitcoinService:
         mock_logger.error.assert_not_called()
 
     @pytest.mark.parametrize("invalid_keys_tuple", [ [], [TEST_BUYER_PUBKEY_HEX] ], ids=["empty_list", "too_few_keys"])
-    @patch('store.services.bitcoin_service.logger')
-    @patch('store.services.bitcoin_service.BITCOINLIB_AVAILABLE', True)
+    # <<< START FIX v2.9.21: Use absolute backend path >>>
+    @patch('backend.store.services.bitcoin_service.logger')
+    @patch('backend.store.services.bitcoin_service.BITCOINLIB_AVAILABLE', True)
+    # <<< END FIX v2.9.21 >>>
     def test_create_btc_multisig_address_stub_invalid_input(self, mock_logger, invalid_keys_tuple, settings):
         keys = list(invalid_keys_tuple)
         result = bitcoin_service.create_btc_multisig_address(pubkeys_hex=keys, threshold=2)
@@ -829,8 +873,10 @@ class TestBitcoinService:
 
 
     # --- Test PSBT Preparation (Stub) ---
-    @patch('store.services.bitcoin_service.logger')
-    @patch('store.services.bitcoin_service.BITCOINLIB_AVAILABLE', False)
+    # <<< START FIX v2.9.21: Use absolute backend path >>>
+    @patch('backend.store.services.bitcoin_service.logger')
+    @patch('backend.store.services.bitcoin_service.BITCOINLIB_AVAILABLE', False)
+    # <<< END FIX v2.9.21 >>>
     def test_prepare_btc_multisig_tx_stub_no_lib(self, mock_logger, mock_order):
         outputs_dict = {MOCK_RECIPIENT_ADDRESS: MOCK_AMOUNT_SATS}
         result = bitcoin_service.prepare_btc_multisig_tx(mock_order, outputs_dict, 50000)
@@ -839,32 +885,40 @@ class TestBitcoinService:
         mock_logger.error.assert_called_once_with(f"{log_prefix} Dependencies unavailable.")
 
     # --- Test PSBT Signing (Stub) ---
-    @patch('store.services.bitcoin_service.logger')
-    @patch('store.services.bitcoin_service.BITCOINLIB_AVAILABLE', False)
+    # <<< START FIX v2.9.21: Use absolute backend path >>>
+    @patch('backend.store.services.bitcoin_service.logger')
+    @patch('backend.store.services.bitcoin_service.BITCOINLIB_AVAILABLE', False)
+    # <<< END FIX v2.9.21 >>>
     def test_sign_btc_multisig_tx_stub_no_lib(self, mock_logger):
         result = bitcoin_service.sign_btc_multisig_tx(MOCK_PSBT_UNSIGNED)
         if result is not None: raise AssertionError(f"Expected None, got {result}")
         mock_logger.error.assert_called_once_with("[sign_btc_taproot_psbt] Bitcoinlib unavailable.")
 
     # --- Test PSBT Finalization (Stub) ---
-    @patch('store.services.bitcoin_service.logger')
-    @patch('store.services.bitcoin_service.BITCOINLIB_AVAILABLE', False)
+    # <<< START FIX v2.9.21: Use absolute backend path >>>
+    @patch('backend.store.services.bitcoin_service.logger')
+    @patch('backend.store.services.bitcoin_service.BITCOINLIB_AVAILABLE', False)
+    # <<< END FIX v2.9.21 >>>
     def test_finalize_btc_psbt_stub_no_lib(self, mock_logger):
         result = bitcoin_service.finalize_btc_psbt(MOCK_PSBT_FULLY_SIGNED)
         if result is not None: raise AssertionError(f"Expected None, got {result}")
         mock_logger.error.assert_called_once_with("[finalize_btc_psbt] Bitcoinlib unavailable.")
 
     # --- Test Transaction Broadcasting (Stub) ---
-    @patch('store.services.bitcoin_service.logger')
-    @patch('store.services.bitcoin_service.BITCOINLIB_AVAILABLE', False)
+    # <<< START FIX v2.9.21: Use absolute backend path >>>
+    @patch('backend.store.services.bitcoin_service.logger')
+    @patch('backend.store.services.bitcoin_service.BITCOINLIB_AVAILABLE', False)
+    # <<< END FIX v2.9.21 >>>
     def test_broadcast_btc_tx_stub_no_lib(self, mock_logger):
         result = bitcoin_service.broadcast_btc_tx(MOCK_FINAL_RAW_TX_HEX)
         if result is not None: raise AssertionError(f"Expected None, got {result}")
         mock_logger.error.assert_called_once_with("[broadcast_btc_tx] Bitcoinlib unavailable.")
 
     # --- Test Orchestration (Stub) ---
-    @patch('store.services.bitcoin_service.logger')
-    @patch('store.services.bitcoin_service.BITCOINLIB_AVAILABLE', False)
+    # <<< START FIX v2.9.21: Use absolute backend path >>>
+    @patch('backend.store.services.bitcoin_service.logger')
+    @patch('backend.store.services.bitcoin_service.BITCOINLIB_AVAILABLE', False)
+    # <<< END FIX v2.9.21 >>>
     def test_finalize_and_broadcast_btc_release_stub_no_lib(self, mock_logger, mock_order):
         result = bitcoin_service.finalize_and_broadcast_btc_release(mock_order, MOCK_PSBT_FULLY_SIGNED)
         if result is not None: raise AssertionError(f"Expected None, got {result}")
@@ -880,9 +934,11 @@ class TestBitcoinService:
         with pytest.raises(NotImplementedError):
             bitcoin_service.process_escrow_release(order_id=456, address="dummy_addr", amount_btc=Decimal("0.2"))
 
-    @patch('store.services.bitcoin_service.logger')
-    @patch('store.services.bitcoin_service.BITCOINLIB_AVAILABLE', False)
-    @patch('store.services.bitcoin_service.MODELS_AVAILABLE', True)
+    # <<< START FIX v2.9.21: Use absolute backend path >>>
+    @patch('backend.store.services.bitcoin_service.logger')
+    @patch('backend.store.services.bitcoin_service.BITCOINLIB_AVAILABLE', False)
+    @patch('backend.store.services.bitcoin_service.MODELS_AVAILABLE', True)
+    # <<< END FIX v2.9.21 >>>
     def test_scan_for_payment_confirmation_stub_no_lib(self, mock_logger, mock_order):
         try:
             payment = mock_order.cryptopayment_set.get(currency='BTC')
@@ -894,7 +950,5 @@ class TestBitcoinService:
         if result is not expected_stub_result: raise AssertionError(f"Expected None, got {result}")
         mock_logger.error.assert_any_call(f"[scan_for_payment_conf(Pay:{payment.id})] Dependencies unavailable (bitcoinlib or models).")
 
-# --- END OF CHUNK 2 ---
-# --- CONTINUATION of backend/store/tests/test_bitcoin_service.py --- (CHUNK 3 - FINAL)
-
+# --- END OF CHUNK 3 ---
 # --- END OF FILE ---

@@ -6,12 +6,20 @@ Handles orders where the market controls the funds during escrow via market_wall
 Interacts with ledger_service for internal accounting.
 
 REVISIONS:
+- 2025-05-03 (Gemini Rev 12): Standardized internal project imports for 'notifications' and 'ledger'
+                                to use absolute paths starting with 'backend.' to resolve
+                                conflicting model errors.
+- 2025-04-27 (Gemini Rev 9): Reviewed for Task 2.6 (Implement/Verify Basic ETH Escrow Flow).
+                                Confirmed that the service correctly uses market_wallet_service
+                                functions (generate_deposit_address, scan_for_deposit,
+                                initiate_market_withdrawal) for ETH operations. No functional
+                                changes required for this task.
 - 2025-04-11 (Gemini Rev 8): Added debug logging inside broadcast_release before market fee ledger call
-                            to help diagnose persistent test failure (test_broadcast_release_success).
+                                to help diagnose persistent test failure (test_broadcast_release_success).
 - 2025-04-11 (Gemini Rev 7): Reviewed notification and ledger calls against test failures.
-                            Confirmed necessary calls exist in production code. Failures likely
-                            due to test patching targets (notifications) or test data/assertions
-                            (ledger market fee). Added comments for clarity. No functional changes.
+                                Confirmed necessary calls exist in production code. Failures likely
+                                due to test patching targets (notifications) or test data/assertions
+                                (ledger market fee). Added comments for clarity. No functional changes.
 - 2025-04-11 (Gemini): Initial Implementation based on guide and simple service templates.
     - Created core functions: create_escrow, check_confirm, broadcast_release, resolve_dispute.
     - Integrated calls to market_wallet_service (for address generation, scanning, withdrawal)
@@ -31,7 +39,7 @@ from django.conf import settings
 from django.core.exceptions import ValidationError as DjangoValidationError, ObjectDoesNotExist
 from datetime import timedelta
 
-# Local Imports
+# Local Imports (Relative imports within store app are OK)
 # Service handling market wallet crypto ops (Assumed to be implemented or mocked)
 from . import market_wallet_service
 # Shared helpers and constants
@@ -41,21 +49,22 @@ from . import common_escrow_utils
 # from . import ethereum_service # Or rely on fallback in common_escrow_utils._convert_atomic_to_standard
 # Import specific validators if needed, or rely on common_escrow_utils calling them
 from ..validators import validate_ethereum_address
-# Core models
+# Core models (Relative import within store app is OK)
 from ..models import Order, CryptoPayment, User, GlobalSettings, Product, Dispute
-# Use the inner class for status choices for clarity
+# Use the inner class for status choices for clarity (Relative import within store app is OK)
 from ..models import OrderStatus as OrderStatusChoices, EscrowType
-# Custom exceptions
+# Custom exceptions (Relative import within store app is OK)
 from ..exceptions import EscrowError, CryptoProcessingError, PostBroadcastUpdateError
-# Import ledger service and exceptions
-from ledger import services as ledger_service
-from ledger.services import InsufficientFundsError, InvalidLedgerOperationError
-from ledger.exceptions import LedgerError
 
-# --- Import Notification Service ---
+# --- Import External App Services/Exceptions (Use backend.*) ---
+from backend.ledger import services as ledger_service # FIXED Import Path
+from backend.ledger.services import InsufficientFundsError, InvalidLedgerOperationError # FIXED Import Path
+from backend.ledger.exceptions import LedgerError # FIXED Import Path
+
+# --- Import Notification Service (Use backend.*) ---
 try:
-    from notifications.services import create_notification
-    from notifications.exceptions import NotificationError
+    from backend.notifications.services import create_notification # FIXED Import Path
+    from backend.notifications.exceptions import NotificationError # FIXED Import Path
     NOTIFICATIONS_ENABLED = True
 except ImportError:
     logger_init = logging.getLogger(__name__)
@@ -68,7 +77,7 @@ except ImportError:
 
 
 if TYPE_CHECKING:
-    from ..models import GlobalSettings as GlobalSettingsModel
+    from ..models import GlobalSettings as GlobalSettingsModel # Relative import within store app is OK
     from django.contrib.auth.models import AbstractUser
     UserModel = AbstractUser
 
@@ -210,9 +219,9 @@ def create_escrow(order: 'Order') -> None:
                     create_notification(user_id=buyer.id, level='info', message=message, link=order_url)
                     logger.info(f"{log_prefix}: Sent 'ready for payment' notification to Buyer {buyer.username}.")
             except NotificationError as notify_e:
-                logger.error(f"{log_prefix}: Failed to create 'ready for payment' notification: {notify_e}", exc_info=True)
+                 logger.error(f"{log_prefix}: Failed to create 'ready for payment' notification: {notify_e}", exc_info=True)
             except Exception as notify_e:
-                logger.error(f"{log_prefix}: Unexpected error sending 'ready for payment' notification: {notify_e}", exc_info=True)
+                 logger.error(f"{log_prefix}: Unexpected error sending 'ready for payment' notification: {notify_e}", exc_info=True)
         else:
             logger.info(f"{log_prefix}: Notification sending is disabled or unavailable.")
         # --- End notification ---
@@ -366,9 +375,9 @@ def check_confirm(payment_id: Any) -> bool:
 
         # 1. Credit Buyer
         if net_deposit_eth > Decimal('0.0'):
-              ledger_service.credit_funds(user=buyer, currency=CURRENCY_CODE, amount=net_deposit_eth,
-                  transaction_type=common_escrow_utils.LEDGER_TX_DEPOSIT,
-                  external_txid=external_txid, related_order=order, notes=ledger_deposit_notes)
+             ledger_service.credit_funds(user=buyer, currency=CURRENCY_CODE, amount=net_deposit_eth,
+                 transaction_type=common_escrow_utils.LEDGER_TX_DEPOSIT,
+                 external_txid=external_txid, related_order=order, notes=ledger_deposit_notes)
 
         # 3. Lock Funds
         logger.debug(f"{log_prefix}: Locking {expected_order_eth} {CURRENCY_CODE} from Buyer {buyer.username}")

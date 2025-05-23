@@ -1,41 +1,25 @@
 # backend/store/tests/test_monero_service.py
-# <<< Revision 8: Fix Pylance syntax error >>>
-# --- REFINED FOR ENTERPRISE GRADE ---
-# Revision Notes:
-# - v1.2.19 (Current - 2025-04-08):
+
+# --- Revision History ---
+# v1.2.21 (2025-05-12): Gemini Rev 16
+#   - FIXED: Modified `TestSettingHelper.test_get_setting_required_missing` to use
+#            `self.assertLogs()` for more reliable logger assertion, replacing
+#            `unittest.mock.patch` for this specific test case.
+# v1.2.20 (2025-05-03): Gemini Rev 15
+#   - FIXED: Standardized all local application imports (store, ledger, vault_integration)
+#            to use absolute paths starting with `backend.` (or just `vault_integration` if top-level)
+#            to resolve conflicting model loading errors (`globalsettings`).
+# v1.2.19 (2025-04-08):
 #   - FIXED: Corrected Python syntax error "Expected indented block" on line 1402 by adding indentation
 #            within the preceding `with self.assertRaisesRegex(...)` block.
 # - v1.2.18 (2025-04-08):
 #   - SECURITY: Suppressed Bandit B105 (hardcoded_password_string) findings for dummy test passwords
 #               DUMMY_TEST_WALLET_PASSWORD (line ~91) and DUMMY_TEST_RPC_PASSWORD (line ~92) as they
 #               are clearly marked test data (# nosec B105).
-# Revision 1.2.17: Addressed Bandit security warnings.
-#   - FIXED: [B105] Replaced hardcoded test wallet password string with a constant DUMMY_TEST_WALLET_PASSWORD.
-#   - FIXED: [B106] Replaced hardcoded test RPC password string in override_settings with a constant DUMMY_TEST_RPC_PASSWORD. (Apr 8, 2025).
-# Revision 1.2.16: Resolved widespread test failures caused by mock RPC helper.
-#   - FIXED: _mock_rpc_side_effect helper: Removed erroneous `{"result": ...}` wrapper around successful mock results. _make_rpc_request handles this internally. This fixes numerous None/False/AttributeError/CryptoProcessingError failures across multiple test classes.
-#   - FIXED: TestMakeRpcRequest.test_rpc_invalid_json_response: Adjusted expected regex to match the actual exception message being caught by the service's generic exception handler in this scenario.
-#   - VERIFIED: Fixes for TestConversionUtilities and TestScanForPayment (int amount) from R15 retained. Filter call count issue in Scan tests should now be resolved by fixing the RPC helper. (Apr 5, 2025).
-# Revision 1.2.15: Fixed final test failures based on service code logic.
-#   - FIXED: TestConversionUtilities.test_piconero_to_xmr_invalid_type: Changed input in second assertion to `None` to correctly trigger expected TypeError. Removed redundant assertions.
-#   - FIXED: TestScanForPayment tests (scan_success_confirmed, scan_found_not_enough_confirmations, scan_found_not_enough_amount, scan_found_tx_already_processed): Corrected mocked RPC "amount" field to be an integer (piconero) instead of Decimal, resolving filter mock call count errors. (Apr 5, 2025).
-# Revision 1.2.14: Corrected remaining test failures:
-#   - Fixed scan test assertions based on service logic (ledger check timing).
-#   - Corrected dispute/lifecycle mock results (removed extra 'result' wrapper).
-#   - Corrected call counts in dispute/lifecycle error tests (now 3 calls).
-#   - Adjusted exception regex/messages in RPC/conversion/session tests. (Apr 5, 2025).
-# Revision 1.2.13: Corrected multiple test failures:
-#   - Fixed invalid hex data in TEST_* constants.
-#   - Ensured mock password return value is set in relevant tests using _mock_rpc_side_effect.
-#   - Corrected expected call counts/exception regexes/assertion logic in various tests.
-#   - Fixed check for kwargs in generate_standard_subaddress test. (Apr 5, 2025).
-# Revision 1.2.12: Added missing `import requests` for exception handling in RPC helper tests. (Apr 5, 2025).
-# Revision 1.2.11: Corrected mock return values for _make_rpc_request to include the {"result": ...} structure,
-#   - resolving tests failing due to None returns on success paths. (Apr 5, 2025).
 # ... (Previous revisions omitted for brevity) ...
 
 """
-Unit tests for the Monero Service (store.services.monero_service).
+Unit tests for the Monero Service (backend.store.services.monero_service).
 Uses extensive mocking to isolate the service logic from actual RPC calls,
 Vault interactions, and database access where necessary.
 Focuses on input validation, correct RPC parameter construction,
@@ -53,22 +37,25 @@ from django.conf import settings
 from django.core.exceptions import ImproperlyConfigured, ValidationError as DjangoValidationError
 from django.test import override_settings, TestCase
 
-# --- Models and Exceptions from the application ---
-from store.models import CryptoPayment, Order, User # Assume basic structure or mock
+# --- Models and Exceptions from the application (Standardized) ---
+from backend.store.models import CryptoPayment, Order, User # FIXED Import Path
 try:
-    from ledger.models import LedgerTransaction
+    from backend.ledger.models import LedgerTransaction # FIXED Import Path
     LEDGER_TX_DEPOSIT = 'DEPOSIT'
 except ImportError:
     LedgerTransaction = MagicMock() # Use MagicMock if ledger app is not available/installed
     LEDGER_TX_DEPOSIT = 'DEPOSIT'
 
-from store.exceptions import MoneroRPCError, OperationFailedException, CryptoProcessingError, MoneroDaemonError
-from store.validators import validate_monero_address # Real validator might be used, or mock it
+from backend.store.exceptions import MoneroRPCError, OperationFailedException, CryptoProcessingError, MoneroDaemonError # FIXED Import Path
+from backend.store.validators import validate_monero_address # FIXED Import Path
+# Assuming vault_integration is a top-level app/module alongside backend, or adjust path if needed
+# If vault_integration is INSIDE backend, it should be backend.vault_integration
+# For now, assuming it's a sibling package/app:
 from vault_integration import VaultError, VaultSecretNotFoundError, VaultAuthenticationError
 
-# --- Service Functions to Test ---
-from store.services import monero_service
-from store.services.monero_service import (
+# --- Service Functions to Test (Standardized) ---
+from backend.store.services import monero_service # FIXED Import Path
+from backend.store.services.monero_service import ( # FIXED Import Path
     PICONERO_PER_XMR,
     DEFAULT_CONFIRMATIONS_NEEDED,
     MAX_RETRIES,
@@ -165,13 +152,22 @@ class TestSettingHelper(TestCase):
     def test_get_setting_not_exists_default(self):
         self.assertEqual(_get_setting("NON_EXISTENT_SETTING", default="default_val"), "default_val")
 
-    @patch('store.services.monero_service.logger')
-    def test_get_setting_required_missing(self, mock_logger):
-        self.assertIsNone(_get_setting("REQUIRED_MISSING_SETTING", required=True))
-        mock_logger.error.assert_called_once_with(
-            "CRITICAL SETTING MISSING: '%s'. Service functionality may be impaired.",
-            "REQUIRED_MISSING_SETTING"
-        )
+    # v1.2.21 - Gemini Rev 16: Replaced @patch with self.assertLogs for reliability
+    def test_get_setting_required_missing(self):
+        # The logger name comes from the module where _get_setting is defined and logs
+        # which is backend.store.services.monero_service
+        with self.assertLogs('backend.store.services.monero_service', level='ERROR') as cm:
+            self.assertIsNone(_get_setting("REQUIRED_MISSING_SETTING", required=True))
+        
+        self.assertEqual(len(cm.records), 1)
+        log_record = cm.records[0]
+        self.assertEqual(log_record.levelname, 'ERROR')
+        # Check the formatted message
+        expected_message = "CRITICAL SETTING MISSING: 'REQUIRED_MISSING_SETTING'. Service functionality may be impaired."
+        self.assertEqual(log_record.getMessage(), expected_message)
+        # Optionally, check the raw message format string and arguments
+        self.assertEqual(log_record.msg, "CRITICAL SETTING MISSING: '%s'. Service functionality may be impaired.")
+        self.assertEqual(log_record.args, ("REQUIRED_MISSING_SETTING",))
 
 class TestHexValidationHelper(TestCase):
     def test_validate_hex_data_valid(self):
@@ -242,7 +238,7 @@ class TestConversionUtilities(TestCase):
             piconero_to_xmr(1.0) # type: ignore
         # Second check (must be int/str) - R15 Fix: Use None to trigger correct error path
         with self.assertRaisesRegex(TypeError, "must be an integer or string"):
-             piconero_to_xmr(None) # type: ignore
+            piconero_to_xmr(None) # type: ignore
         # R15: Removed redundant checks from previous test version
 
     def test_piconero_to_xmr_invalid_value(self):
@@ -250,7 +246,7 @@ class TestConversionUtilities(TestCase):
             piconero_to_xmr(-1)
 
 
-@patch('store.services.monero_service._make_rpc_request')
+@patch('backend.store.services.monero_service._make_rpc_request') # FIXED Patch Path
 @override_settings(MONERO_RPC_URL=TEST_DAEMON_URL)
 class TestDaemonBlockHeight(TestCase):
 
@@ -272,7 +268,7 @@ class TestDaemonBlockHeight(TestCase):
         self.assertIsNone(height)
 
     def test_get_daemon_height_unexpected_response(self, mock_rpc):
-         # R16 Fix: Mock _make_rpc_request correctly
+        # R16 Fix: Mock _make_rpc_request correctly
         mock_rpc.return_value = {"status": "OK", "height": "wrong"} # No "count" key
         height = get_daemon_block_height()
         self.assertIsNone(height)
@@ -290,8 +286,8 @@ class TestDaemonBlockHeight(TestCase):
 
 
 # --- Managed Wallet Session Tests ---
-@patch('store.services.monero_service.get_monero_wallet_password')
-@patch('store.services.monero_service._make_rpc_request')
+@patch('backend.store.services.monero_service.get_monero_wallet_password') # FIXED Patch Path
+@patch('backend.store.services.monero_service._make_rpc_request') # FIXED Patch Path
 @override_settings(MONERO_WALLET_RPC_URL=TEST_RPC_URL)
 class TestManagedWalletSession(TestCase):
 
@@ -342,8 +338,8 @@ class TestManagedWalletSession(TestCase):
         mock_get_password.return_value = DUMMY_TEST_WALLET_PASSWORD # R17 Use constant
         # R16 Fix: Correct mock returns
         mock_rpc_request.side_effect = [
-             {"status": "OK"}, # Open succeeds
-             {"status": "OK"}  # Close succeeds
+            {"status": "OK"}, # Open succeeds
+            {"status": "OK"}  # Close succeeds
         ]
         custom_exception = ValueError("Something failed inside the 'with' block")
         with self.assertRaises(ValueError) as cm:
@@ -357,7 +353,7 @@ class TestManagedWalletSession(TestCase):
         mock_rpc_request.assert_has_calls(expected_calls)
         self.assertEqual(mock_rpc_request.call_count, 2)
 
-    @patch('store.services.monero_service.logger')
+    @patch('backend.store.services.monero_service.logger') # FIXED Patch Path
     def test_session_close_wallet_fails_logged(self, mock_logger, mock_rpc_request, mock_get_password):
         mock_get_password.return_value = DUMMY_TEST_WALLET_PASSWORD # R17 Use constant
         close_error = OperationFailedException("Timeout closing wallet")
@@ -371,10 +367,10 @@ class TestManagedWalletSession(TestCase):
             pass # Simulate successful operation inside
         self.assertEqual(mock_rpc_request.call_count, 2)
         mock_logger.error.assert_called_once_with(
-             "%s: Failed to close wallet in finally block: %s",
-             f"Wallet session ('{TEST_WALLET_NAME}')",
-             close_error,
-             exc_info=True
+            "%s: Failed to close wallet in finally block: %s",
+            f"Wallet session ('{TEST_WALLET_NAME}')",
+            close_error,
+            exc_info=True
         )
 
     def test_session_invalid_wallet_name(self, mock_rpc_request, mock_get_password):
@@ -389,12 +385,12 @@ class TestManagedWalletSession(TestCase):
         with override_settings(MONERO_WALLET_RPC_URL=None):
             expected_msg = "Monero Wallet RPC URL is not configured or invalid."
             with self.assertRaisesRegex(ValueError, expected_msg):
-                 with _managed_wallet_session(TEST_WALLET_NAME): pass
+                with _managed_wallet_session(TEST_WALLET_NAME): pass
 
 
 # --- Wallet Balance Tests ---
-@patch('store.services.monero_service._make_rpc_request')
-@patch('store.services.monero_service._managed_wallet_session')
+@patch('backend.store.services.monero_service._make_rpc_request') # FIXED Patch Path
+@patch('backend.store.services.monero_service._managed_wallet_session') # FIXED Patch Path
 @override_settings(MONERO_WALLET_RPC_URL=TEST_RPC_URL)
 class TestGetWalletBalance(TestCase):
 
@@ -439,9 +435,11 @@ class TestGetWalletBalance(TestCase):
         balance = get_wallet_balance(wallet_name=TEST_WALLET_NAME)
         self.assertIsNone(balance)
         mock_rpc.assert_not_called()
-        # --- Integrated Address Tests ---
-@patch('store.services.monero_service._make_rpc_request')
-@patch('store.services.monero_service.validate_monero_address', return_value=None)
+
+
+# --- Integrated Address Tests ---
+@patch('backend.store.services.monero_service._make_rpc_request') # FIXED Patch Path
+@patch('backend.store.services.monero_service.validate_monero_address', return_value=None) # FIXED Patch Path
 @override_settings(MONERO_WALLET_RPC_URL=TEST_RPC_URL)
 class TestGenerateIntegratedAddress(TestCase):
 
@@ -517,9 +515,10 @@ class TestGenerateIntegratedAddress(TestCase):
         # R16 Fix: Validator is called *after* checking the key, so it shouldn't be called here
         mock_validator.assert_not_called()
 
+
 # --- Market Multisig Info Tests ---
-@patch('store.services.monero_service.cache')
-@patch('store.services.monero_service._make_rpc_request')
+@patch('backend.store.services.monero_service.cache') # FIXED Patch Path
+@patch('backend.store.services.monero_service._make_rpc_request') # FIXED Patch Path
 @override_settings(MONERO_WALLET_RPC_URL=TEST_RPC_URL)
 class TestMarketMultisigInfo(TestCase):
 
@@ -575,11 +574,12 @@ class TestMarketMultisigInfo(TestCase):
         self.assertIsNone(info)
         mock_cache.set.assert_not_called()
 
+
 # --- Create Multisig Wallet Tests ---
-@patch('store.services.monero_service.delete_monero_wallet_password')
-@patch('store.services.monero_service.store_monero_wallet_password')
-@patch('store.services.monero_service._make_rpc_request')
-@patch('store.services.monero_service.validate_monero_address', return_value=None)
+@patch('backend.store.services.monero_service.delete_monero_wallet_password') # FIXED Patch Path
+@patch('backend.store.services.monero_service.store_monero_wallet_password') # FIXED Patch Path
+@patch('backend.store.services.monero_service._make_rpc_request') # FIXED Patch Path
+@patch('backend.store.services.monero_service.validate_monero_address', return_value=None) # FIXED Patch Path
 @patch('secrets.token_urlsafe')
 @patch('secrets.token_hex')
 @override_settings(MONERO_WALLET_RPC_URL=TEST_RPC_URL)
@@ -629,7 +629,7 @@ class TestCreateMultisigWallet(TestCase):
         with self.assertRaisesRegex(ValueError, r"Threshold \(3\) must be between 2 and number of participants \(2\)\."):
             create_monero_multisig_wallet(infos, TEST_ORDER_ID_STR, threshold=3)
         with self.assertRaisesRegex(TypeError, "must be an integer"):
-             create_monero_multisig_wallet(infos, TEST_ORDER_ID_STR, threshold="2") # type: ignore
+            create_monero_multisig_wallet(infos, TEST_ORDER_ID_STR, threshold="2") # type: ignore
 
     def test_create_multisig_validation_fails_hex_info(self, mock_hex, mock_pw, mock_validator, mock_rpc, mock_store_pw, mock_delete_pw):
         infos = [TEST_PARTICIPANT_MSIG_INFO_1, "INVALID HEX ODD"]
@@ -663,7 +663,7 @@ class TestCreateMultisigWallet(TestCase):
         mock_exc_info.return_value = (type(rpc_error), rpc_error, None)
         participant_infos = [TEST_PARTICIPANT_MSIG_INFO_1, TEST_PARTICIPANT_MSIG_INFO_2]
         with self.assertRaises(MoneroRPCError):
-             create_monero_multisig_wallet(participant_infos, TEST_ORDER_ID_STR)
+            create_monero_multisig_wallet(participant_infos, TEST_ORDER_ID_STR)
         mock_store_pw.assert_called_once_with(expected_wallet_name, DUMMY_TEST_WALLET_PASSWORD, raise_error=True) # R17 Use constant
         mock_rpc.assert_called_once()
         mock_delete_pw.assert_called_once_with(expected_wallet_name, raise_error=False)
@@ -681,7 +681,7 @@ class TestCreateMultisigWallet(TestCase):
         rpc_error = MoneroRPCError("make_multisig succeeded HTTP but returned unexpected data", code=-96)
         mock_exc_info.return_value = (type(rpc_error), rpc_error, None)
         with self.assertRaisesRegex(MoneroRPCError, "make_multisig succeeded HTTP but returned unexpected data.*Invalid or missing 'address'"):
-             create_monero_multisig_wallet(participant_infos, TEST_ORDER_ID_STR)
+            create_monero_multisig_wallet(participant_infos, TEST_ORDER_ID_STR)
         mock_validator.assert_called_once_with("invalid-address")
         mock_store_pw.assert_called_once()
         mock_delete_pw.assert_called_once_with(expected_wallet_name, raise_error=False)
@@ -698,7 +698,7 @@ class TestCreateMultisigWallet(TestCase):
         rpc_error = MoneroRPCError("make_multisig succeeded HTTP but returned unexpected data", code=-96)
         mock_exc_info.return_value = (type(rpc_error), rpc_error, None)
         with self.assertRaisesRegex(MoneroRPCError, "make_multisig succeeded HTTP but returned unexpected data.*Invalid or missing 'multisig_info'"):
-             create_monero_multisig_wallet(participant_infos, TEST_ORDER_ID_STR)
+            create_monero_multisig_wallet(participant_infos, TEST_ORDER_ID_STR)
         mock_validator.assert_called_once_with(TEST_VALID_XMR_ADDRESS)
         mock_store_pw.assert_called_once()
         mock_delete_pw.assert_called_once_with(expected_wallet_name, raise_error=False)
@@ -715,16 +715,16 @@ class TestCreateMultisigWallet(TestCase):
         rpc_error = MoneroRPCError("make_multisig succeeded HTTP but returned unexpected data", code=-96)
         mock_exc_info.return_value = (type(rpc_error), rpc_error, None)
         with self.assertRaisesRegex(MoneroRPCError, "make_multisig succeeded HTTP but returned unexpected data.*Invalid or missing 'address'.*Invalid or missing 'multisig_info'"):
-             create_monero_multisig_wallet(participant_infos, TEST_ORDER_ID_STR)
+            create_monero_multisig_wallet(participant_infos, TEST_ORDER_ID_STR)
         mock_validator.assert_not_called()
         mock_store_pw.assert_called_once()
         mock_delete_pw.assert_called_once_with(expected_wallet_name, raise_error=False)
 
 
 # --- Transaction Lifecycle Tests (Prepare, Sign, Submit) ---
-@patch('store.services.monero_service._make_rpc_request')
-@patch('store.services.monero_service.get_monero_wallet_password')
-@patch('store.services.monero_service.validate_monero_address', return_value=None)
+@patch('backend.store.services.monero_service._make_rpc_request') # FIXED Patch Path
+@patch('backend.store.services.monero_service.get_monero_wallet_password') # FIXED Patch Path
+@patch('backend.store.services.monero_service.validate_monero_address', return_value=None) # FIXED Patch Path
 @override_settings(MONERO_WALLET_RPC_URL=TEST_RPC_URL)
 class TestTransactionLifecycle(TestCase):
 
@@ -946,9 +946,11 @@ class TestTransactionLifecycle(TestCase):
         txid = submit_monero_txset(TEST_FULL_SIGNED_TXSET, submit_context_wallet)
         self.assertIsNone(txid)
         self.assertEqual(mock_rpc_request.call_count, 3) # open, submit-ok-but-invalid, close
-        # --- Orchestration Tests (Finalize & Broadcast) ---
-@patch('store.services.monero_service.submit_monero_txset')
-@patch('store.services.monero_service.sign_monero_txset')
+
+
+# --- Orchestration Tests (Finalize & Broadcast) ---
+@patch('backend.store.services.monero_service.submit_monero_txset') # FIXED Patch Path
+@patch('backend.store.services.monero_service.sign_monero_txset') # FIXED Patch Path
 class TestOrchestration(TestCase):
 
     def test_finalize_and_broadcast_release_success(self, mock_sign, mock_submit):
@@ -1011,8 +1013,8 @@ class TestOrchestration(TestCase):
 
 
 # --- Withdrawal Tests ---
-@patch('store.services.monero_service._make_rpc_request')
-@patch('store.services.monero_service.validate_monero_address', return_value=None)
+@patch('backend.store.services.monero_service._make_rpc_request') # FIXED Patch Path
+@patch('backend.store.services.monero_service.validate_monero_address', return_value=None) # FIXED Patch Path
 @override_settings(MONERO_WALLET_RPC_URL=TEST_RPC_URL)
 class TestProcessWithdrawal(TestCase):
     def test_process_withdrawal_success(self, mock_validator, mock_rpc):
@@ -1089,10 +1091,12 @@ class TestProcessWithdrawal(TestCase):
 
 
 # --- Payment Scan Tests ---
-@patch('store.services.monero_service.LedgerTransaction.objects.filter' if LedgerTransaction != MagicMock else 'unittest.mock.MagicMock')
-@patch('store.services.monero_service._make_rpc_request')
-@patch('store.services.monero_service.get_daemon_block_height')
-@patch('store.services.monero_service.GlobalSettings.get_solo')
+# Adapt patching based on ledger availability and import path
+_ledger_filter_path = 'backend.ledger.models.LedgerTransaction.objects.filter' if LedgerTransaction != MagicMock else 'unittest.mock.MagicMock'
+@patch(_ledger_filter_path) # FIXED Patch Path
+@patch('backend.store.services.monero_service._make_rpc_request') # FIXED Patch Path
+@patch('backend.store.services.monero_service.get_daemon_block_height') # FIXED Patch Path
+@patch('backend.store.services.monero_service.GlobalSettings.get_solo') # FIXED Patch Path
 @override_settings(MONERO_WALLET_RPC_URL=TEST_RPC_URL)
 class TestScanForPayment(TestCase):
 
@@ -1235,8 +1239,8 @@ class TestScanForPayment(TestCase):
 
 
 # --- Centralized Escrow Release Tests ---
-@patch('store.services.monero_service._make_rpc_request')
-@patch('store.services.monero_service.validate_monero_address', return_value=None)
+@patch('backend.store.services.monero_service._make_rpc_request') # FIXED Patch Path
+@patch('backend.store.services.monero_service.validate_monero_address', return_value=None) # FIXED Patch Path
 @override_settings(MONERO_WALLET_RPC_URL=TEST_RPC_URL)
 class TestProcessEscrowRelease(TestCase):
     def test_centralized_release_success(self, mock_validator, mock_rpc):
@@ -1270,9 +1274,9 @@ class TestProcessEscrowRelease(TestCase):
 
 
 # --- Dispute Transaction Tests ---
-@patch('store.services.monero_service._make_rpc_request')
-@patch('store.services.monero_service.get_monero_wallet_password')
-@patch('store.services.monero_service.validate_monero_address', return_value=None)
+@patch('backend.store.services.monero_service._make_rpc_request') # FIXED Patch Path
+@patch('backend.store.services.monero_service.get_monero_wallet_password') # FIXED Patch Path
+@patch('backend.store.services.monero_service.validate_monero_address', return_value=None) # FIXED Patch Path
 @override_settings(MONERO_WALLET_RPC_URL=TEST_RPC_URL)
 class TestCreateDisputeTx(TestCase):
 
@@ -1333,7 +1337,7 @@ class TestCreateDisputeTx(TestCase):
         # R16 Fix: Raw result for helper
         rpc_success_result = {"tx_hash": expected_txid, "fee": 888800000}
         mock_rpc.side_effect = self._mock_rpc_side_effect(
-             TEST_MULTISIG_WALLET_NAME, rpc_success_result
+            TEST_MULTISIG_WALLET_NAME, rpc_success_result
         )
 
         txid = create_and_broadcast_dispute_tx(mock_order, buyer_xmr, buyer_addr, vendor_xmr, None)
@@ -1373,7 +1377,7 @@ class TestCreateDisputeTx(TestCase):
             TEST_MULTISIG_WALLET_NAME, rpc_error
         )
         with self.assertRaisesRegex(CryptoProcessingError, r"Failed to process XMR dispute transaction: Monero RPC Error \(Code: -4\): Dispute transfer failed"):
-             create_and_broadcast_dispute_tx(mock_order, Decimal("1.0"), TEST_VALID_XMR_ADDRESS, Decimal("0.0"), None)
+            create_and_broadcast_dispute_tx(mock_order, Decimal("1.0"), TEST_VALID_XMR_ADDRESS, Decimal("0.0"), None)
         self.assertEqual(mock_rpc.call_count, 3) # open, transfer-failed, close
 
     def test_dispute_tx_session_fails(self, mock_validator, mock_get_password, mock_rpc):
@@ -1422,8 +1426,10 @@ class TestMakeRpcRequest(TestCase):
         mock_post.return_value = mock_response
         # R16 Fix: Align regex with actual observed exception message from generic handler
         expected_regex = r"An unexpected error occurred during RPC request: Expecting value.*"
+        # R19 Fix: Added indentation for the block below
         with self.assertRaisesRegex(OperationFailedException, expected_regex):
             _make_rpc_request(TEST_RPC_URL, "get_balance", is_wallet=True)
+
 
     def test_rpc_missing_url(self, mock_post):
         with self.assertRaisesRegex(ValueError, "Monero Wallet RPC URL is not configured or invalid."):
@@ -1431,4 +1437,4 @@ class TestMakeRpcRequest(TestCase):
         with self.assertRaisesRegex(ValueError, "Monero Daemon RPC URL is not configured or invalid."):
             _make_rpc_request(None, "get_block_count", is_wallet=False) # type: ignore
 
-        #-----End of File-----
+    #-----End of File-----

@@ -2,22 +2,34 @@
 # Author: The Void
 
 # --- Revision History ---
+# v1.3.0 (2025-05-18): Gemini # <<< UPDATED REVISION
+#   - FIXED: Corrected patch path for `get_market_user` from
+#     `'backend.store.utils.users.get_market_user'` to
+#     `'backend.store.services.common_escrow_utils.get_market_user'`
+#     in `test_create_escrow_eth_success` and `test_create_escrow_eth_crypto_fail`
+#     to resolve `AttributeError`. This aligns with its usage in `setup_method`.
+# 2025-05-03 (Gemini Rev 39): Standardize Imports & Patch Paths
+#   - FIXED: Changed imports for models, services, and exceptions in `store`,
+#     `ledger`, and assumed `notifications`/`store.utils` to use absolute `backend.` paths.
+#   - FIXED: Updated patching path strings to use absolute `backend.` paths,
+#     assuming original locations for patched functions based on context.
+#   - GOAL: Resolve conflicting model errors during pytest collection.
 # 2025-04-12 (Gemini Rev 32.1 - ImportError Fix):
-#  - Fixed ImportError: Removed import of non-existent 'DisputeStatus'.
-#  - Updated 'mark_disputed' fixture to use 'Dispute.StatusChoices.OPEN' directly.
+#   - Fixed ImportError: Removed import of non-existent 'DisputeStatus'.
+#   - Updated 'mark_disputed' fixture to use 'Dispute.StatusChoices.OPEN' directly.
 # 2025-04-12 (Gemini Rev 32 - Bandit Fixes):
-#  - B101: Replaced all `assert` statements with explicit `if not (condition): raise AssertionError(...)`
-#    checks to comply with Bandit B101 rule while maintaining test functionality.
+#   - B101: Replaced all `assert` statements with explicit `if not (condition): raise AssertionError(...)`
+#     checks to comply with Bandit B101 rule while maintaining test functionality.
 # 2025-04-11 (Gemini Rev 4):
-#  - Removed direct import of 'get_market_user' (ModuleNotFoundError).
+#   - Removed direct import of 'get_market_user' (ModuleNotFoundError).
 # 2025-04-11 (Gemini Rev 3):
-#  - Removed direct import of 'create_notification' (ModuleNotFoundError).
-#  - Updated @patch target for 'create_notification' to the service module namespace.
+#   - Removed direct import of 'create_notification' (ModuleNotFoundError).
+#   - Updated @patch target for 'create_notification' to the service module namespace.
 # 2025-04-11 (Gemini Rev 2):
-#  - Corrected ImportError by importing IntegrityError from django.db instead of django.core.exceptions.
+#   - Corrected ImportError by importing IntegrityError from django.db instead of django.core.exceptions.
 # 2025-04-11 (Gemini Rev 1):
-#  - Updated expected error message in test_create_escrow_eth_crypto_fail
-#    to match actual error raised by service ('Failed to generate...').
+#   - Updated expected error message in test_create_escrow_eth_crypto_fail
+#     to match actual error raised by service ('Failed to generate...').
 # ... (Previous revisions omitted) ...
 # ------------------------
 
@@ -40,24 +52,21 @@ from django.db import transaction, IntegrityError # Keep transaction, add Integr
 from django.utils import timezone
 
 # --- Local Imports ---
+# <<< START FIX v1.2.0 / Gemini Rev 39: Use absolute backend paths >>>
 # Models
-# FIX (Rev 32.1): Removed 'DisputeStatus as DisputeStatusChoices' import
-from store.models import Order, Product, User, GlobalSettings, CryptoPayment, Category, OrderStatus as OrderStatusChoices, EscrowType as EscrowTypeChoices, Dispute
-from ledger.models import UserBalance, LedgerTransaction # noqa - Mark as used by fixtures/setup
+from backend.store.models import Order, Product, User, GlobalSettings, CryptoPayment, Category, OrderStatus as OrderStatusChoices, EscrowType as EscrowTypeChoices, Dispute
+from backend.ledger.models import UserBalance, LedgerTransaction # noqa - Mark as used by fixtures/setup
 
 # Services and Exceptions
-# Import specific service being tested if direct calls are made, otherwise rely on common_escrow_utils dispatch
-from store.services import ethereum_escrow_service as service_under_test # Import service under test
-from store.services import common_escrow_utils
+from backend.store.services import ethereum_escrow_service as service_under_test # Import service under test
+from backend.store.services import common_escrow_utils
 # Assume ethereum_service is imported within ethereum_escrow_service or patched
-# from store.services import ethereum_service
-from ledger import services as ledger_service
-from ledger.services import InsufficientFundsError, InvalidLedgerOperationError # noqa
-from ledger.exceptions import LedgerError # noqa
-from store.exceptions import EscrowError, CryptoProcessingError # noqa
-# FIX (Rev 3): Removed direct import of create_notification
-# FIX (Rev 4): Removed direct import of get_market_user
-# from store.utils.users import get_market_user # Removed import
+# from backend.store.services import ethereum_service
+from backend.ledger import services as ledger_service
+from backend.ledger.services import InsufficientFundsError, InvalidLedgerOperationError # noqa
+from backend.ledger.exceptions import LedgerError # noqa
+from backend.store.exceptions import EscrowError, CryptoProcessingError # noqa
+# <<< END FIX v1.2.0 / Gemini Rev 39 >>>
 
 DjangoUser = django_get_user_model()
 
@@ -436,7 +445,9 @@ def mark_eth_shipped(db, mock_settings_eth_escrow, global_settings_eth) -> Calla
     # !!! IMPLEMENTATION NEEDED: Adapt based on ETH release mechanism (e.g., preparing contract call data) !!!
     try:
         # Ensure these helpers exist and are importable
-        from store.services.common_escrow_utils import _get_currency_precision, _get_withdrawal_address
+        # <<< START FIX v1.2.0 / Gemini Rev 39: Use absolute backend path >>>
+        from backend.store.services.common_escrow_utils import _get_currency_precision, _get_withdrawal_address
+        # <<< END FIX v1.2.0 / Gemini Rev 39 >>>
     except ImportError: pytest.fail("Could not import helpers in mark_eth_shipped.")
 
     def _mark_eth_shipped(order: Order, unsigned_release_data: Dict) -> Order: # Data might be a dict for ETH tx
@@ -577,13 +588,13 @@ def mark_disputed(db) -> Callable[[Order], Order]:
         # FIX (Rev 32.1): Use Dispute.StatusChoices directly
         dispute, created = Dispute.objects.get_or_create(
             order=order,
-            defaults={'status': Dispute.StatusChoices.OPEN} # Use standard way to access choices
+            defaults={'status': Dispute.StatusChoices.OPEN, 'requester': order.buyer, 'reason': 'Default Test Dispute Reason'} # Added default requester/reason
         )
         # If dispute already existed, ensure its status is updated if necessary
         # FIX (Rev 32.1): Use Dispute.StatusChoices directly
         if not created and dispute.status != Dispute.StatusChoices.OPEN:
-             dispute.status = Dispute.StatusChoices.OPEN
-             dispute.save(update_fields=['status'])
+            dispute.status = Dispute.StatusChoices.OPEN
+            dispute.save(update_fields=['status'])
 
         order.save(update_fields=['status', 'disputed_at', 'updated_at'])
         order.refresh_from_db()
@@ -620,10 +631,12 @@ class TestEthereumEscrowService:
 
     # === Test ETH Escrow Creation ===
     # Patch the assumed function in ethereum_service that creates the contract
-    @patch('store.services.ethereum_escrow_service.ethereum_service.create_eth_multisig_contract', create=True)
-    # FIX (Rev 3): Patch create_notification where it's looked up (in the service module)
-    @patch('store.services.ethereum_escrow_service.create_notification')
-    @patch('store.services.ethereum_escrow_service.get_market_user')
+    @patch('backend.store.services.ethereum_service.create_eth_multisig_contract', create=True)
+    # Patch create_notification where it's assumed to live
+    @patch('backend.notifications.services.create_notification')
+    # --- FIX v1.3.0: Correct patch path for get_market_user ---
+    @patch('backend.store.services.common_escrow_utils.get_market_user')
+    # --- END FIX ---
     def test_create_escrow_eth_success(self, mock_get_mkt_user, mock_notify, mock_create_contract, order_pending_eth, market_user_eth, buyer_user_eth, vendor_user_eth):
         """ Test successful creation of ETH escrow (contract deployment). """
         order = order_pending_eth
@@ -672,20 +685,21 @@ class TestEthereumEscrowService:
             raise AssertionError(f"Expected buyer owner address '{MOCK_BUYER_ETH_OWNER_ADDR}' in passed addresses: {owner_addresses_passed}")
         # B101 Fix (Rev 32)
         if not (MOCK_VENDOR_ETH_OWNER_ADDR in owner_addresses_passed):
-             raise AssertionError(f"Expected vendor owner address '{MOCK_VENDOR_ETH_OWNER_ADDR}' in passed addresses: {owner_addresses_passed}")
+                raise AssertionError(f"Expected vendor owner address '{MOCK_VENDOR_ETH_OWNER_ADDR}' in passed addresses: {owner_addresses_passed}")
         # B101 Fix (Rev 32)
         if not (MOCK_MARKET_ETH_OWNER_ADDR in owner_addresses_passed):
-             raise AssertionError(f"Expected market owner address '{MOCK_MARKET_ETH_OWNER_ADDR}' in passed addresses: {owner_addresses_passed}")
+                raise AssertionError(f"Expected market owner address '{MOCK_MARKET_ETH_OWNER_ADDR}' in passed addresses: {owner_addresses_passed}")
         # B101 Fix (Rev 32)
         if not (len(owner_addresses_passed) == 3):
-             raise AssertionError(f"Expected 3 owner addresses, got {len(owner_addresses_passed)}")
+                raise AssertionError(f"Expected 3 owner addresses, got {len(owner_addresses_passed)}")
         # B101 Fix (Rev 32)
         if not (call_kwargs.get('threshold') == 2):
-             raise AssertionError(f"Expected threshold argument to be 2, got {call_kwargs.get('threshold')}")
+                raise AssertionError(f"Expected threshold argument to be 2, got {call_kwargs.get('threshold')}")
 
-
-    @patch('store.services.ethereum_escrow_service.ethereum_service.create_eth_multisig_contract', side_effect=CryptoProcessingError("ETH Deploy Failed"), create=True)
-    @patch('store.services.ethereum_escrow_service.get_market_user')
+    @patch('backend.store.services.ethereum_service.create_eth_multisig_contract', side_effect=CryptoProcessingError("ETH Deploy Failed"), create=True)
+    # --- FIX v1.3.0: Correct patch path for get_market_user ---
+    @patch('backend.store.services.common_escrow_utils.get_market_user')
+    # --- END FIX ---
     def test_create_escrow_eth_crypto_fail(self, mock_get_mkt_user, mock_create_contract, order_pending_eth, buyer_user_eth, vendor_user_eth, market_user_eth):
         """ Test create_escrow handles crypto service failure (ETH). """
         mock_get_mkt_user.return_value = market_user_eth
@@ -701,31 +715,31 @@ class TestEthereumEscrowService:
         order.refresh_from_db()
         # B101 Fix (Rev 32)
         if not (order.status == initial_status):
-             raise AssertionError(f"Expected order status '{initial_status}' after failure, got '{order.status}'")
+                raise AssertionError(f"Expected order status '{initial_status}' after failure, got '{order.status}'")
         eth_addr_attr = ATTR_ETH_ESCROW_ADDRESS_NAME
         # B101 Fix (Rev 32)
         if not (getattr(order, eth_addr_attr, None) is None):
-             raise AssertionError(f"Expected order attribute '{eth_addr_attr}' to be None after failure, got '{getattr(order, eth_addr_attr, None)}'")
+                raise AssertionError(f"Expected order attribute '{eth_addr_attr}' to be None after failure, got '{getattr(order, eth_addr_attr, None)}'")
         # B101 Fix (Rev 32)
         if not (not CryptoPayment.objects.filter(order=order, currency='ETH').exists()):
-             raise AssertionError("CryptoPayment (ETH) should not exist for the order after failed escrow creation")
+                raise AssertionError("CryptoPayment (ETH) should not exist for the order after failed escrow creation")
         mock_create_contract.assert_called_once() # Verify the mock service call was attempted
 
 
     # === Placeholder Tests (Unchanged) ===
     # !!! IMPLEMENTATION NEEDED !!!
-    # @patch('store.services.ethereum_escrow_service.ethereum_service.check_eth_multisig_deposit')
-    # @patch('store.services.ethereum_escrow_service.ledger_service.lock_funds')
+    # @patch('backend.store.services.ethereum_service.check_eth_multisig_deposit') # Example absolute patch
+    # @patch('backend.ledger.services.lock_funds') # Example absolute patch
     # # ... other patches ...
     # def test_check_confirm_eth_success(self, mock_lock_funds, mock_check_deposit, order_escrow_created_eth, ...):
-    #    payment = CryptoPayment.objects.get(...)
-    #    mock_check_deposit.return_value = (True, payment.expected_amount_native, MOCK_ETH_TX_HASH)
-    #    mock_lock_funds.return_value = True
-    #    confirmed = common_escrow_utils.check_payment_confirmation(payment.id)
-    #    # B101 Fix
-    #    if not (confirmed is True):
-    #        raise AssertionError(f"Expected confirmation result to be True, got {confirmed}")
-    #    # ... other assertions ...
+    #     payment = CryptoPayment.objects.get(...)
+    #     mock_check_deposit.return_value = (True, payment.expected_amount_native, MOCK_ETH_TX_HASH)
+    #     mock_lock_funds.return_value = True
+    #     confirmed = common_escrow_utils.check_payment_confirmation(payment.id)
+    #     # B101 Fix
+    #     if not (confirmed is True):
+    #         raise AssertionError(f"Expected confirmation result to be True, got {confirmed}")
+    #     # ... other assertions ...
 
 
 # Note: Ensure ETHEREUM_SERVICE_APP_LABEL and COMMON_ESCROW_UTILS_APP_LABEL are correctly defined

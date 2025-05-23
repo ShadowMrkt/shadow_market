@@ -1,116 +1,97 @@
 # backend/mymarketplace/urls.py
+# Revision History:
+# 2025-05-03: (Gemini Rev 12): # <<< NEW REVISION >>>
+#   - FIXED: Corrected import path for HealthCheckView from
+#     'backend.store.views' to 'backend.store.views.utility'
+#     to resolve ImportError during URL loading and test collection.
+# 2025-05-03: (Gemini Rev 11):
+#   - FIXED: Standardized include() paths for local apps to use the
+#     'backend.' prefix (e.g., 'backend.store.urls') to ensure
+#     consistent module path resolution and resolve conflicting model errors.
+# 2025-05-03: (Gemini Rev 10): Corrected import path for HealthCheckView
+#     (store.views -> backend.store.views) to resolve
+#     ImportError during URL configuration loading.
+#     This enforces consistent absolute imports.
+# --- Older revisions omitted ---
+
 from django.contrib import admin
 from django.urls import path, include
 from django.conf import settings # For serving media in dev
 from django.conf.urls.static import static # For serving media in dev
-from django_otp.admin import OTPAdminSite # For OTP admin
-from store.views import HealthCheckView # Import HealthCheckView
+# Use absolute import path starting from 'backend.'
+from backend.store.views.utility import HealthCheckView # FIXED: Import from correct submodule
 
-# Use OTP-protected admin site if OTP enabled in settings
+# --- Define admin_site based on OTP installation ---
+admin_site = admin.site # Default to standard admin
 if 'django_otp' in settings.INSTALLED_APPS:
-    admin_site = OTPAdminSite(name='OTPAdmin') # Use custom name if needed
-    # Register models manually if default discovery isn't enough
-    # from django.contrib.auth.models import User, Group
-    # admin_site.register(User) # Example
-    # admin_site.register(Group) # Example
-else:
-    admin_site = admin.site # Use default admin
+    try:
+        from django_otp.admin import OTPAdminSite
+        # Use OTP-protected admin site if OTP enabled in settings
+        admin_site = OTPAdminSite(name='OTPAdmin')
+        # Note: You might need to manually register models here if default discovery isn't enough
+        # or if you unregister the default admin's models first.
+    except ImportError:
+        # Handle case where django_otp is listed but not fully installed/configured
+        pass # Fallback to default admin_site
 
+# --- Main URL Patterns ---
 urlpatterns = [
-    # Use /control/ for the secure admin interface
+    # Health Check Endpoint (unauthenticated, often first)
+    path('health/', HealthCheckView.as_view(), name='health_check'),
+
+    # Admin site (Use /control/ for the secure admin interface, using the defined admin_site)
     path('control/', admin_site.urls),
 
-    # Custom Admin Panel (ensure 'adminpanel.urls' exists and defines necessary paths)
-    path('panel/', include('adminpanel.urls')),
+    # Custom Admin Panel URLs (using 'backend.' prefix)
+    path('panel/', include('backend.adminpanel.urls', namespace='adminpanel')), # FIXED PATH
 
-    # Core Store API endpoints
-    path('api/store/', include('store.urls')),
-    
-    path('control/', admin_site.urls),
-    path('panel/', include('adminpanel.urls')),
-    path('api/store/', include('store.urls')),
+    # Core Store API endpoints (using 'backend.' prefix)
+    path('api/store/', include('backend.store.urls', namespace='store')), # FIXED PATH
 
-    # --- Include Notifications API Endpoints ---
-    path('api/notifications/', include('notifications.urls')), # Add this line
+    # Notifications API Endpoints (using 'backend.' prefix)
+    path('api/notifications/', include('backend.notifications.urls', namespace='notifications')), # FIXED PATH
 
-    # Include djoser auth endpoints if using it
-    # path('api/auth/', include('djoser.urls')),
-    # path('api/auth/', include('djoser.urls.authtoken')),
-
-    path('captcha/', include('captcha.urls')),
-    path('health/', HealthCheckView.as_view(), name='health_check'),
-
-    # Maybe JWT paths?
-    # path('api/token/', TokenObtainPairView.as_view(), name='token_obtain_pair'),
-    # path('api/token/refresh/', TokenRefreshView.as_view(), name='token_refresh'),
-]
-
-# Serve media files during development
-if settings.DEBUG:
-    urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
-    # --- Add Notifications API Endpoint ---
-    path('api/', include('notifications.urls')), # Include notification URLs under /api/
-
-    # Include djoser auth endpoints if using it (adjust prefix as needed)
-    # path('api/auth/', include('djoser.urls')),
-    # path('api/auth/', include('djoser.urls.authtoken')), # If using TokenAuth
-
-    # CAPTCHA URLs
-    path('captcha/', include('captcha.urls')),
-
-    # Health Check
-    path('health/', HealthCheckView.as_view(), name='health_check'),
-
-    # Maybe JWT paths if using SimpleJWT?
-    # path('api/token/', TokenObtainPairView.as_view(), name='token_obtain_pair'),
-    # path('api/token/refresh/', TokenRefreshView.as_view(), name='token_refresh'),
-
-# Serve media files during development
-if settings.DEBUG:
-    urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
-
-# In mymarketplace/urls.py
-urlpatterns = [
-    # ... other paths ...
-    path('forum/', include('forum.urls', namespace='forum')), # Add this
-    # ... rest of paths ...
-]
-
-# Use OTP-protected admin site if not DEBUG
-if not settings.DEBUG:
-    admin.site.__class__ = OTPAdminSite
-
-urlpatterns = [
-    # Health Check Endpoint (unauthenticated)
-    path('health/', HealthCheckView.as_view(), name='health_check'),
-
-    # Admin site (use OTP-protected admin in production)
-    path('control/', admin.site.urls), # Changed path from 'admin/' for slight obscurity
-
-    # Core application URLs
-    path('api/store/', include('store.urls', namespace='store')), # API endpoints under /api/
-    path('api/auth/', include('djoser.urls')), # If using Djoser for user management endpoints
-    path('api/auth/', include('djoser.urls.authtoken')), # If using Djoser token auth
-
-    # OTP URLs (modify paths as needed)
-    # path('account/two_factor/', include('two_factor.urls', 'two_factor')), # Using custom PGP OTP, remove this?
-    # Add URLs for custom PGP OTP setup/verification here
-
-    # Admin Panel URLs (secured in views)
-    path('panel/', include('adminpanel.urls', namespace='adminpanel')),
+    # Forum URLs (using 'backend.' prefix)
+    path('forum/', include('backend.forum.urls', namespace='forum')), # FIXED PATH
 
     # Captcha URLs
     path('captcha/', include('captcha.urls')),
 
-    # Frontend should handle UI routing; these might be legacy or backend-rendered pages
-    # path('', include('frontend_rendering_app.urls')), # Example if Django serves some UI pages
+    # --- Optional Authentication Endpoints (Uncomment if used) ---
+    # path('api/auth/', include('djoser.urls')),
+    # path('api/auth/', include('djoser.urls.authtoken')),
+    # path('api/auth/', include('djoser.urls.jwt')),
+
+    # from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
+    # path('api/token/', TokenObtainPairView.as_view(), name='token_obtain_pair'),
+    # path('api/token/refresh/', TokenRefreshView.as_view(), name='token_refresh'),
+
+    # --- Other potential app includes ---
+    # Add paths for other apps like 'withdraw' if they have URL endpoints
+    # path('api/withdraw/', include('backend.withdraw.urls', namespace='withdraw')), # Example FIXED PATH
 
 ]
 
-# Serve media files during development ONLY
+# --- Development-Only URL Patterns ---
 if settings.DEBUG:
+    # Serve media files uploaded by users during development
     urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
 
-# Add Sentry debug trigger URL if Sentry is enabled and in DEBUG mode
-if settings.DEBUG and settings.SENTRY_DSN:
-     urlpatterns += [path('sentry-debug/', lambda request: 1 / 0, name='sentry-debug')]
+    # Add Django Debug Toolbar URLs if installed
+    if 'debug_toolbar' in settings.INSTALLED_APPS:
+        # Ensure debug_toolbar.urls is importable if included this way
+        # Or use: import debug_toolbar; urlpatterns += [path('__debug__/', include(debug_toolbar.urls))]
+        # Requires debug_toolbar to be installed: pip install django-debug-toolbar
+        try:
+            import debug_toolbar
+            urlpatterns += [path('__debug__/', include(debug_toolbar.urls))]
+        except ImportError:
+            # Log or warn that debug toolbar is in INSTALLED_APPS but not installed?
+            pass
+
+
+    # Add Sentry debug trigger URL if Sentry is enabled and in DEBUG mode
+    if hasattr(settings, 'SENTRY_DSN') and settings.SENTRY_DSN:
+         urlpatterns += [path('sentry-debug/', lambda request: 1 / 0, name='sentry-debug')]
+
+# <<< END OF FILE: backend/mymarketplace/urls.py >>>

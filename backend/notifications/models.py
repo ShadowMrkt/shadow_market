@@ -1,4 +1,7 @@
 # backend/notifications/models.py
+# Revision History:
+# 2025-05-03 - v1.1 - Added explicit app_label = 'notifications' to Meta class for Notification to resolve pytest collection errors related to app registration.
+# Initial Version - v1.0
 import uuid
 from django.db import models
 from django.conf import settings
@@ -57,6 +60,7 @@ class Notification(models.Model):
     )
 
     class Meta:
+        app_label = 'notifications' # <-- Fix: Explicitly declare the app label
         verbose_name = "Notification"
         verbose_name_plural = "Notifications"
         ordering = ['-created_at'] # Show newest first by default

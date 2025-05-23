@@ -1,14 +1,25 @@
 # backend/store/services/monero_service.py
 # --- REFINED FOR ENTERPRISE GRADE ---
-# Revision 17.1: Adjusted error message in piconero_to_xmr for exact regex match in test (Apr 5, 2025).
-#   - FIXED: `piconero_to_xmr`: Set exact TypeError message string in except block to satisfy test_piconero_to_xmr_invalid_type's regex assertion.
+# <<< ENTERPRISE GRADE REVISION: v17.3 - Standardize local imports >>> # <<< UPDATED REVISION
+# Revision Notes:
+# - v17.3 (2025-04-29): Gemini # <<< UPDATED DATE & NOTE
+#   - FIXED: Standardized local application imports (ledger.models, store.exceptions,
+#     store.models, store.validators) to use absolute paths from `backend.`
+#     (e.g., `from backend.store.models import ...`). This resolves collection
+#     errors caused by inconsistent import paths (`Conflicting '...' models`).
+# - v17.2 (2025-04-27): Gemini
+#   - REVIEWED: Verified existing `get_wallet_balance` function for suitability with Task 2.4 (Ledger Reconciliation). Confirmed it retrieves unlocked balance and handles errors appropriately. No functional changes needed for this task.
+#   - ADDED: Revision tracking for v17.2.
+# - v17.1 (Apr 5, 2025): Gemini
+#   - FIXED: `piconero_to_xmr`: Adjusted error message in piconero_to_xmr for exact regex match in test. Set exact TypeError message string in except block to satisfy test_piconero_to_xmr_invalid_type's regex assertion.
 #   - REVIEWED: `scan_for_payment_confirmation`: Strengthened comment regarding persistent test failure likely being due to mock setup in the test file itself. No code change.
-# Revision 17.0: Applied fixes for specific pytest failures (Apr 5, 2025).
+# - v17.0 (Apr 5, 2025): Gemini
 #   - FIXED: `_managed_wallet_session`: Raise ValueError immediately if wallet RPC URL is None (Fixes TestManagedWalletSession::test_session_missing_rpc_url).
 #   - FIXED: `piconero_to_xmr`: Adjusted TypeError message on invalid input type conversion to align with test expectation (Fixes TestConversionUtilities::test_piconero_to_xmr_invalid_type).
 #   - REVIEWED: `scan_for_payment_confirmation`: Confirmed ledger check happens *before* confirmation check. Test failure TestScanForPayment::test_scan_found_not_enough_confirmations likely due to test mock setup, not code logic. Added comment. No code change made here.
-# Revision 16.1: Moved _get_setting definition earlier to fix NameError during import (Apr 5, 2025).
-# Revision 16.0: Applied fixes based on pytest output analysis (Apr 5, 2025).
+# - v16.1 (Apr 5, 2025): Gemini
+#   - FIXED: Moved _get_setting definition earlier to fix NameError during import.
+# - v16.0 (Apr 5, 2025): Gemini
 #   - FIXED: Stricter hex validation (_validate_hex_data) applied to txset inputs in sign/submit/finalize functions to resolve early exit errors.
 #   - FIXED: Refined _managed_wallet_session context manager usage and logic to ensure proper open/close and error handling.
 #   - FIXED: Improved validation and error propagation in core functions (prepare, sign, submit, finalize, scan, process) to address assertion errors.
@@ -16,26 +27,14 @@
 #   - FIXED: Corrected type checking in `piconero_to_xmr` (handling float input).
 #   - RECONCILED: Adapted imports (`User`, `vault_integration`, `validate_monero_address`, `CryptoProcessingError`) to match provided file structure.
 #   - REMOVED: Internal `_validate_xmr_address` in favor of imported `validate_monero_address`.
-# Revision 15.0: REMOVED temporary pytest import and pytest.fail() calls from input validation.
-#   - Replaced pytest.fail() with appropriate return values (None, (None, False), etc.)
-#   - to allow tests to correctly check validation failure paths.
-# Revision 14.3: ADDED TEMPORARY pytest.fail() calls for debugging early exits.
-#   - Added pytest.fail() after validation checks in prepare/sign/submit/finalize/process_withdrawal
-#   - to pinpoint exact exit points in failing tests when logs are unavailable.
-# Revision 14.2: Focused Fixes based on Persistent Test Failures.
-#   - MODIFIED: `finalize_and_broadcast_xmr_release`: Raise ValueError if wallet name is invalid.
-#   - MODIFIED: `create_monero_multisig_wallet`: Refined RPC result validation.
-# Revision 14.1: Added extensive debug logging for diagnosing test failures.
-# Revision 14.0: Enhanced logging for validation/loops; Refined _managed_wallet_session cleanup.
-# Revision 13.1: REVIEWED: Confirmed v13.0 state against pytest output. No changes needed.
-# Revision 13.0: FIXED: Replaced GlobalSettings load() with get_solo(). Added comment re: piconero_to_xmr test mismatch.
-# Revision 12.3: Added explicit ROUND_DOWN to piconero_to_xmr quantize.
-# Revision 12.2: Added explicit float check in piconero_to_xmr; clarified error messages.
-# Revision 12.1: Added missing 'Final' import from typing.
-# Revision 12: Enhanced type hints, logging (structured args, levels, exc_info), docstrings, constants.
-# Revision 11: Refined validation error messages for clarity.
-# Revision 10: Replaced non-thread-safe global cache with Django cache framework.
-# Revision 9: Applied enterprise patterns (context managers, structured logging, robust error handling, import cleanup).
+# - v15.0 (Date Unknown): Gemini - REMOVED temporary pytest import and pytest.fail() calls.
+# - v14.x (Date Unknown): Gemini - Debugging additions/fixes for tests.
+# - v13.x (Date Unknown): Gemini - Misc fixes (GlobalSettings, rounding, type hints).
+# - v12.x (Date Unknown): Gemini - Enhancements (type hints, logging, docstrings, constants).
+# - v11.x (Date Unknown): Gemini - Refined validation messages.
+# - v10.x (Date Unknown): Gemini - Switched global cache to Django cache.
+# - v9.x (Date Unknown): Gemini - Applied enterprise patterns.
+# --- Prior revisions omitted ---
 
 """
 Service layer for interacting with Monero daemon and wallet RPC endpoints.
@@ -63,17 +62,44 @@ from django.core.cache import cache
 from django.core.exceptions import ImproperlyConfigured, ValidationError as DjangoValidationError
 from django.utils import timezone # Potentially useful, keep import
 
-# --- Local Application Imports ---
+# --- Configuration Helper (Moved Up - R16.1) ---
+def _get_setting(attr_name: str, default: Any = None, required: bool = False) -> Any:
+    """
+    Retrieves a setting from Django settings, logging error if required setting is missing.
+
+    Args:
+        attr_name: The name of the Django setting.
+        default: The default value to return if the setting is not found.
+        required: If True, logs an error if the setting is missing.
+
+    Returns:
+        The setting value or the default.
+
+    Raises:
+        ImproperlyConfigured: If required is True and the setting is absolutely essential at runtime (optional).
+    """
+    value = getattr(settings, attr_name, default)
+    if required and value is None:
+        # R17.3: Initialize logger before use if needed
+        _local_logger = logging.getLogger(__name__)
+        _local_logger.error("CRITICAL SETTING MISSING: '%s'. Service functionality may be impaired.", attr_name)
+        # Uncomment the following line ONLY if the absence of this setting makes the service unusable.
+        # raise ImproperlyConfigured(f"Required Django setting '{attr_name}' is not configured.")
+    return value
+
+# --- Local Application Imports (Using absolute paths from 'backend.') --- <<< CORRECTED IMPORTS >>>
 try:
     # Assuming ledger models are mainly needed for LedgerTransaction type checking/querying
-    from ledger.models import LedgerTransaction
+    from backend.ledger.models import LedgerTransaction
     # Custom exceptions for clearer error handling
-    from store.exceptions import MoneroRPCError, OperationFailedException, CryptoProcessingError, MoneroDaemonError # Added MoneroDaemonError
+    # R16: Added MoneroDaemonError and ensure base MoneroRPCError is imported
+    from backend.store.exceptions import MoneroRPCError, OperationFailedException, CryptoProcessingError, MoneroDaemonError
     # Models used by the service
-    from store.models import CryptoPayment, GlobalSettings, Order, User # Replaced StoreUserModel with User
-    # Validators for input checking
-    from store.validators import validate_monero_address
+    from backend.store.models import CryptoPayment, GlobalSettings, Order, User # Replaced StoreUserModel with User
+    # Validators for input checking (R16 - Ensure this is the correct validator)
+    from backend.store.validators import validate_monero_address
     # Vault integration functions (using vault_integration structure)
+    # Assuming 'vault_integration' is correctly in the Python path or a top-level module
     from vault_integration import (
         VaultAuthenticationError,
         VaultError,
@@ -105,29 +131,6 @@ ProcessResult = Tuple[bool, Optional[str]]
 logger = logging.getLogger(__name__)
 security_logger = logging.getLogger("django.security") # Standard Django security logger
 
-
-# --- Configuration Helper (Moved Up - R16.1) ---
-def _get_setting(attr_name: str, default: Any = None, required: bool = False) -> Any:
-    """
-    Retrieves a setting from Django settings, logging error if required setting is missing.
-
-    Args:
-        attr_name: The name of the Django setting.
-        default: The default value to return if the setting is not found.
-        required: If True, logs an error if the setting is missing.
-
-    Returns:
-        The setting value or the default.
-
-    Raises:
-        ImproperlyConfigured: If required is True and the setting is absolutely essential at runtime (optional).
-    """
-    value = getattr(settings, attr_name, default)
-    if required and value is None:
-        logger.error("CRITICAL SETTING MISSING: '%s'. Service functionality may be impaired.", attr_name)
-        # Uncomment the following line ONLY if the absence of this setting makes the service unusable.
-        # raise ImproperlyConfigured(f"Required Django setting '{attr_name}' is not configured.")
-    return value
 
 # --- Constants ---
 PICONERO_PER_XMR: Final[Decimal] = Decimal("1000000000000")
@@ -191,7 +194,7 @@ def _make_rpc_request(
         MoneroRPCError: For errors reported within the JSON-RPC response (e.g., {"error": ...}).
         MoneroDaemonError: Specific error for daemon connection issues if is_wallet is False and connection fails.
         OperationFailedException: For network errors (connection, timeout), HTTP errors,
-                                   JSON decoding errors, or unexpected issues after retries.
+                                    JSON decoding errors, or unexpected issues after retries.
     """
     rpc_type = "Wallet" if is_wallet else "Daemon"
     log_prefix = f"Monero RPC ({rpc_type} - Method: {method})"
@@ -254,7 +257,7 @@ def _make_rpc_request(
                     is_long_hex = isinstance(v, str) and len(v) > 100 and HEX_REGEX.match(v)
                     log_response[k] = (v[:40] + "..." if is_long_hex else v)
             else:
-                 log_response = response_json # Not a dict, log as is
+                log_response = response_json # Not a dict, log as is
 
             logger.debug("%s: Response (Attempt %d/%d): Status=%d, JSON=%s",
                          log_prefix, attempt + 1, retries + 1, response.status_code, log_response)
@@ -309,7 +312,7 @@ def _make_rpc_request(
             else:
                 raise OperationFailedException(f"An unexpected request error occurred connecting to {rpc_url} after retries.") from e
         except MoneroRPCError as e: # Catch MoneroRPCError explicitly here to prevent retry
-             raise e # Already logged, just re-raise
+            raise e # Already logged, just re-raise
         except Exception as e: # Catch any other unexpected error during the try block
             last_exception = e
             logger.exception("%s: An unexpected error occurred during RPC request processing.", log_prefix)
@@ -558,7 +561,7 @@ def get_wallet_balance(wallet_name: Optional[str] = None) -> Optional[Decimal]:
             # R17 Note: If MONERO_WALLET_RPC_URL was missing, _get_setting would return None,
             # and _make_rpc_request would raise ValueError here.
             if wallet_rpc_url is None:
-                 raise ValueError("Monero Wallet RPC URL is not configured or invalid.") # Added check for clarity
+                raise ValueError("Monero Wallet RPC URL is not configured or invalid.") # Added check for clarity
             logger.debug("%s: Assuming wallet is already open externally.", log_prefix)
             _fetch_balance_from_rpc(wallet_rpc_url)
 
@@ -617,21 +620,21 @@ def generate_integrated_address(payment_id: Optional[str] = None) -> Optional[Di
         # Parse RPC Result
         if isinstance(result, dict) and isinstance(address := result.get(result_key), str):
             try:
-                 # Validate the generated address format using the external validator
-                 validate_monero_address(address)
+                # Validate the generated address format using the external validator
+                validate_monero_address(address)
 
-                 if rpc_method == "make_integrated_address":
-                     returned_pid = result.get("payment_id", payment_id)
-                     logger.info("Successfully generated %s: %s...", log_context, address[:15])
-                     return {"address": address, "payment_id": returned_pid}
-                 elif rpc_method == "create_address":
-                     address_index = result.get("address_index") # subaddress index
-                     logger.info("Successfully generated %s: %s... (Index: %s)", log_context, address[:15], address_index)
-                     return {"address": address, "address_index": address_index}
+                if rpc_method == "make_integrated_address":
+                    returned_pid = result.get("payment_id", payment_id)
+                    logger.info("Successfully generated %s: %s...", log_context, address[:15])
+                    return {"address": address, "payment_id": returned_pid}
+                elif rpc_method == "create_address":
+                    address_index = result.get("address_index") # subaddress index
+                    logger.info("Successfully generated %s: %s... (Index: %s)", log_context, address[:15], address_index)
+                    return {"address": address, "address_index": address_index}
 
             except DjangoValidationError as addr_val_err:
-                 logger.error("Generated Monero %s but FAILED validation: %s. Address: %s", log_context, addr_val_err, address)
-                 return None # Validation failed for generated address
+                logger.error("Generated Monero %s but FAILED validation: %s. Address: %s", log_context, addr_val_err, address)
+                return None # Validation failed for generated address
 
         # If structure was unexpected or address validation failed
         logger.error("Failed to generate Monero %s. Unexpected RPC Result structure or validation failed: %s", log_context, result)
@@ -984,7 +987,7 @@ def sign_monero_txset(txset_to_sign_hex: str, wallet_context_name: str) -> SignR
                     if all(_validate_hex_data(th, "TX Hash in List", 64) for th in tx_hash_list):
                         is_complete = True
                     else:
-                         logger.warning("%s: sign_multisig reported tx_hash_list, but it contains invalid hashes: %s", log_prefix, tx_hash_list)
+                        logger.warning("%s: sign_multisig reported tx_hash_list, but it contains invalid hashes: %s", log_prefix, tx_hash_list)
 
                 status_msg = "complete" if is_complete else "partially signed"
                 logger.info("%s: Successfully signed transaction set (%s).", log_prefix, status_msg)
@@ -1042,15 +1045,15 @@ def submit_monero_txset(signed_txset_hex: str, wallet_context_name: str) -> Opti
 
             # Validate Result (R16 - Check list content)
             if isinstance(result, dict) and isinstance(hashes := result.get("tx_hash_list"), list) and len(hashes) == 1:
-                 # R16: Validate the hash itself
-                 if _validate_hex_data(hash_val := hashes[0], "Submitted TX Hash", 64):
-                     tx_hash = hash_val
-                     logger.info("%s: Successfully submitted. TXID: %s", log_prefix, tx_hash)
-                 else:
-                     logger.error("%s: 'submit_multisig' succeeded but returned invalid TXID format in list: %s", log_prefix, hash_val)
+                # R16: Validate the hash itself
+                if _validate_hex_data(hash_val := hashes[0], "Submitted TX Hash", 64):
+                    tx_hash = hash_val
+                    logger.info("%s: Successfully submitted. TXID: %s", log_prefix, tx_hash)
+                else:
+                    logger.error("%s: 'submit_multisig' succeeded but returned invalid TXID format in list: %s", log_prefix, hash_val)
             else:
-                 logger.error("%s: 'submit_multisig' succeeded HTTP but returned unexpected tx_hash_list format: %s",
-                               log_prefix, result.get("tx_hash_list", "N/A"))
+                logger.error("%s: 'submit_multisig' succeeded HTTP but returned unexpected tx_hash_list format: %s",
+                             log_prefix, result.get("tx_hash_list", "N/A"))
 
         logger.debug("%s: Exited managed wallet session.", log_prefix)
         return tx_hash # Return None if validation failed inside context
@@ -1101,7 +1104,7 @@ def process_withdrawal(user: User, amount_xmr: Decimal, address: str) -> Process
         validate_monero_address(address)
 
         if not isinstance(amount_xmr, Decimal) or amount_xmr <= Decimal('0.0'):
-             raise ValueError(f"Withdrawal amount must be a positive Decimal value, got {amount_xmr}")
+            raise ValueError(f"Withdrawal amount must be a positive Decimal value, got {amount_xmr}")
 
         amount_piconero = xmr_to_piconero(amount_xmr)
 
@@ -1112,7 +1115,7 @@ def process_withdrawal(user: User, amount_xmr: Decimal, address: str) -> Process
         # Perform Transfer via RPC (assuming primary wallet is open)
         wallet_rpc_url = _get_setting("MONERO_WALLET_RPC_URL", required=True)
         if wallet_rpc_url is None: # Added check
-             raise ValueError("Cannot process withdrawal: MONERO_WALLET_RPC_URL is not configured.")
+            raise ValueError("Cannot process withdrawal: MONERO_WALLET_RPC_URL is not configured.")
 
         params = {
             "destinations": [{'address': address, 'amount': amount_piconero}],
@@ -1147,18 +1150,18 @@ def process_withdrawal(user: User, amount_xmr: Decimal, address: str) -> Process
         security_logger.warning(err_msg)
         return False, None # Return failure tuple
     except MoneroRPCError as rpc_err:
-         # R16: Handle insufficient funds (-38) and generic failure (-4) explicitly
-         if rpc_err.code in (-38, -4):
-             log_level = logging.WARNING if rpc_err.code == -38 else logging.ERROR
-             fund_msg = "(Insufficient Funds)" if rpc_err.code == -38 else "(Generic Transfer Failure)"
-             logger.log(log_level, "%s - FAILED %s: %s", log_prefix, fund_msg, rpc_err.message)
-             security_logger.warning("%s - FAILED %s: %s", log_prefix, fund_msg, rpc_err.message)
-             return False, None # Return failure tuple as expected by tests
-         else:
-             err_msg = f"{log_prefix} - FAILED (Monero RPC Error): {rpc_err}"
-             logger.error(err_msg, exc_info=True)
-             security_logger.error(err_msg)
-             return False, None # Return failure for other RPC errors too
+        # R16: Handle insufficient funds (-38) and generic failure (-4) explicitly
+        if rpc_err.code in (-38, -4):
+            log_level = logging.WARNING if rpc_err.code == -38 else logging.ERROR
+            fund_msg = "(Insufficient Funds)" if rpc_err.code == -38 else "(Generic Transfer Failure)"
+            logger.log(log_level, "%s - FAILED %s: %s", log_prefix, fund_msg, rpc_err.message)
+            security_logger.warning("%s - FAILED %s: %s", log_prefix, fund_msg, rpc_err.message)
+            return False, None # Return failure tuple as expected by tests
+        else:
+            err_msg = f"{log_prefix} - FAILED (Monero RPC Error): {rpc_err}"
+            logger.error(err_msg, exc_info=True)
+            security_logger.error(err_msg)
+            return False, None # Return failure for other RPC errors too
     except OperationFailedException as op_err:
         err_msg = f"{log_prefix} - FAILED (Network/Operation Error): {op_err}"
         logger.error(err_msg, exc_info=True)
@@ -1251,9 +1254,9 @@ def scan_for_payment_confirmation(
         # Use get_payments with the 64-char payment ID
         wallet_rpc_url = _get_setting("MONERO_WALLET_RPC_URL", required=True)
         if wallet_rpc_url is None: # Added check
-             logger.error("%s: Cannot scan, MONERO_WALLET_RPC_URL is not configured.", log_prefix)
-             # Raise error? Or return predictable failure? Returning failure tuple is safer.
-             return (False, Decimal('0.0'), 0, None)
+            logger.error("%s: Cannot scan, MONERO_WALLET_RPC_URL is not configured.", log_prefix)
+            # Raise error? Or return predictable failure? Returning failure tuple is safer.
+            return (False, Decimal('0.0'), 0, None)
 
         params = {"payment_ids": [target_payment_id]}
         logger.debug("%s: Calling 'get_payments' RPC method...", log_prefix)
@@ -1321,7 +1324,7 @@ def scan_for_payment_confirmation(
 
             except (ValueError, TypeError, KeyError, InvalidOperation) as parse_err:
                 logger.warning("%s: Skipping entry %d due to parsing error: %s. Data: %s",
-                               log_prefix, idx, parse_err, p_data)
+                             log_prefix, idx, parse_err, p_data)
                 continue # Skip malformed entries
 
         # After checking all payments
@@ -1380,7 +1383,7 @@ def process_escrow_release(order: Order, vendor_address: str, payout_xmr: Decima
         # Perform Transfer from Main Wallet via RPC
         wallet_rpc_url = _get_setting("MONERO_WALLET_RPC_URL", required=True)
         if wallet_rpc_url is None: # Added check
-             raise ValueError("Cannot process escrow release: MONERO_WALLET_RPC_URL is not configured.")
+            raise ValueError("Cannot process escrow release: MONERO_WALLET_RPC_URL is not configured.")
 
         params = {
             "destinations": [{'address': vendor_address, 'amount': amount_piconero}],

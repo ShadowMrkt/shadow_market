@@ -1,9 +1,13 @@
 # shadow_market/kubernetes/ingress.yaml
-# Revision History:
-# 2025-04-07: Initial creation. Defines Ingress rules for frontend and backend.
-#             - Includes placeholder hostname, TLS secret reference, and ingress class.
-#             - Routes /api/* to backend-svc, / to frontend-svc.
-#             - Adds comments regarding prerequisites (Ingress Controller, TLS Secret/Cert-Manager, DNS/Tor).
+# /***************************************************************************************
+# * REVISION HISTORY (Most recent first)
+# ***************************************************************************************
+# * 2025-04-28    [Gemini]   Updated hostname and TLS secret name to clearer
+# * placeholder format (e.g., {{ HOSTNAME_PLACEHOLDER }}). Added
+# * comments emphasizing placeholder replacement and verification
+# * of referenced service port names.
+# * 2025-04-07    [Original] Initial creation. Defines Ingress rules.
+# ***************************************************************************************/
 
 apiVersion: networking.k8s.io/v1
 kind: Ingress
@@ -15,36 +19,38 @@ metadata:
 
     # --- For Cert-Manager (if used for automatic TLS certs) ---
     # cert-manager.io/cluster-issuer: "letsencrypt-prod" # Or your specific issuer name
-    # kubernetes.io/tls-acme: "true" # Deprecated, but sometimes still seen
 
     # --- For Nginx Ingress Controller (Examples - check documentation) ---
+    # Ensure these are uncommented and set appropriately for production
     nginx.ingress.kubernetes.io/proxy-body-size: "50m"      # Allow larger request bodies if needed
     nginx.ingress.kubernetes.io/ssl-redirect: "true"        # Enforce HTTPS redirect (often default)
     nginx.ingress.kubernetes.io/force-ssl-redirect: "true"  # Stronger HTTPS enforcement
-    # nginx.ingress.kubernetes.io/rewrite-target: /$2       # Needed if path rewrite is used (e.g., strip /api)
+    # nginx.ingress.kubernetes.io/rewrite-target: /$2       # Only needed if path rewrite is used
+    # Consider adding proxy read/send timeouts if needed
+    # nginx.ingress.kubernetes.io/proxy-read-timeout: "180"
+    # nginx.ingress.kubernetes.io/proxy-send-timeout: "180"
 
-    # --- Add other annotations needed for CORS, timeouts, proxy headers etc. ---
+    # --- Add other annotations needed for CORS, security headers (if not handled by app) etc. ---
 
 spec:
   # Specify which Ingress Controller should handle this Ingress resource
-  # Find the correct class name for your installed controller (e.g., 'nginx', 'traefik', 'gce', 'alb')
   ingressClassName: nginx # Example: Replace with your actual ingress class name
 
   # --- TLS Configuration ---
   # Defines how TLS (HTTPS) is handled for the specified hosts.
   tls:
     - hosts:
-        # !!! REPLACE with your actual production hostname (.onion or clearnet) !!!
-        - your-service.your-onion-address.onion
+        # !!! CRITICAL: REPLACE placeholder with actual production hostname (.onion or clearnet) !!!
+        - {{ HOSTNAME_PLACEHOLDER }} # e.g., mymarketxyzabc.onion
       # Name of the Kubernetes Secret containing the TLS certificate and private key.
       # This Secret must exist in the same namespace ('shadow-market').
       # RECOMMENDED: Use cert-manager to automatically provision and manage this Secret.
-      secretName: shadow-market-tls-secret # Example secret name
+      secretName: {{ TLS_SECRET_NAME_PLACEHOLDER }} # e.g., shadow-market-tls-secret
 
   # --- Routing Rules ---
   rules:
     # Rule for your primary hostname
-    - host: your-service.your-onion-address.onion # !!! REPLACE with your actual hostname !!!
+    - host: {{ HOSTNAME_PLACEHOLDER }} # !!! CRITICAL: REPLACE placeholder !!!
       http:
         paths:
           # --- Rule for Backend API ---
@@ -56,7 +62,8 @@ spec:
                 # Name of the backend Service created earlier
                 name: shadow-market-backend-svc
                 port:
-                  # Port name defined in the backend Service ('http' -> port 80)
+                  # Verify this port name ('http') exists in shadow-market-backend-svc.yaml
+                  # and maps to the backend container port (8000)
                   name: http
 
           # --- Rule for Frontend Application ---
@@ -69,5 +76,6 @@ spec:
                 # Name of the frontend Service created earlier
                 name: shadow-market-frontend-svc
                 port:
-                  # Port name defined in the frontend Service ('http' -> port 80)
+                  # Verify this port name ('http') exists in shadow-market-frontend-svc.yaml
+                  # and maps to the frontend container port (8080)
                   name: http

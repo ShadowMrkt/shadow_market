@@ -1,5 +1,14 @@
 # backend/store/forms.py
-# <<< Revision: Integrate django-simple-captcha >>>
+# Revision: 1.1 (Fix Relative Imports)
+# Date: 2025-04-29
+# Changes:
+# - Rev 1.1:
+#   - FIXED: Changed relative imports (`from .models`, `from .validators`) to
+#     absolute (`from backend.store.models`, `from backend.store.validators`)
+#     to resolve conflicting model loading errors and ensure consistency.
+# - Rev 1.0 (Original): Initial forms extracted or created.
+
+# <<< Revision: Integrate django-simple-captcha >>> # Original Comment
 
 import json # Added for shipping options validation
 from decimal import Decimal # Added for price validation
@@ -11,9 +20,12 @@ from django.core.exceptions import ValidationError
 from django.contrib.auth import authenticate # For login form
 from captcha.fields import CaptchaField # <<<--- ADDED ---<<<
 
-# Local imports
-from .models import User, Product, Category, Feedback, SupportTicket, TicketMessage, CURRENCY_CHOICES, Order # Added Order
-from .validators import validate_pgp_public_key, validate_monero_address, validate_bitcoin_address, validate_ethereum_address
+# --- FIXED: Use absolute imports ---
+from backend.store.models import User, Product, Category, Feedback, SupportTicket, TicketMessage, CURRENCY_CHOICES, Order
+from backend.store.validators import (
+    validate_pgp_public_key, validate_monero_address,
+    validate_bitcoin_address, validate_ethereum_address
+)
 
 # --- Constants ---
 ALLOWED_TAGS_DESCRIPTION = ['p', 'br', 'ul', 'ol', 'li', 'strong', 'em', 'b', 'i', 'u', 'h3', 'h4', 'h5'] # Allowed HTML in descriptions
@@ -232,22 +244,22 @@ class PlaceOrderForm(forms.Form):
 
 
 class ShippingInfoForm(forms.Form):
-      """Form to collect cleartext shipping information (to be encrypted by the view)."""
-      # Define fields based on required shipping info (name, address, country, etc.)
-      recipient_name = forms.CharField(max_length=200)
-      street_address = forms.CharField(max_length=255)
-      address_line_2 = forms.CharField(max_length=255, required=False)
-      city = forms.CharField(max_length=100)
-      state_province_region = forms.CharField(max_length=100, required=False)
-      postal_code = forms.CharField(max_length=20)
-      country = forms.CharField(max_length=100) # Consider using django-countries
-      phone_number = forms.CharField(max_length=30, required=False)
+    """Form to collect cleartext shipping information (to be encrypted by the view)."""
+    # Define fields based on required shipping info (name, address, country, etc.)
+    recipient_name = forms.CharField(max_length=200)
+    street_address = forms.CharField(max_length=255)
+    address_line_2 = forms.CharField(max_length=255, required=False)
+    city = forms.CharField(max_length=100)
+    state_province_region = forms.CharField(max_length=100, required=False)
+    postal_code = forms.CharField(max_length=20)
+    country = forms.CharField(max_length=100) # Consider using django-countries
+    phone_number = forms.CharField(max_length=30, required=False)
 
-      def get_shipping_data_dict(self):
-          """Returns cleaned data as a dictionary for easy serialization/encryption."""
-          if self.is_valid():
-              return self.cleaned_data
-          return None
+    def get_shipping_data_dict(self):
+        """Returns cleaned data as a dictionary for easy serialization/encryption."""
+        if self.is_valid():
+            return self.cleaned_data
+        return None
 
 
 class FeedbackForm(forms.ModelForm):

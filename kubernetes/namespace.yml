@@ -1,6 +1,10 @@
 # shadow_market/kubernetes/namespace.yaml
-# Revision History:
-# 2025-04-07: Initial creation. Defines the Kubernetes namespace.
+# /***************************************************************************************
+# * REVISION HISTORY (Most recent first)
+# ***************************************************************************************
+# * 2025-04-28    [Gemini]   Reviewed configuration. Confirmed correctness.
+# * 2025-04-07    [Original] Initial creation. Defines the Kubernetes namespace.
+# ***************************************************************************************/
 
 apiVersion: v1
 kind: Namespace

@@ -1,5 +1,8 @@
 // frontend/components/Layout.test.js
 // --- REVISION HISTORY ---
+// 2025-04-28 (Gemini): Rev 18 - Changed CanaryStatusIndicator assertions to directly inspect mock call arguments instead of using expect.objectContaining with toHaveBeenLastCalledWith, bypassing potential matcher issues.
+// 2025-04-28 (Gemini): Rev 17 - Updated CanaryStatusIndicator assertions again to expect exact className string "canaryIndicatorHeader" instead of expect.any(String).
+// 2025-04-28 (Gemini): Rev 16 - Updated toHaveBeenLastCalledWith assertions for CanaryStatusIndicator to include `className: expect.any(String)`, matching props passed intentionally by Layout.js.
 // 2025-04-23 (Gemini): Rev 15 - Corrected useSWR mock assertion to expect the actual key ("canaryData") used in the component.
 // 2025-04-23 (Gemini): Rev 14 - Removed TypeScript 'as jest.Mock' syntax causing SyntaxError in JS environment. Mocking useSWR should still resolve original act() warning.
 // 2025-04-23 (Gemini): Rev 13 - Mocked useSWR directly to control its return values and prevent internal SWR state updates from causing act() warnings. Removed getCanaryData mock and SWRConfig provider as they are no longer needed with useSWR mocked. Simplified async assertions.
@@ -162,19 +165,22 @@ describe('Layout Component', () => {
     render(<Layout>{childText}</Layout>);
 
     expect(CanaryStatusIndicator).toHaveBeenCalled();
-    expect(CanaryStatusIndicator).toHaveBeenLastCalledWith(
-      expect.objectContaining({
-        lastUpdated: mockCanarySuccessData.canary_last_updated,
-        isLoading: false,
-        error: undefined,
-      }),
-      expect.anything() // Context argument
-    );
+
+    // <<< UPDATED: Inspect arguments directly >>>
+    const lastCallArgs = CanaryStatusIndicator.mock.calls[CanaryStatusIndicator.mock.calls.length - 1];
+    const propsPassed = lastCallArgs[0]; // First argument is the props object
+
+    expect(propsPassed.lastUpdated).toBe(mockCanarySuccessData.canary_last_updated);
+    expect(propsPassed.isLoading).toBe(false);
+    expect(propsPassed.error).toBeUndefined();
+    expect(propsPassed.className).toBe("canaryIndicatorHeader");
+    // <<< END UPDATE >>>
 
     const indicator = screen.getByTestId('canary-indicator');
     expect(indicator).toHaveAttribute('data-loading', 'false');
     expect(indicator).toHaveAttribute('data-error', 'false');
     expect(indicator).toHaveAttribute('data-lastupdated', mockCanarySuccessData.canary_last_updated);
+    expect(indicator).toHaveClass("canaryIndicatorHeader");
   });
 
   test('renders CanaryStatusIndicator with correct props while loading', () => {
@@ -192,23 +198,26 @@ describe('Layout Component', () => {
     render(<Layout>{childText}</Layout>);
 
     expect(CanaryStatusIndicator).toHaveBeenCalled();
-    expect(CanaryStatusIndicator).toHaveBeenLastCalledWith(
-      expect.objectContaining({
-        lastUpdated: undefined,
-        isLoading: true,
-        error: undefined,
-      }),
-      expect.anything()
-    );
+
+    // <<< UPDATED: Inspect arguments directly >>>
+    const lastCallArgs = CanaryStatusIndicator.mock.calls[CanaryStatusIndicator.mock.calls.length - 1];
+    const propsPassed = lastCallArgs[0];
+
+    expect(propsPassed.lastUpdated).toBeUndefined();
+    expect(propsPassed.isLoading).toBe(true);
+    expect(propsPassed.error).toBeUndefined();
+    expect(propsPassed.className).toBe("canaryIndicatorHeader");
+    // <<< END UPDATE >>>
 
     const indicator = screen.getByTestId('canary-indicator');
     expect(indicator).toHaveAttribute('data-loading', 'true');
     expect(indicator).toHaveAttribute('data-error', 'false');
     expect(indicator).toHaveAttribute('data-lastupdated', '');
+    expect(indicator).toHaveClass("canaryIndicatorHeader");
   });
 
   test('renders CanaryStatusIndicator with correct props on fetch error', () => {
-     // Override the SWR mock for this test
+      // Override the SWR mock for this test
     if (jest.isMockFunction(mockedUseSWR)) {
          mockedUseSWR.mockReturnValue({
             data: undefined,
@@ -222,19 +231,22 @@ describe('Layout Component', () => {
     render(<Layout>{childText}</Layout>);
 
     expect(CanaryStatusIndicator).toHaveBeenCalled();
-    expect(CanaryStatusIndicator).toHaveBeenLastCalledWith(
-      expect.objectContaining({
-        lastUpdated: undefined,
-        isLoading: false,
-        error: mockCanaryError,
-      }),
-      expect.anything()
-    );
+
+     // <<< UPDATED: Inspect arguments directly >>>
+    const lastCallArgs = CanaryStatusIndicator.mock.calls[CanaryStatusIndicator.mock.calls.length - 1];
+    const propsPassed = lastCallArgs[0];
+
+    expect(propsPassed.lastUpdated).toBeUndefined();
+    expect(propsPassed.isLoading).toBe(false);
+    expect(propsPassed.error).toBe(mockCanaryError);
+    expect(propsPassed.className).toBe("canaryIndicatorHeader");
+    // <<< END UPDATE >>>
 
     const indicator = screen.getByTestId('canary-indicator');
     expect(indicator).toHaveAttribute('data-loading', 'false');
     expect(indicator).toHaveAttribute('data-error', 'true');
     expect(indicator).toHaveAttribute('data-lastupdated', '');
+    expect(indicator).toHaveClass("canaryIndicatorHeader");
   });
 
 });

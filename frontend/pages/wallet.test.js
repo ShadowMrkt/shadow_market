@@ -1,8 +1,10 @@
 // frontend/pages/wallet.test.js
 // --- REVISION HISTORY ---
-// 2025-04-13: Rev 39 - Refined Execute Withdrawal button selection in Step 2 tests to target the specific submit button, resolving ambiguity with mock button. (Gemini)
-// 2025-04-13: Rev 38 - Fixed 'expired error' test assertion for Amount input to expect `null`. Fixed 'goes back' test to target the correct Back button rendered by WalletPage, not the mock child. (Gemini)
-// 2025-04-13: Rev 37 - Use waitFor to check Step 2 removal in 'goes back' test. Use waitFor for input clearing assertion in 'reset on expired' test. (Gemini)
+// 2025-04-28: Rev 44 - Mocked validation libraries (bitcoin-address-validation, monero-ts, ethers) within the test file to ensure predictable behavior in JSDOM, allowing handlePrepareWithdrawal to proceed past address check. Refined waitFor usage. (Gemini)
+// 2025-04-28: Rev 43 - Reverted WithdrawalInputForm mock to include button (as in Rev 41). Changed interaction in tests involving Step 1 submission to use fireEvent.submit() on the form element instead of user.click() on the button, aiming to reliably trigger the form's onSubmit handler. (Gemini)
+// 2025-04-28: Rev 42 - Revised WithdrawalInputForm mock to remove its internal button, ensuring tests click the button rendered by WalletPage within its form, triggering the correct onSubmit handler. (Gemini)
+// 2025-04-28: Rev 41 - Replaced invalid/partial XMR addresses with a valid Testnet address in relevant tests. Updated assertion text in 'shows PGP warning' test. Added/refined act/waitFor usage for async operations. (Gemini)
+// 2025-04-28: Rev 40 - Corrected expectation in 'invalid address format' test to check for error message on Step 1 instead of incorrectly expecting Step 2, aligning with improved validation in wallet.js Rev 18. (Gemini)
 // ... previous history ...
 
 import React from 'react';
@@ -11,11 +13,12 @@ import {
     screen,
     waitFor,
     within,
-    act // Import act
+    act,
+    fireEvent // Import fireEvent
 } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import '@testing-library/jest-dom';
-import WalletPage from './wallet'; // Assuming Rev 14 (handleBackToStep1 still needs fix)
+import WalletPage from './wallet'; // Targetting Rev 19+ of wallet.js
 
 // Keep increased global timeout
 jest.setTimeout(15000);
@@ -53,17 +56,84 @@ jest.mock('../utils/constants', () => ({ SUPPORTED_CURRENCIES: ['XMR', 'BTC'], C
 jest.mock('../utils/formatters', () => ({ formatCurrency: (value, currency) => { /* Simplified mock */ if (value === null || value === undefined || value === '') return 'N/A'; const symbol = { XMR: 'ɱ', BTC: '₿' }[currency] || currency; let numericValue; try { numericValue = Number(value.toString()); if (isNaN(numericValue)) throw new Error('Not a number'); } catch (e) { return `${symbol} Invalid Number`; } const mockData = mockBalancesData[currency]; if (mockData) { if (value.toString() === mockData.total) return `${symbol} ${Number(mockData.total).toFixed(4)}`; if (value.toString() === mockData.available) return `${symbol} ${Number(mockData.available).toFixed(4)}`; if (value.toString() === mockData.locked) return `(${symbol} ${Number(mockData.locked).toFixed(4)} Locked)`; } return `${symbol} ${numericValue.toFixed(4)}`; } }));
 // Mock child components
 jest.mock('../components/Layout', () => ({ children }) => <div>{children}</div>);
-jest.mock('../components/WithdrawalInputForm', () => (props) => ( <div data-testid="withdrawal-input-form-mock-content"> {/* Mock content */} <label>Currency <select name="currency" value={props.currency} onChange={props.onCurrencyChange} disabled={props.disabled || props.isLoading} aria-label="Currency">{['XMR', 'BTC'].map(curr => (<option key={curr} value={curr}>{curr}</option>))}</select></label><label>Amount<input name="amount" type="number" value={props.amount} onChange={props.onAmountChange} disabled={props.disabled || props.isLoading} aria-label="Amount" /></label><label>Address<input name="address" value={props.address} onChange={props.onAddressChange} disabled={props.disabled || props.isLoading} aria-label="Address" /></label><button type="submit" disabled={props.disabled || props.isLoading} onClick={props.onSubmit}>{props.isLoading ? 'Preparing...' : 'Prepare Withdrawal'}</button> </div> ));
-// Mock PgpChallengeSigner - NOTE: The "Execute Withdrawal" button in this mock caused ambiguity. It's removed from mock output for clarity, though still present in rendered mock.
-jest.mock('../components/PgpChallengeSigner', () => (props) => ( <div data-testid="pgp-signer-form-mock-content"> {/* Mock content */} <p data-testid="challenge-text">Challenge: {props.challengeText}</p><label>Signature<textarea data-testid="signature-input" value={props.signatureValue} onChange={props.onSignatureChange} disabled={props.disabled} aria-label="Signature" /></label>{/* Button removed from mock definition for clarity, but the mock RENDERS one */} </div> ));
+
+// Mock WithdrawalInputForm (reverted to Rev 41 version with button)
+jest.mock('../components/WithdrawalInputForm', () => (props) => (
+    <div data-testid="withdrawal-input-form-mock-content">
+        <label>Currency <select name="currency" value={props.currency} onChange={props.onCurrencyChange} disabled={props.disabled || props.isLoading} aria-label="Currency">{['XMR', 'BTC'].map(curr => (<option key={curr} value={curr}>{curr}</option>))}</select></label>
+        <label>Amount<input name="amount" type="number" value={props.amount} onChange={props.onAmountChange} disabled={props.disabled || props.isLoading} aria-label="Amount" /></label>
+        <label>Address<input name="address" value={props.address} onChange={props.onAddressChange} disabled={props.disabled || props.isLoading} aria-label="Address" /></label>
+        <button type="submit" disabled={props.disabled || props.isLoading} onClick={props.onSubmit}>
+            {props.isLoading ? 'Preparing...' : 'Prepare Withdrawal'}
+        </button>
+        <input type="hidden" data-mock-prop-currency={props.currency} />
+        <input type="hidden" data-mock-prop-amount={props.amount} />
+        <input type="hidden" data-mock-prop-address={props.address} />
+        <input type="hidden" data-mock-prop-disabled={props.disabled ? 'true' : 'false'} />
+        <input type="hidden" data-mock-prop-loading={props.isLoading ? 'true' : 'false'} />
+    </div>
+));
+
+
+// Mock PgpChallengeSigner
+jest.mock('../components/PgpChallengeSigner', () => (props) => (
+    <div data-testid="pgp-signer-form-mock-content">
+        <p data-testid="challenge-text">Challenge: {props.challengeText}</p>
+        <label>Signature<textarea data-testid="signature-input" value={props.signatureValue} onChange={props.onSignatureChange} disabled={props.disabled} aria-label="Signature" /></label>
+    </div>
+));
 jest.mock('../components/LoadingSpinner', () => ({ size, message }) => <div data-testid={`spinner-${size || 'default'}`}>{message || 'Loading...'}</div>);
+
+// --- Test Addresses ---
+const VALID_XMR_TESTNET_ADDRESS = '9sZABNdyWspcpsgMUW2nN3LCEGJ3LpSmwQ4jV3e4XKf18J1z11KHF4fGfZ35Rmh4yQjY61U9QV9nHVt4y5F4qANg74zTEAT';
+const VALID_BTC_TESTNET_ADDRESS = 'tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx';
+const VALID_BTC_MAINNET_ADDRESS = '3J98t1WpEZ73CNmQviecrnyiWrnqRhWNLy';
+
+// *** NEW: Mock the validation libraries used by the component's isValidAddress ***
+jest.mock('bitcoin-address-validation', () => ({
+    validate: jest.fn((address) => {
+        // Simple mock: Return true only for our known valid test addresses
+        // console.log(`[MOCK] bitcoin-address-validation: Validating address: ${address}`); // Keep mock log if helpful
+        return [VALID_BTC_TESTNET_ADDRESS, VALID_BTC_MAINNET_ADDRESS].includes(address);
+    }),
+}));
+jest.mock('monero-ts', () => ({
+    MoneroUtils: {
+        isValidAddress: jest.fn(async (address, networkType) => {
+            // Simple mock: Return true only for our known valid test address
+            // console.log(`[MOCK] monero-ts: Validating address: ${address}`); // Keep mock log if helpful
+            return address === VALID_XMR_TESTNET_ADDRESS;
+        }),
+    },
+    MoneroNetworkType: { // Include enum used by component
+        MAINNET: 0,
+        TESTNET: 1,
+        STAGENET: 2,
+    }
+}));
+jest.mock('ethers', () => ({
+    isAddress: jest.fn((address) => {
+        // Simple mock: Assume false for now as no ETH tests exist
+        return false;
+    }),
+}));
+// *** END NEW MOCKS ***
 
 
 // --- Test Data ---
-const mockBalancesData = { // Defined outside beforeEach for mocks
+const mockBalancesData = {
     XMR: { total: "1.5000", available: "1.4500", locked: "0.0500" },
     BTC: { total: "0.1000", available: "0.1000", locked: "0.0000" },
 };
+
+// --- Helper Function ---
+const getWithdrawalForm = (container = screen) => {
+    const withdrawalSection = container.getByRole('heading', { name: /Withdraw Funds/i }).closest('section');
+    if (!withdrawalSection) throw new Error("Could not find withdrawal section");
+    const form = withdrawalSection.querySelector('form');
+    if (!form) throw new Error("Could not find form within withdrawal section");
+    return form;
+}
 
 // --- Test Suite ---
 describe('WalletPage Component', () => {
@@ -72,27 +142,50 @@ describe('WalletPage Component', () => {
     let mockNotifications;
     let consoleErrorSpy;
     let consoleWarnSpy;
+    // Add refs for new mocks
+    let mockValidateBitcoin;
+    let mockMoneroIsValidAddress;
+    let mockIsEthereumAddress;
+
 
     beforeEach(() => {
         mockApi = require('../utils/api');
         mockNotifications = require('../utils/notifications');
+        // Get refs to newly mocked validation functions
+        mockValidateBitcoin = require('bitcoin-address-validation').validate;
+        mockMoneroIsValidAddress = require('monero-ts').MoneroUtils.isValidAddress;
+        mockIsEthereumAddress = require('ethers').isAddress;
+
+        // Clear all mocks
         jest.clearAllMocks();
-        // Explicitly clear API mocks
         mockApi.getWalletBalances.mockClear();
         mockApi.prepareWithdrawal.mockClear();
         mockApi.executeWithdrawal.mockClear();
+        // Clear validation mocks
+        mockValidateBitcoin.mockClear();
+        mockMoneroIsValidAddress.mockClear();
+        mockIsEthereumAddress.mockClear();
 
+
+        // Reset Auth Context
         setMockAuthContext({
             user: { id: 'user1', username: 'testuser' },
             isPgpAuthenticated: true,
             isLoading: false,
         });
 
-        // Reset default implementations AFTER clear
+        // Reset default API implementations
         mockApi.getWalletBalances.mockResolvedValue({ ...mockBalancesData });
         mockApi.prepareWithdrawal.mockResolvedValue({ pgp_message_to_sign: 'Default sign message', withdrawal_id: 'prepDefault123' });
         mockApi.executeWithdrawal.mockResolvedValue({ transaction_id: 'Default TXID' });
 
+        // *** Reset default Validation mock implementations (important if tests override them) ***
+        mockValidateBitcoin.mockImplementation((address) => [VALID_BTC_TESTNET_ADDRESS, VALID_BTC_MAINNET_ADDRESS].includes(address));
+        mockMoneroIsValidAddress.mockImplementation(async (address) => address === VALID_XMR_TESTNET_ADDRESS);
+        mockIsEthereumAddress.mockImplementation(() => false);
+
+
+        // Suppress console messages
         consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
         consoleWarnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
     });
@@ -106,8 +199,8 @@ describe('WalletPage Component', () => {
 
     // --- Tests ---
 
-    // [Tests for initial load, auth, balance display, step 1 validation remain unchanged]
-    test('renders loading state initially for auth', () => {
+    // [Keep previously passing tests unchanged: renders loading, redirects, shows PGP warning, shows balance fetch error]
+     test('renders loading state initially for auth', () => {
         setMockAuthContext({ user: { id: 'user1' }, isPgpAuthenticated: true, isLoading: true });
         render(<WalletPage />);
         expect(screen.getByText(/Loading authentication.../i)).toBeInTheDocument();
@@ -122,19 +215,40 @@ describe('WalletPage Component', () => {
         });
     });
 
-    test('shows PGP warning and no balances if not PGP authenticated', async () => {
+     test('shows PGP warning and no balances if not PGP authenticated', async () => {
         setMockAuthContext({ user: { id: 'user1' }, isPgpAuthenticated: false, isLoading: false });
         render(<WalletPage />);
 
-        const alert = await screen.findByRole('alert');
+        const alert = await screen.findByTestId('balance-load-error-alert');
         expect(alert).toBeInTheDocument();
-        expect(within(alert).getByText(/PGP authenticated session required\. Please re-login/i)).toBeInTheDocument();
+        expect(within(alert).getByText(/PGP authenticated session required\. Please re-login to authenticate PGP\./i)).toBeInTheDocument();
+        expect(within(alert).getByRole('link', { name: /re-login to authenticate PGP/i })).toBeInTheDocument();
 
         expect(mockApi.getWalletBalances).not.toHaveBeenCalled();
         expect(screen.queryByTestId('balance-grid')).not.toBeInTheDocument();
-        expect(screen.queryByTestId('withdrawal-input-form-mock-content')).not.toBeInTheDocument();
+
+        const withdrawalSection = screen.getByRole('heading', { name: /Withdraw Funds/i }).closest('section');
+        expect(withdrawalSection).toBeInTheDocument();
+        expect(within(withdrawalSection).queryByTestId('withdrawal-input-form-mock-content')).not.toBeInTheDocument();
+        expect(within(withdrawalSection).getByText(/PGP authenticated session required to withdraw funds\. Please/i)).toBeInTheDocument();
+        expect(within(withdrawalSection).getByRole('link', { name: /re-login to authenticate PGP/i })).toBeInTheDocument();
     });
 
+     test('shows error if balance fetch fails', async () => {
+        const errorMsg = 'API Error 500 - Cannot reach server';
+        mockApi.getWalletBalances.mockRejectedValueOnce(new Error(errorMsg));
+
+        render(<WalletPage />);
+        const alert = await screen.findByTestId('balance-load-error-alert', {}, { timeout: 14500 });
+
+        expect(mockApi.getWalletBalances).toHaveBeenCalled();
+
+        expect(alert).toBeInTheDocument();
+        expect(within(alert).getByText(errorMsg)).toBeInTheDocument();
+        expect(screen.queryByTestId('balance-grid')).not.toBeInTheDocument();
+        expect(mockNotifications.showErrorToast).toHaveBeenCalledWith(errorMsg);
+        expect(mockNotifications.showErrorToast).toHaveBeenCalledTimes(1);
+    });
 
     test('fetches and displays balances correctly when authenticated', async () => {
         mockApi.getWalletBalances.mockResolvedValue({ ...mockBalancesData });
@@ -152,29 +266,7 @@ describe('WalletPage Component', () => {
         expect(within(balanceGrid).getByTitle(`Locked: ${mockBalancesData.BTC.locked}`)).toHaveTextContent(`(₿ ${Number(mockBalancesData.BTC.locked).toFixed(4)} Locked)`);
 
         expect(screen.getByTestId('withdrawal-input-form-mock-content')).toBeInTheDocument();
-    });
-
-
-    test('shows error if balance fetch fails', async () => {
-        const errorMsg = 'API Error 500 - Cannot reach server';
-        mockApi.getWalletBalances.mockRejectedValueOnce(new Error(errorMsg));
-
-        consoleErrorSpy?.mockRestore();
-        consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
-
-        render(<WalletPage />);
-        const alert = await screen.findByTestId('balance-load-error-alert', {}, { timeout: 14500 });
-
-        expect(mockApi.getWalletBalances).toHaveBeenCalled();
-
-        expect(alert).toBeInTheDocument();
-        expect(within(alert).getByText(errorMsg)).toBeInTheDocument();
-        expect(screen.queryByTestId('balance-grid')).not.toBeInTheDocument();
-        expect(mockNotifications.showErrorToast).toHaveBeenCalledWith(errorMsg);
-        expect(mockNotifications.showErrorToast).toHaveBeenCalledTimes(1);
-
-        consoleErrorSpy?.mockRestore();
-        consoleErrorSpy = null;
+        expect(within(screen.getByTestId('withdrawal-input-form-mock-content')).getByRole('button', { name: /Prepare Withdrawal/i })).toBeInTheDocument();
     });
 
 
@@ -186,6 +278,7 @@ describe('WalletPage Component', () => {
         expect(screen.getByTestId('balance-grid')).toBeInTheDocument();
         expect(screen.queryByTestId('balance-load-error-alert')).not.toBeInTheDocument();
         expect(screen.getByTestId('withdrawal-input-form-mock-content')).toBeInTheDocument();
+        expect(within(screen.getByTestId('withdrawal-input-form-mock-content')).getByRole('button', { name: /Prepare Withdrawal/i })).toBeInTheDocument();
         expect(screen.queryByTestId('pgp-signer-form-mock-content')).not.toBeInTheDocument();
     });
 
@@ -195,16 +288,22 @@ describe('WalletPage Component', () => {
         const user = userEvent.setup();
         await screen.findByTestId('balance-grid', {}, { timeout: 14500 });
 
-        const amountInput = screen.getByLabelText('Amount');
-        const addressInput = screen.getByLabelText('Address');
-        const submitButton = screen.getByRole('button', { name: /Prepare Withdrawal/i });
+        const mockFormContent = screen.getByTestId('withdrawal-input-form-mock-content');
+        const amountInput = within(mockFormContent).getByLabelText('Amount');
+        const addressInput = within(mockFormContent).getByLabelText('Address');
+        const currencySelect = within(mockFormContent).getByLabelText('Currency');
+        const form = getWithdrawalForm();
 
-        await user.selectOptions(screen.getByLabelText('Currency'), 'XMR');
-        await user.type(amountInput, '10.0');
-        await user.type(addressInput, 'validXmrAddressHere');
-        await user.click(submitButton);
+        await user.selectOptions(currencySelect, 'XMR');
+        await user.type(amountInput, '10.0'); // More than available XMR
+        await user.type(addressInput, VALID_XMR_TESTNET_ADDRESS); // Use valid address
 
-        expect(await screen.findByRole('alert')).toHaveTextContent(/Insufficient available funds/i);
+        // Use fireEvent.submit
+        await act(async () => { fireEvent.submit(form); });
+
+        // Assertions remain the same
+        const withdrawalSection = screen.getByRole('heading', { name: /Withdraw Funds/i }).closest('section');
+        expect(await within(withdrawalSection).findByRole('alert')).toHaveTextContent(/Insufficient available funds/i);
         expect(mockNotifications.showErrorToast).not.toHaveBeenCalled();
         expect(mockApi.prepareWithdrawal).not.toHaveBeenCalled();
     });
@@ -215,15 +314,20 @@ describe('WalletPage Component', () => {
         const user = userEvent.setup();
         await screen.findByTestId('balance-grid', {}, { timeout: 14500 });
 
-        const amountInput = screen.getByLabelText('Amount');
-        const addressInput = screen.getByLabelText('Address');
-        const submitButton = screen.getByRole('button', { name: /Prepare Withdrawal/i });
+        const mockFormContent = screen.getByTestId('withdrawal-input-form-mock-content');
+        const amountInput = within(mockFormContent).getByLabelText('Amount');
+        const addressInput = within(mockFormContent).getByLabelText('Address');
+        const form = getWithdrawalForm();
 
-        await user.type(addressInput, 'someAddress');
+        await user.type(addressInput, 'someAddress'); // Irrelevant for this validation
         await user.type(amountInput, 'abc');
-        await user.click(submitButton);
 
-        expect(await screen.findByRole('alert')).toHaveTextContent(/Invalid amount specified \(must be a number\)/i);
+        // Use fireEvent.submit
+        await act(async () => { fireEvent.submit(form); });
+
+        // Assertions remain the same
+        const withdrawalSection = screen.getByRole('heading', { name: /Withdraw Funds/i }).closest('section');
+        expect(await within(withdrawalSection).findByRole('alert')).toHaveTextContent(/Invalid amount specified \(must be a number\)/i);
         expect(mockNotifications.showErrorToast).not.toHaveBeenCalled();
         expect(mockApi.prepareWithdrawal).not.toHaveBeenCalled();
     });
@@ -234,15 +338,20 @@ describe('WalletPage Component', () => {
         const user = userEvent.setup();
         await screen.findByTestId('balance-grid', {}, { timeout: 14500 });
 
-        const amountInput = screen.getByLabelText('Amount');
-        const addressInput = screen.getByLabelText('Address');
-        const submitButton = screen.getByRole('button', { name: /Prepare Withdrawal/i });
+        const mockFormContent = screen.getByTestId('withdrawal-input-form-mock-content');
+        const amountInput = within(mockFormContent).getByLabelText('Amount');
+        const addressInput = within(mockFormContent).getByLabelText('Address');
+        const form = getWithdrawalForm();
 
-        await user.type(addressInput, 'someAddress');
+        await user.type(addressInput, VALID_XMR_TESTNET_ADDRESS); // Use valid address
         await user.type(amountInput, '0');
-        await user.click(submitButton);
 
-        expect(await screen.findByRole('alert')).toHaveTextContent(/Invalid amount specified \(must be positive\)/i);
+        // Use fireEvent.submit
+        await act(async () => { fireEvent.submit(form); });
+
+        // Assertions remain the same
+        const withdrawalSection = screen.getByRole('heading', { name: /Withdraw Funds/i }).closest('section');
+        expect(await within(withdrawalSection).findByRole('alert')).toHaveTextContent(/Invalid amount specified \(must be positive\)/i);
         expect(mockNotifications.showErrorToast).not.toHaveBeenCalled();
         expect(mockApi.prepareWithdrawal).not.toHaveBeenCalled();
     });
@@ -253,285 +362,416 @@ describe('WalletPage Component', () => {
         const user = userEvent.setup();
         await screen.findByTestId('balance-grid', {}, { timeout: 14500 });
 
-        const amountInput = screen.getByLabelText('Amount');
-        const submitButton = screen.getByRole('button', { name: /Prepare Withdrawal/i });
+        const mockFormContent = screen.getByTestId('withdrawal-input-form-mock-content');
+        const amountInput = within(mockFormContent).getByLabelText('Amount');
+        const form = getWithdrawalForm();
 
         await user.type(amountInput, '0.1');
-        await user.click(submitButton);
 
-        expect(await screen.findByRole('alert')).toHaveTextContent(/Destination address is required\./i);
+        // Use fireEvent.submit
+        await act(async () => { fireEvent.submit(form); });
+
+        // Assertions remain the same
+        const withdrawalSection = screen.getByRole('heading', { name: /Withdraw Funds/i }).closest('section');
+        expect(await within(withdrawalSection).findByRole('alert')).toHaveTextContent(/Destination address is required\./i);
         expect(mockNotifications.showErrorToast).not.toHaveBeenCalled();
         expect(mockApi.prepareWithdrawal).not.toHaveBeenCalled();
     });
 
 
-    test('shows validation error for invalid address format (placeholder check)', async () => {
-        // NOTE: Asserts component proceeds to step 2 due to weak validation passing
-        const prepResponse = { pgp_message_to_sign: 'Signing for invalid address', withdrawal_id: 'prepInvalidAddr123' };
-        mockApi.prepareWithdrawal.mockClear().mockResolvedValueOnce(prepResponse);
+    test('shows validation error for invalid address format', async () => {
+        // Mock the validation libs to return false for this specific address
+        // (Though default mocks might already handle this if address is not in the 'valid' list)
+        const invalidAddress = 'this is definitely not a valid address';
+        mockMoneroIsValidAddress.mockImplementation(async (addr) => addr === VALID_XMR_TESTNET_ADDRESS); // Ensure only valid one passes
+        mockValidateBitcoin.mockImplementation((addr) => [VALID_BTC_TESTNET_ADDRESS, VALID_BTC_MAINNET_ADDRESS].includes(addr)); // Ensure only valid ones pass
 
         render(<WalletPage />);
         const user = userEvent.setup();
         await screen.findByTestId('balance-grid', {}, { timeout: 14500 });
 
-        const amountInput = screen.getByLabelText('Amount');
-        const addressInput = screen.getByLabelText('Address');
-        const submitButton = screen.getByRole('button', { name: /Prepare Withdrawal/i });
+        const mockFormContent = screen.getByTestId('withdrawal-input-form-mock-content');
+        const amountInput = within(mockFormContent).getByLabelText('Amount');
+        const addressInput = within(mockFormContent).getByLabelText('Address');
+        const currencySelect = within(mockFormContent).getByLabelText('Currency');
+        const form = getWithdrawalForm();
 
-        await user.selectOptions(screen.getByLabelText('Currency'), 'XMR');
+        await user.selectOptions(currencySelect, 'XMR');
         await user.type(amountInput, '0.1');
-        await user.type(addressInput, 'invalid address'); // Passes placeholder validation
-        await act(async () => { await user.click(submitButton); });
+        await user.type(addressInput, invalidAddress);
 
-        // Expect Step 2 because validation passed and API call succeeded
-        const step2Form = await screen.findByTestId('pgp-signer-form-mock-content');
-        expect(step2Form).toBeInTheDocument();
-        expect(mockApi.prepareWithdrawal).toHaveBeenCalledTimes(1);
+        // Use fireEvent.submit
+        await act(async () => { fireEvent.submit(form); });
+
+        // Assertions remain the same
+        const withdrawalSection = screen.getByRole('heading', { name: /Withdraw Funds/i }).closest('section');
+        const alert = await within(withdrawalSection).findByRole('alert');
+        expect(alert).toHaveTextContent(/Invalid address format for XMR\. Please double-check\./i);
+
+        expect(screen.getByTestId('withdrawal-input-form-mock-content')).toBeInTheDocument();
+        expect(screen.queryByTestId('pgp-signer-form-mock-content')).not.toBeInTheDocument();
+        expect(mockApi.prepareWithdrawal).not.toHaveBeenCalled();
+        expect(mockNotifications.showErrorToast).not.toHaveBeenCalled();
+        // Check the validation mock was called correctly
+        expect(mockMoneroIsValidAddress).toHaveBeenCalledWith(invalidAddress, expect.anything());
     });
 
 
     test('calls prepareWithdrawal and proceeds to Step 2 on successful prepare', async () => {
         const prepResponse = { pgp_message_to_sign: 'SIGN THIS MESSAGE PLEASE', withdrawal_id: 'prep123' };
-        mockApi.prepareWithdrawal.mockResolvedValueOnce(prepResponse);
+        const prepareMock = mockApi.prepareWithdrawal.mockResolvedValueOnce(prepResponse);
 
         render(<WalletPage />);
         const user = userEvent.setup();
         await screen.findByTestId('balance-grid', {}, { timeout: 14500 });
 
-        const amountInput = screen.getByLabelText('Amount');
-        const addressInput = screen.getByLabelText('Address');
-        const submitButton = screen.getByRole('button', { name: /Prepare Withdrawal/i });
-        const currencySelect = screen.getByLabelText('Currency');
+        const mockFormContent = screen.getByTestId('withdrawal-input-form-mock-content');
+        const amountInput = within(mockFormContent).getByLabelText('Amount');
+        const addressInput = within(mockFormContent).getByLabelText('Address');
+        const currencySelect = within(mockFormContent).getByLabelText('Currency');
+        const form = getWithdrawalForm();
 
         const amount = '0.5';
-        const address = 'validXmrAddressHere';
+        const address = VALID_XMR_TESTNET_ADDRESS; // Test with valid XMR address
         const currency = 'XMR';
 
         await user.selectOptions(currencySelect, currency);
         await user.type(amountInput, amount);
         await user.type(addressInput, address);
-        await act(async () => { await user.click(submitButton); });
 
-        const step2Form = await screen.findByTestId('pgp-signer-form-mock-content');
+        // Use fireEvent.submit
+        await act(async () => {
+            fireEvent.submit(form);
+            // Wait for prepareWithdrawal mock (should be called now)
+            await waitFor(() => expect(prepareMock).toHaveBeenCalled());
+        });
 
-        expect(mockApi.prepareWithdrawal).toHaveBeenCalledWith({ currency, amount: parseFloat(amount).toString(), address });
-        expect(mockApi.prepareWithdrawal).toHaveBeenCalledTimes(1);
-        expect(screen.queryByTestId('withdrawal-input-form-mock-content')).not.toBeInTheDocument();
+        // Check API call (should be called now)
+        expect(prepareMock).toHaveBeenCalledWith({ currency, amount: amount.toString(), address });
+        expect(prepareMock).toHaveBeenCalledTimes(1);
+         // Check address validation mock was called and returned true
+         expect(mockMoneroIsValidAddress).toHaveBeenCalledWith(address, expect.anything());
+         await expect(mockMoneroIsValidAddress(address)).resolves.toBe(true); // Verify mock returns true
+
+        // Now wait for Step 2 elements
+        const step2Form = await screen.findByTestId('pgp-signer-form-mock-content', {}, { timeout: 5000 });
         expect(step2Form).toBeInTheDocument();
         expect(within(step2Form).getByTestId('challenge-text')).toHaveTextContent(`Challenge: ${prepResponse.pgp_message_to_sign}`);
+        expect(screen.queryByTestId('withdrawal-input-form-mock-content')).not.toBeInTheDocument();
+        expect(screen.getByRole('button', { name: /^Back$/i })).toBeInTheDocument();
+        expect(screen.getByRole('button', { name: /Execute Withdrawal/i })).toBeInTheDocument();
+
+        // Check toast
+        await waitFor(() => expect(mockNotifications.showInfoToast).toHaveBeenCalledWith("Withdrawal prepared. Please sign the confirmation message."));
+        expect(mockNotifications.showInfoToast).toHaveBeenCalledTimes(1);
     });
 
 
     test('shows error on failed prepareWithdrawal API call', async () => {
         const errorMsg = 'Prepare API Call Failed Miserably';
-        mockApi.prepareWithdrawal.mockRejectedValueOnce(new Error(errorMsg));
+        const prepareMock = mockApi.prepareWithdrawal.mockRejectedValueOnce(new Error(errorMsg));
 
         render(<WalletPage />);
         const user = userEvent.setup();
         await screen.findByTestId('balance-grid', {}, { timeout: 14500 });
 
-        const amountInput = screen.getByLabelText('Amount');
-        const addressInput = screen.getByLabelText('Address');
-        const submitButton = screen.getByRole('button', { name: /Prepare Withdrawal/i });
-        const currencySelect = screen.getByLabelText('Currency');
-        const validPlaceholderBtcAddress = '3J98t1WpEZ73CNmQviecrnyiWrnqRhWNLy';
+        const mockFormContent = screen.getByTestId('withdrawal-input-form-mock-content');
+        const amountInput = within(mockFormContent).getByLabelText('Amount');
+        const addressInput = within(mockFormContent).getByLabelText('Address');
+        const currencySelect = within(mockFormContent).getByLabelText('Currency');
+        const form = getWithdrawalForm();
+        const validBtcAddress = VALID_BTC_MAINNET_ADDRESS; // Test with BTC
 
         await user.selectOptions(currencySelect, 'BTC');
         await user.type(amountInput, '0.01');
-        await user.type(addressInput, validPlaceholderBtcAddress);
-        await act(async () => { await user.click(submitButton); });
+        await user.type(addressInput, validBtcAddress);
 
+        // Use fireEvent.submit
+        await act(async () => {
+             fireEvent.submit(form);
+             // Wait for prepareWithdrawal mock (should be called now)
+             await waitFor(() => expect(prepareMock).toHaveBeenCalled());
+        });
+
+         // Check API call (should be called now)
+         expect(prepareMock).toHaveBeenCalledWith({ currency: 'BTC', amount: '0.01', address: validBtcAddress });
+         expect(prepareMock).toHaveBeenCalledTimes(1);
+         // Check address validation mock was called and returned true
+         expect(mockValidateBitcoin).toHaveBeenCalledWith(validBtcAddress);
+         expect(mockValidateBitcoin(validBtcAddress)).toBe(true); // Verify mock returns true
+
+
+        // Wait for error handling effects
         await waitFor(() => {
             expect(mockNotifications.showErrorToast).toHaveBeenCalledWith(errorMsg);
-        });
+        }, { timeout: 4000 });
+
         expect(mockNotifications.showErrorToast).toHaveBeenCalledTimes(1);
 
+        // Check UI remains on Step 1
         expect(screen.getByTestId('withdrawal-input-form-mock-content')).toBeInTheDocument();
-        expect(screen.queryByTestId('pgp-signer-form-mock-content')).not.toBeInTheDocument();
-        expect(submitButton).not.toBeDisabled();
+        const submitButton = within(screen.getByTestId('withdrawal-input-form-mock-content')).getByRole('button', { name: /Prepare Withdrawal/i });
+        await waitFor(() => expect(submitButton).not.toBeDisabled());
         expect(submitButton).toHaveTextContent('Prepare Withdrawal');
+        expect(screen.queryByTestId('pgp-signer-form-mock-content')).not.toBeInTheDocument();
+
+        // Check error message display
+        const withdrawalSection = screen.getByRole('heading', { name: /Withdraw Funds/i }).closest('section');
+        expect(await within(withdrawalSection).findByRole('alert')).toHaveTextContent(errorMsg);
     });
 
 
     // --- Withdrawal Step 2 Tests ---
     test('goes back to Step 1 from Step 2 using Back button', async () => {
         const prepResponse = { pgp_message_to_sign: 'SIGN THIS TO GO BACK', withdrawal_id: 'prepGoBack' };
-        mockApi.prepareWithdrawal.mockResolvedValueOnce(prepResponse);
+        const prepareMock = mockApi.prepareWithdrawal.mockResolvedValueOnce(prepResponse);
 
         render(<WalletPage />);
         const user = userEvent.setup();
         await screen.findByTestId('balance-grid', {}, { timeout: 14500 });
 
         // --- Perform Step 1 ---
-        await user.selectOptions(screen.getByLabelText('Currency'), 'XMR');
-        await user.type(screen.getByLabelText('Amount'), '0.1');
-        await user.type(screen.getByLabelText('Address'), 'validAddressForBackTest');
-        await act(async () => { await user.click(screen.getByRole('button', { name: /Prepare Withdrawal/i })); });
+        const mockFormContent = screen.getByTestId('withdrawal-input-form-mock-content');
+        const address = VALID_XMR_TESTNET_ADDRESS; // Use valid XMR
+        await user.selectOptions(within(mockFormContent).getByLabelText('Currency'), 'XMR');
+        await user.type(within(mockFormContent).getByLabelText('Amount'), '0.1');
+        await user.type(within(mockFormContent).getByLabelText('Address'), address);
+        const step1Form = getWithdrawalForm();
+        await act(async () => {
+             fireEvent.submit(step1Form);
+             await waitFor(() => expect(prepareMock).toHaveBeenCalled()); // Should be called now
+        });
+         // Check address validation mock was called and returned true
+         expect(mockMoneroIsValidAddress).toHaveBeenCalledWith(address, expect.anything());
+         await expect(mockMoneroIsValidAddress(address)).resolves.toBe(true); // Verify mock returns true
 
-        // Wait for Step 2
-        await screen.findByTestId('pgp-signer-form-mock-content'); // Still useful to wait for this part of step 2 to appear
+
+        // Wait for Step 2 elements
+        await screen.findByTestId('pgp-signer-form-mock-content', {}, {timeout: 3000});
+        const backButton = screen.getByRole('button', { name: /^Back$/i });
+        expect(backButton).toBeInTheDocument();
 
         // --- Click Back in Step 2 ---
-        const backButton = screen.getByRole('button', { name: /^Back$/i });
         await act(async () => { await user.click(backButton); });
 
-        // Wait for Step 2 form to disappear
-        await waitFor(() => expect(screen.queryByTestId('pgp-signer-form-mock-content')).not.toBeInTheDocument());
+        // Wait for Step 1 elements to reappear
+        const step1FormMockReappeared = await screen.findByTestId('withdrawal-input-form-mock-content', {}, {timeout: 3000});
+        expect(step1FormMockReappeared).toBeInTheDocument();
+        expect(within(step1FormMockReappeared).getByRole('button', { name: /Prepare Withdrawal/i })).toBeInTheDocument();
 
-        // Assert final state (Step 1)
-        expect(screen.getByTestId('withdrawal-input-form-mock-content')).toBeInTheDocument();
-        // These assertions will currently fail until WalletPage.js handleBackToStep1 is fixed
-        expect(screen.getByLabelText('Amount')).toHaveValue(null); // Expect empty number input
-        expect(screen.getByLabelText('Address')).toHaveValue('');  // Expect empty text input
+        // Step 2 elements should disappear
+        expect(screen.queryByTestId('pgp-signer-form-mock-content')).not.toBeInTheDocument();
+        expect(screen.queryByRole('button', { name: /^Back$/i })).not.toBeInTheDocument();
+        expect(screen.queryByRole('button', { name: /Execute Withdrawal/i })).not.toBeInTheDocument();
+
+        // Assert inputs are cleared
+        await waitFor(() => {
+            expect(within(step1FormMockReappeared).getByLabelText('Amount')).toHaveValue(null);
+            expect(within(step1FormMockReappeared).getByLabelText('Address')).toHaveValue('');
+        });
     });
 
     test('calls executeWithdrawal and resets on successful Step 2 submit', async () => {
         const withdrawalId = 'prepSuccess123';
-        mockApi.prepareWithdrawal.mockResolvedValueOnce({ pgp_message_to_sign: 'SIGN THIS FOR SUCCESS', withdrawal_id: withdrawalId });
+        const initialPrepareMock = mockApi.prepareWithdrawal.mockResolvedValueOnce({ pgp_message_to_sign: 'SIGN THIS FOR SUCCESS', withdrawal_id: withdrawalId });
         const execResponse = { transaction_id: 'tx12345success' };
-        mockApi.executeWithdrawal.mockResolvedValueOnce(execResponse);
+        const executeMock = mockApi.executeWithdrawal.mockResolvedValueOnce(execResponse);
         const updatedBalances = { ...mockBalancesData, XMR: { ...mockBalancesData.XMR, available: "1.3500" } };
+        const balanceRefreshMock = mockApi.getWalletBalances.mockResolvedValueOnce(mockBalancesData).mockResolvedValueOnce(updatedBalances);
 
         render(<WalletPage />);
         const user = userEvent.setup();
-
-        // Wait for initial load, setup next mock
-        const initialLoadFinished = screen.findByTestId('balance-grid', {}, { timeout: 14500 });
-        mockApi.getWalletBalances.mockResolvedValueOnce(updatedBalances);
-        await initialLoadFinished;
+        await screen.findByTestId('balance-grid', {}, { timeout: 14500 });
+        expect(balanceRefreshMock).toHaveBeenCalledTimes(1);
 
         // --- Perform Step 1 ---
+        const mockFormContent = screen.getByTestId('withdrawal-input-form-mock-content');
         const amountToWithdraw = '0.1';
-        await user.selectOptions(screen.getByLabelText('Currency'), 'XMR');
-        await user.type(screen.getByLabelText('Amount'), amountToWithdraw);
-        await user.type(screen.getByLabelText('Address'), 'validAddressForSuccessTest');
-        await act(async () => { await user.click(screen.getByRole('button', { name: /Prepare Withdrawal/i })); });
+        const address = VALID_XMR_TESTNET_ADDRESS; // Use valid XMR
+        await user.selectOptions(within(mockFormContent).getByLabelText('Currency'), 'XMR');
+        await user.type(within(mockFormContent).getByLabelText('Amount'), amountToWithdraw);
+        await user.type(within(mockFormContent).getByLabelText('Address'), address);
+        const step1Form = getWithdrawalForm();
+        await act(async () => {
+             fireEvent.submit(step1Form);
+             await waitFor(() => expect(initialPrepareMock).toHaveBeenCalled()); // Should be called
+         });
+          // Check address validation mock was called and returned true
+         expect(mockMoneroIsValidAddress).toHaveBeenCalledWith(address, expect.anything());
+         await expect(mockMoneroIsValidAddress(address)).resolves.toBe(true); // Verify mock returns true
 
-        // Wait for Step 2
-        await screen.findByTestId('pgp-signer-form-mock-content'); // Wait for step 2 elements
+
+        // Wait for Step 2 elements
+        const step2FormMock = await screen.findByTestId('pgp-signer-form-mock-content', {}, {timeout: 3000});
+        const executeButton = screen.getByRole('button', { name: /Execute Withdrawal/i });
 
         // --- Perform Step 2 ---
-        const signatureInput = screen.getByLabelText('Signature');
-        // *** FIX: Target the specific submit button ***
-        const executeButton = screen.getByRole('button', { name: /Execute Withdrawal/i, type: 'submit' });
+        const signatureInput = within(step2FormMock).getByLabelText('Signature');
         const signature = '-----BEGIN PGP SIGNATURE-----\n...\n-----END PGP SIGNATURE-----';
         await user.type(signatureInput, signature);
-        await act(async () => { await user.click(executeButton); });
-        await act(async () => {}); // Flush potential balance refresh
 
-        // Wait for UI changes
-        await waitFor(() => {
-             expect(mockNotifications.showSuccessToast).toHaveBeenCalledWith(expect.stringContaining(`Withdrawal successful! Transaction ID: ${execResponse.transaction_id}`));
-        });
-        await screen.findByTestId('withdrawal-input-form-mock-content');
-        await waitFor(() => {
-            expect(screen.getByTitle(`Available: ${updatedBalances.XMR.available}`)).toHaveTextContent(`ɱ ${Number(updatedBalances.XMR.available).toFixed(4)}`);
+        expect(executeMock).not.toHaveBeenCalled();
+        await act(async () => {
+             await user.click(executeButton);
+             await waitFor(() => expect(executeMock).toHaveBeenCalled());
+             await waitFor(() => expect(balanceRefreshMock).toHaveBeenCalledTimes(2));
          });
 
+        // Wait for success toast
+        await waitFor(() => {
+            expect(mockNotifications.showSuccessToast).toHaveBeenCalledWith(expect.stringContaining(`Withdrawal successful! Transaction ID: ${execResponse.transaction_id}`));
+        }, { timeout: 4000 });
+
+        // Wait for Step 1 elements to reappear
+        const step1FormMockReappeared = await screen.findByTestId('withdrawal-input-form-mock-content', {}, {timeout: 3000});
+        expect(step1FormMockReappeared).toBeInTheDocument();
+        expect(within(step1FormMockReappeared).getByRole('button', { name: /Prepare Withdrawal/i })).toBeInTheDocument();
+
+        // Wait for updated balances
+        await waitFor(() => {
+           expect(screen.getByTitle(`Available: ${updatedBalances.XMR.available}`)).toHaveTextContent(`ɱ ${Number(updatedBalances.XMR.available).toFixed(4)}`);
+        }, { timeout: 3000 });
+
         // Check APIs & state
-        expect(mockApi.executeWithdrawal).toHaveBeenCalledWith({ withdrawal_id: withdrawalId, pgp_confirmation_signature: signature });
-        expect(mockApi.executeWithdrawal).toHaveBeenCalledTimes(1);
+        expect(executeMock).toHaveBeenCalledWith({ withdrawal_id: withdrawalId, pgp_confirmation_signature: signature });
+        expect(executeMock).toHaveBeenCalledTimes(1);
         expect(mockNotifications.showSuccessToast).toHaveBeenCalledTimes(1);
+        expect(balanceRefreshMock).toHaveBeenCalledTimes(2);
         expect(screen.queryByTestId('pgp-signer-form-mock-content')).not.toBeInTheDocument();
-        expect(screen.getByLabelText('Amount')).toHaveValue(null);
-        expect(screen.getByLabelText('Address')).toHaveValue('');
+        expect(screen.queryByRole('button', { name: /Execute Withdrawal/i })).not.toBeInTheDocument();
+        await waitFor(() => {
+            expect(within(step1FormMockReappeared).getByLabelText('Amount')).toHaveValue(null);
+            expect(within(step1FormMockReappeared).getByLabelText('Address')).toHaveValue('');
+        });
     });
 
 
     test('shows error and stays on Step 2 on failed executeWithdrawal (e.g., invalid signature)', async () => {
         const withdrawalId = 'prepFailSign123';
-        mockApi.prepareWithdrawal.mockClear();
-        mockApi.prepareWithdrawal.mockResolvedValueOnce({ pgp_message_to_sign: 'SIGN THIS FOR FAILURE', withdrawal_id: withdrawalId });
+        const prepareMock = mockApi.prepareWithdrawal.mockResolvedValueOnce({ pgp_message_to_sign: 'SIGN THIS FOR FAILURE', withdrawal_id: withdrawalId });
         const errorMsg = 'Invalid PGP signature provided.';
-        mockApi.executeWithdrawal.mockRejectedValueOnce(new Error(errorMsg));
+        const executeMock = mockApi.executeWithdrawal.mockRejectedValueOnce(new Error(errorMsg));
 
         render(<WalletPage />);
         const user = userEvent.setup();
         await screen.findByTestId('balance-grid', {}, { timeout: 14500 });
 
         // --- Perform Step 1 ---
-        await user.selectOptions(screen.getByLabelText('Currency'), 'XMR');
-        await user.type(screen.getByLabelText('Amount'), '0.1');
-        await user.type(screen.getByLabelText('Address'), 'validAddressForFailSignTest');
-        await act(async () => { await user.click(screen.getByRole('button', { name: /Prepare Withdrawal/i })); });
+        const mockFormContent = screen.getByTestId('withdrawal-input-form-mock-content');
+        const address = VALID_XMR_TESTNET_ADDRESS; // Use valid XMR
+        await user.selectOptions(within(mockFormContent).getByLabelText('Currency'), 'XMR');
+        await user.type(within(mockFormContent).getByLabelText('Amount'), '0.1');
+        await user.type(within(mockFormContent).getByLabelText('Address'), address);
+        const step1Form = getWithdrawalForm();
+        await act(async () => {
+             fireEvent.submit(step1Form);
+             await waitFor(() => expect(prepareMock).toHaveBeenCalled()); // Should be called
+        });
+         // Check address validation mock was called and returned true
+         expect(mockMoneroIsValidAddress).toHaveBeenCalledWith(address, expect.anything());
+         await expect(mockMoneroIsValidAddress(address)).resolves.toBe(true); // Verify mock returns true
 
-        // Wait for Step 2
-        await screen.findByTestId('pgp-signer-form-mock-content'); // Wait for step 2 elements
+        // Wait for Step 2 elements
+        const step2FormMock = await screen.findByTestId('pgp-signer-form-mock-content', {}, {timeout: 3000});
+        const executeButton = screen.getByRole('button', { name: /Execute Withdrawal/i });
 
         // --- Perform Step 2 ---
-        const signatureInput = screen.getByLabelText('Signature');
-         // *** FIX: Target the specific submit button ***
-        const executeButton = screen.getByRole('button', { name: /Execute Withdrawal/i, type: 'submit' });
+        const signatureInput = within(step2FormMock).getByLabelText('Signature');
         const badSignature = 'invalid-signature-for-test';
         await user.type(signatureInput, badSignature);
-        await act(async () => { await user.click(executeButton); });
 
-        // Wait for error toast
+        await act(async () => {
+             await user.click(executeButton);
+             await waitFor(() => expect(executeMock).toHaveBeenCalled()); // Should be called
+        });
+
+        // Wait for error toast AND check component error message area
+        const withdrawalSection = screen.getByRole('heading', { name: /Withdraw Funds/i }).closest('section');
         await waitFor(() => {
             expect(mockNotifications.showErrorToast).toHaveBeenCalledWith(errorMsg);
-        });
-        expect(mockNotifications.showErrorToast).toHaveBeenCalledTimes(1);
+        }, {timeout: 3000});
+        expect(await within(withdrawalSection).findByRole('alert')).toHaveTextContent(errorMsg); // Error message inside section
 
-        // Check API call uses the correct ID
-        expect(mockApi.executeWithdrawal).toHaveBeenCalledWith({ withdrawal_id: withdrawalId, pgp_confirmation_signature: badSignature });
-        expect(mockApi.executeWithdrawal).toHaveBeenCalledTimes(1);
+        expect(mockNotifications.showErrorToast).toHaveBeenCalledTimes(1);
+        expect(executeMock).toHaveBeenCalledWith({ withdrawal_id: withdrawalId, pgp_confirmation_signature: badSignature });
+        expect(executeMock).toHaveBeenCalledTimes(1);
 
         // Assert still on Step 2
-        expect(screen.getByTestId('pgp-signer-form-mock-content')).toBeInTheDocument(); // Check mock container still there
-        expect(screen.getByLabelText('Signature')).toHaveValue(badSignature); // Check input still has value
-        expect(executeButton).not.toBeDisabled(); // Check the *correct* button state
+        expect(screen.getByTestId('pgp-signer-form-mock-content')).toBeInTheDocument();
+        expect(screen.getByLabelText('Signature')).toHaveValue(badSignature);
+        expect(screen.getByRole('button', { name: /^Back$/i })).toBeInTheDocument();
+        await waitFor(() => expect(executeButton).not.toBeDisabled());
         expect(screen.queryByTestId('withdrawal-input-form-mock-content')).not.toBeInTheDocument();
     });
 
 
     test('resets to Step 1 if executeWithdrawal fails with expired error', async () => {
         const withdrawalId = 'prepFailExp123';
-        mockApi.prepareWithdrawal.mockResolvedValueOnce({ pgp_message_to_sign: 'SIGN THIS FOR EXPIRY', withdrawal_id: withdrawalId });
-        const expiryErrorMessage = require('../utils/constants').ERROR_MESSAGES?.WITHDRAWAL_EXPIRED || 'Withdrawal confirmation expired or invalid.';
+        const prepareMock = mockApi.prepareWithdrawal.mockResolvedValueOnce({ pgp_message_to_sign: 'SIGN THIS FOR EXPIRY', withdrawal_id: withdrawalId });
+        const expiryApiErrorMessage = require('../utils/constants').ERROR_MESSAGES.WITHDRAWAL_EXPIRED;
         const finalDisplayErrorMessage = 'Withdrawal expired or invalid. Please prepare a new withdrawal.';
-        mockApi.executeWithdrawal.mockRejectedValueOnce(new Error(expiryErrorMessage));
+        const executeMock = mockApi.executeWithdrawal.mockRejectedValueOnce(new Error(expiryApiErrorMessage));
+        const balanceRefreshMock = mockApi.getWalletBalances.mockResolvedValue(mockBalancesData);
 
         render(<WalletPage />);
         const user = userEvent.setup();
         await screen.findByTestId('balance-grid', {}, { timeout: 14500 });
+        expect(balanceRefreshMock).toHaveBeenCalledTimes(1);
 
         // --- Perform Step 1 ---
-        await user.selectOptions(screen.getByLabelText('Currency'), 'BTC');
-        await user.type(screen.getByLabelText('Amount'), '0.001');
-        await user.type(screen.getByLabelText('Address'), '3J98t1WpEZ73CNmQviecrnyiWrnqRhWNLy');
-        await act(async () => { await user.click(screen.getByRole('button', { name: /Prepare Withdrawal/i })); });
+        const mockFormContent = screen.getByTestId('withdrawal-input-form-mock-content');
+        const address = VALID_BTC_MAINNET_ADDRESS; // Use valid BTC
+        await user.selectOptions(within(mockFormContent).getByLabelText('Currency'), 'BTC');
+        await user.type(within(mockFormContent).getByLabelText('Amount'), '0.001');
+        await user.type(within(mockFormContent).getByLabelText('Address'), address);
+        const step1Form = getWithdrawalForm();
+        await act(async () => {
+            fireEvent.submit(step1Form);
+            await waitFor(() => expect(prepareMock).toHaveBeenCalled()); // Should be called
+        });
+         // Check address validation mock was called and returned true
+         expect(mockValidateBitcoin).toHaveBeenCalledWith(address);
+         expect(mockValidateBitcoin(address)).toBe(true); // Verify mock returns true
 
-        // Wait for Step 2
-        await screen.findByTestId('pgp-signer-form-mock-content'); // Wait for step 2 elements
+        // Wait for Step 2 elements
+        const step2FormMock = await screen.findByTestId('pgp-signer-form-mock-content', {}, {timeout: 7000});
+        const executeButton = screen.getByRole('button', { name: /Execute Withdrawal/i });
 
         // --- Perform Step 2 ---
-        const signatureInput = screen.getByLabelText('Signature');
-         // *** FIX: Target the specific submit button ***
-        const executeButton = screen.getByRole('button', { name: /Execute Withdrawal/i, type: 'submit' });
+        const signatureInput = within(step2FormMock).getByLabelText('Signature');
         const signature = 'some-signature-that-will-trigger-expiry-error';
         await user.type(signatureInput, signature);
-        await act(async () => { await user.click(executeButton); });
-        await act(async () => {});
 
-        // Wait for error toast AND Step 1 form reappearing
+        await act(async () => {
+            await user.click(executeButton);
+            await waitFor(() => expect(executeMock).toHaveBeenCalled()); // Should be called
+            await waitFor(() => expect(balanceRefreshMock).toHaveBeenCalledTimes(2)); // Should refresh
+        });
+
+        // Wait for error toast AND Step 1 elements reappearing
+        const withdrawalSection = screen.getByRole('heading', { name: /Withdraw Funds/i }).closest('section');
         await waitFor(() => {
             expect(mockNotifications.showErrorToast).toHaveBeenCalledWith(finalDisplayErrorMessage);
-        });
-        const step1Form = await screen.findByTestId('withdrawal-input-form-mock-content');
+        }, {timeout: 3000});
+        const step1FormMockReappeared = await screen.findByTestId('withdrawal-input-form-mock-content', {}, {timeout: 3000});
+        expect(within(step1FormMockReappeared).getByRole('button', { name: /Prepare Withdrawal/i })).toBeInTheDocument();
 
         // Check API call
-        expect(mockApi.executeWithdrawal).toHaveBeenCalledWith({ withdrawal_id: withdrawalId, pgp_confirmation_signature: signature });
-        expect(mockApi.executeWithdrawal).toHaveBeenCalledTimes(1);
+        expect(executeMock).toHaveBeenCalledWith({ withdrawal_id: withdrawalId, pgp_confirmation_signature: signature });
+        expect(executeMock).toHaveBeenCalledTimes(1);
         expect(mockNotifications.showErrorToast).toHaveBeenCalledTimes(1);
+        expect(await within(withdrawalSection).findByRole('alert')).toHaveTextContent(finalDisplayErrorMessage); // Error in Step 1 area
 
         // Assert final state (reset to Step 1)
-        expect(step1Form).toBeInTheDocument();
+        expect(step1FormMockReappeared).toBeInTheDocument();
         expect(screen.queryByTestId('pgp-signer-form-mock-content')).not.toBeInTheDocument();
-         // Wait for inputs to clear
+        expect(screen.queryByRole('button', { name: /^Back$/i })).not.toBeInTheDocument();
+        expect(screen.queryByRole('button', { name: /Execute Withdrawal/i })).not.toBeInTheDocument();
         await waitFor(() => {
-            expect(screen.getByLabelText('Amount')).toHaveValue(null);
-        });
-        expect(screen.getByLabelText('Address')).toHaveValue(''); // Text input expects ''
+            expect(within(step1FormMockReappeared).getByLabelText('Amount')).toHaveValue(null);
+            expect(within(step1FormMockReappeared).getByLabelText('Address')).toHaveValue('');
+        }, {timeout: 2000});
+        expect(balanceRefreshMock).toHaveBeenCalledTimes(2);
     });
 
 }); // End describe block

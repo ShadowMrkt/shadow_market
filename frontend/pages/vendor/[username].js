@@ -1,5 +1,6 @@
 // frontend/pages/vendors/[username].js
 // --- REVISION HISTORY ---
+// 2025-04-28: Rev 2 - [Gemini] Implemented feedback fetching and display using getVendorFeedback.
 // 2025-04-07: Rev 1 - Added revision history, refined error handling, added feedback SWR structure.
 //           - Improved clarity of loading/error messages.
 //           - Added SWR hook structure to VendorFeedbackSection (API call commented out).
@@ -10,9 +11,8 @@ import React, { useState, useMemo } from 'react';
 import { useRouter } from 'next/router';
 import useSWR, { SWRConfig } from 'swr'; // Import SWRConfig for potential SSR fallback usage
 
-// API Utils - Assuming these fetch data
-// TODO: Ensure getFeedback exists in api.js or implement it.
-import { getVendorPublicProfile, getProducts /*, getFeedback */ } from '../../utils/api';
+// --- API Utils --- <<< UPDATED IMPORTS >>>
+import { getVendorPublicProfile, getProducts, getVendorFeedback } from '../../utils/api';
 
 // Constants
 import { DEFAULT_PAGE_SIZE } from '../../utils/constants';
@@ -37,18 +37,13 @@ const productsFetcher = (username, page) => {
     return getProducts(params); // Assumes getProducts handles pagination structure
 };
 
-// TODO: Implement getFeedback in utils/api.js
-// const feedbackFetcher = (username, page) => {
-//     const params = { recipient_username: username, page: page, page_size: DEFAULT_PAGE_SIZE };
-//     // return getFeedback(params); // Call the actual API function
-//     // Placeholder data for testing:
-//     return Promise.resolve({
-//         count: 0, next: null, previous: null, results: [
-//             // { id: 1, rating: 5, comment: 'Great vendor!', reviewer: { username: 'Buyer1'}, created_at: new Date().toISOString() },
-//             // { id: 2, rating: 4, comment: null, reviewer: { username: 'Buyer2'}, created_at: new Date().toISOString() },
-//         ]
-//     });
-// };
+// --- ADDED: Feedback Fetcher ---
+const feedbackFetcher = (username, page) => {
+    // Fetch feedback for the specific vendor, paginated
+    const params = { page: page, page_size: DEFAULT_PAGE_SIZE }; // Backend view filters by username in URL
+    return getVendorFeedback(username, params); // Use the new API function
+};
+// --- END ADDED ---
 
 
 // --- Sub-Components ---
@@ -181,16 +176,15 @@ const VendorProductList = ({ username, profileLoaded }) => {
 const VendorFeedbackSection = ({ username, profileLoaded, feedbackCount }) => {
     const [page, setPage] = useState(1);
 
-    // SWR setup for feedback (API call commented out until implemented)
+    // SWR setup for feedback - uses the feedbackFetcher defined above
     const swrKey = username ? ['vendorFeedback', username, page] : null;
-    // TODO: Uncomment fetcher call when getFeedback API function is ready
-    const fetcherFn = () => Promise.resolve({ count: 0, next: null, previous: null, results: [] }); // Placeholder
-    // const fetcherFn = () => feedbackFetcher(username, page);
+    // --- UPDATED: Use the actual fetcher function ---
     const { data: feedbackData, error: feedbackError, isValidating: isLoadingFeedback } = useSWR(
         swrKey,
-        fetcherFn,
+        () => feedbackFetcher(username, page), // Call the feedback fetcher
         { revalidateOnFocus: false, keepPreviousData: true }
     );
+    // --- END UPDATE ---
 
     const feedback = feedbackData?.results || [];
     const totalCount = feedbackData?.count || feedbackCount || 0; // Use profile count as fallback total
@@ -222,7 +216,8 @@ const VendorFeedbackSection = ({ username, profileLoaded, feedbackCount }) => {
                          {feedback.map(fb => (
                             <li key={fb.id} className={styles.feedbackItem}>
                                  <div className={styles.feedbackRating}>Rating: {renderStars(fb.rating)}</div>
-                                 {fb.comment && <p className={styles.feedbackComment}>{fb.comment}</p>}
+                                 {/* Check if comment exists and is not just whitespace */}
+                                 {fb.comment && fb.comment.trim() && <p className={styles.feedbackComment}>{fb.comment}</p>}
                                  <p className={styles.feedbackMeta}>
                                      By: {fb.reviewer?.username || 'Anonymous'} on {formatDate(fb.created_at)}
                                      {/* Optionally link to product if feedback includes it */}
@@ -322,57 +317,9 @@ export default function VendorProfilePage() {
 }
 
 // --- SSR/ISR Option ---
-// Uncomment and adapt if needed for SEO or faster initial profile load.
-// Remember to install SWRConfig in _app.js or wrap the component here if using fallback.
+// (Keep SSR/ISR section commented out or adapt as needed)
 /*
-export async function getServerSideProps(context) {
-    const { username } = context.params;
-    let profile = null;
-    let ssrError = null;
-
-    try {
-        profile = await getVendorPublicProfile(username);
-    } catch (error) {
-        console.error(`SSR Error fetching profile for ${username}:`, error);
-        const status = error.response?.status || (error.message === 'Not Found' ? 404 : 500);
-        if (status === 404) {
-             return { notFound: true }; // Return 404 page
-        }
-        ssrError = `Failed to load profile data server-side (Status: ${status})`;
-    }
-
-    return {
-        props: {
-            // Pass initial data to SWR fallback or directly to component
-            // Using fallback is generally preferred with SWR
-            fallback: profile ? { [`vendorProfile/${username}`]: profile } : {}, // SWR key needs to match client-side EXACTLY
-            username, // Pass username from params
-            ssrError // Pass error if occurred during SSR fetch
-        },
-    };
-}
-
-// If using SSR/ISR with SWR fallback:
-// export default function VendorProfilePage({ fallback, username, ssrError }) { // Receive props
-//     // Check for SSR error first
-//     if (ssrError) {
-//         return <Layout><div className="container"><FormError message={ssrError} /></div></Layout>;
-//     }
-//
-//     return (
-//         // Wrap component content with SWRConfig to provide fallback data
-//         <SWRConfig value={{ fallback }}>
-//             <Layout>
-//                 <div className="container">
-//                     { // Conditionally render the main content based on username prop
-//                       // The useSWR hook inside will pick up fallback data
-//                       username ? <VendorProfileContent username={username} /> : <FormError message="Username not provided."/>
-//                     }
-//                 </div>
-//             </Layout>
-//         </SWRConfig>
-//     );
-// }
-// // Define VendorProfileContent component containing the original component logic using useSWR
-// const VendorProfileContent = ({ username }) => { ... component logic using useSWR ... };
+export async function getServerSideProps(context) { ... }
+export default function VendorProfilePage({ fallback, username, ssrError }) { ... }
+const VendorProfileContent = ({ username }) => { ... };
 */
