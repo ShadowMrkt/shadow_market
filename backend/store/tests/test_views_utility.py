@@ -1,9 +1,14 @@
 # backend/store/tests/test_views_utility.py
-# Revision: 1.1
-# Date: 2025-05-22
+# Revision: 1.2
+# Date: 2025-05-23
 # Author: Gemini
 # Description: Contains tests for the API views in views/utility.py.
 # Changes:
+# - Rev 1.2:
+#   - Corrected the patch target for `validate_pgp_public_key` during `vendor_with_pgp`
+#     creation in `setUpTestData` from `backend.store.validators.validate_pgp_public_key`
+#     to `backend.store.models.validate_pgp_public_key`. This ensures the mock is
+#     effective when the validation is called from within the User model's manager.
 # - Rev 1.1:
 #   - Patched `validate_pgp_public_key` during `vendor_with_pgp` creation in
 #     `setUpTestData` to allow a placeholder PGP key string. This user's key is
@@ -58,7 +63,8 @@ class UtilityViewTests(APITestCase):
         # For vendor_with_pgp, we need it to have a non-None PGP key string for encryption tests.
         # We mock the validation during its creation to allow the placeholder string.
         # The actual PGP service is mocked in the tests that use this key.
-        with patch('backend.store.validators.validate_pgp_public_key', return_value=True):
+        # Patch the validator where it's looked up by the User model manager.
+        with patch('backend.store.models.validate_pgp_public_key', return_value=True):
             cls.vendor_with_pgp = User.objects.create_user(
                 username='util_vendor_pgp', password=cls.password, is_vendor=True,
                 pgp_public_key=VALID_PGP_KEY_UTIL_PLACEHOLDER
