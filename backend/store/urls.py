@@ -1,6 +1,11 @@
 # backend/store/urls.py
 # --- Revision History ---
-# - v16 (2025-05-03): # <<< NEW REVISION >>>
+# - v17 (2025-06-07): # <<< NEW REVISION >>>
+#   - FIXED: Corrected the import for CategoryViewSet. It was being imported from
+#     'product.py' which likely contained a read-only version. Changed the import
+#     to use the full ModelViewSet from 'category.py', which resolves the
+#     '405 Method Not Allowed' errors for POST, PATCH, and DELETE requests.
+# - v16 (2025-05-03):
 #   - FIXED: Corrected view alias for 'vendor-feedback-list' URL pattern.
 #     Changed 'feedback_views.VendorFeedbackListView' to 'vendor_views.VendorFeedbackListView'
 #     to resolve AttributeError during test collection. Assumes the view exists
@@ -13,7 +18,6 @@
 # - v14 (2025-05-03): Changed user view import to be direct class import from views.user. (Failed - ModuleNotFound)
 # - v13 (2025-05-03): Attempted direct module import for user view (Failed). (Gemini)
 # - v12 (2025-05-03): Changed all view imports back to 'import module as alias' (Failed for user). (Gemini)
-# - v11 (2025-05-03): Corrected user view import again to use module path (Attempt 3 - Failed). (Gemini)
 # --- Older revisions omitted ---
 # --- END Revision History ---
 
@@ -29,6 +33,7 @@ from rest_framework_nested import routers
 from backend.store.views import application as application_views
 from backend.store.views import auth as auth_views
 from backend.store.views import canary as canary_views
+from backend.store.views import category as category_views # FIX v17: Import category views
 from backend.store.views import feedback as feedback_views
 from backend.store.views import order as order_views
 from backend.store.views import product as product_views
@@ -38,10 +43,8 @@ from backend.store.views import vendor as vendor_views # Alias for vendor views
 from backend.store.views import wallet as wallet_views
 from backend.store.views import webauthn as webauthn_views
 
-# Import specific views used directly
-from backend.store.views.product import CategoryViewSet # Category view is in product.py
-# --- FIX v15: Import CurrentUserView from auth_views module alias ---
-# from backend.store.views.user import CurrentUserView  # <-- Incorrect path causing ModuleNotFoundError
+# --- FIX v17: Remove incorrect direct import ---
+# from backend.store.views.product import CategoryViewSet
 
 # Define the application namespace
 app_name = 'store'
@@ -50,7 +53,8 @@ app_name = 'store'
 router = routers.DefaultRouter()
 
 # Register ViewSets
-router.register(r'categories', CategoryViewSet, basename='category')
+# --- FIX v17: Register the correct CategoryViewSet from its own module ---
+router.register(r'categories', category_views.CategoryViewSet, basename='category')
 router.register(r'products', product_views.ProductViewSet, basename='product')
 router.register(r'orders', order_views.OrderViewSet, basename='order')
 router.register(r'tickets', ticket_views.SupportTicketViewSet, basename='ticket')
@@ -75,7 +79,6 @@ urlpatterns = [
     path('auth/webauthn/authenticate/verify/', webauthn_views.WebAuthnAuthenticationVerificationView.as_view(), name='webauthn-authenticate-verify'),
 
     # --- User Management ---
-    # --- FIX v15: Use the view from the correct imported module ---
     path('users/me/', auth_views.CurrentUserView.as_view(), name='user-me'),
     path('users/me/webauthn/credentials/', webauthn_views.WebAuthnCredentialListView.as_view(), name='webauthn-credential-list'),
     path('users/me/webauthn/credentials/<uuid:pk>/', webauthn_views.WebAuthnCredentialDetailView.as_view(), name='webauthn-credential-detail'),
@@ -83,7 +86,6 @@ urlpatterns = [
     # --- Vendor Specific ---
     path('vendors/<str:username>/', vendor_views.VendorPublicProfileView.as_view(), name='vendor-detail'),
     path('vendor/stats/', vendor_views.VendorStatsView.as_view(), name='vendor-stats'),
-    # --- FIX v16: Use vendor_views alias instead of feedback_views ---
     path('vendors/<str:username>/feedback/', vendor_views.VendorFeedbackListView.as_view(), name='vendor-feedback-list'),
 
     # --- Vendor Application ---

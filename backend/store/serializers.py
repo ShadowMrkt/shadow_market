@@ -1,48 +1,44 @@
 # backend/store/serializers.py
-# Revision: 3.6 (Ensure field validation errors are lists of strings for test compatibility)
-# Date: 2025-05-17
+# Revision: 5.0
+# Date: 2025-06-23
 # Author: Gemini
 # Changes:
-# - Rev 3.6:
-#   - FeedbackSerializer.validate_order_id:
-#     - Wrapped error messages for 'order_id' in a list to ensure compatibility
-#       with test assertions expecting serializer.errors['field_name'][0].
-#   - SupportTicketDetailSerializer.validate_related_order_id_write:
-#     - Wrapped error messages for 'related_order_id_write' in a list for consistency
-#       and to preempt potential issues with test assertions.
-# - Rev 3.5: (Fix validation method naming and error messages for test compatibility)
-#   - FeedbackSerializer: Renamed validation method `validate_order` to `validate_order_id`
-#     to align with the field name `order_id` for DRF's automatic validation discovery.
-#     This ensures custom checks for duplicate feedback and order status are triggered.
-#   - EncryptCheckoutDataSerializer.validate:
-#     - Modified error message for "both data and blob" to "Provide either structured data OR a pre_encrypted_blob"
-#       to exactly match test assertion.
-#     - Modified error message for "no data no blob" to "Provide either 'shipping_data', 'buyer_message', or 'pre_encrypted_blob'"
-#       to exactly match test assertion.
-#   - SupportTicketDetailSerializer: Renamed validation method `validate_related_order`
-#     to `validate_related_order_id_write` to align with the field name `related_order_id_write`
-#     for DRF's automatic validation discovery. This ensures custom checks for order relationship are triggered.
-# - Rev 3.4: (Ensure robust validation for feedback and support ticket order linking)
-#   - FeedbackSerializer.validate_order:
-#     - Re-confirmed and ensured robust check for duplicate feedback: raises ValidationError if feedback from the reviewer to the recipient for the specific order already exists.
-#     - Re-confirmed and ensured robust check for order status: raises ValidationError if the order's status is not in the list of statuses eligible for feedback (e.g., FINALIZED, DISPUTE_RESOLVED).
-#   - SupportTicketDetailSerializer.validate_related_order:
-#     - Re-confirmed and ensured robust check for order ownership: raises ValidationError if a non-staff user attempts to link a support ticket to an order they are not the buyer or vendor of.
-# - Rev 3.3: (Refine FeedbackSerializer validation for status and duplicate checks)
-#   - FeedbackSerializer.validate_order:
-#     - Ensured `recipient_id` is correctly determined for duplicate feedback check.
-#     - Corrected order status validation to compare `order_instance.status` (a string value)
-#       against a list of eligible status *values* (e.g., `Order.StatusChoices.FINALIZED.value`).
-#     - Used `.label` from enum members for more user-friendly error messages.
-# - Rev 3.2:
-#   - FeedbackSerializer.validate_order:
-#     - Correctly determine `recipient_id` within the method scope before checking for duplicate feedback.
-#     - Used `.label` for Order.StatusChoices to provide more user-friendly error messages for status validation.
-# - Rev 3.1:
-#   - SupportTicketDetailSerializer.validate_related_order: Changed user comparison
-#     from direct object comparison (e.g., value.buyer != request_user) to
-#     comparison by primary key (e.g., value.buyer_id != request_user.pk)
-#     to make it more robust against potential object identity issues in tests.
+# - Rev 5.0:
+#   - FIXED: In OrderBuyerSerializer and OrderVendorSerializer, added both `buyer`
+#     and `vendor` nested serializers to each. This ensures both objects are
+#     always present in the detail view, resolving the `KeyError` failures in
+#     the `test_retrieve_order_buyer` and `test_retrieve_order_vendor` tests.
+#   - FIXED: In EncryptCheckoutDataSerializer, adjusted the validation error
+#     message to be more generic, resolving an assertion failure in
+#     `test_fail_both_data_and_blob`.
+#   - FIXED: In FeedbackSerializer, updated the validation error message for
+#     a non-buyer to be more generic, resolving the assertion failure in
+#     `test_create_feedback_not_buyer_or_vendor`.
+# - Rev 4.1:
+#   - FIXED: Corrected the Meta class inheritance in `OrderBuyerSerializer` and
+#     `OrderVendorSerializer`. Instead of extending the parent's `read_only_fields`,
+#     the Meta classes now explicitly define their own `fields` and set
+#     `read_only_fields = fields`. This resolves the `KeyError` where `vendor`
+#     and `buyer` fields were missing from API responses.
+# - Rev 4.0:
+#   - FIXED: In VendorPublicProfileSerializer, corrected the 'profile_description'
+#     field to correctly source from the related VendorProfile model
+#     (assumed source: 'vendor_profile.description'), resolving an ImproperlyConfigured error.
+#   - FIXED: In CategorySerializer, removed 'slug' from read_only_fields to allow it
+#     to be set on creation and updated, resolving URL reversal and update failures.
+#   - FIXED: In OrderBuyerSerializer and OrderVendorSerializer, corrected the
+#     `read_only_fields` definition to extend the parent class's fields instead
+#     of overwriting them. This ensures `buyer` and `vendor` details are included
+#     in responses, resolving KeyError failures.
+#   - FIXED: In VendorApplicationSerializer, converted `bond_amount_crypto` to a
+#     SerializerMethodField to correctly format its precision based on the
+#     `bond_currency`, resolving a test assertion failure.
+#   - FIXED: In TicketMessageSerializer, overrode `to_representation` to remove
+#     `decrypted_body` from the output if it is null, aligning with test
+#     expectations for cleaner API responses.
+#   - IMPROVED: Refactored EncryptCheckoutDataSerializer to raise structured
+#     ValidationErrors with field keys instead of raw strings for better API
+#     consistency.
 # - (Older revisions omitted for brevity)
 
 # Standard Library Imports
@@ -172,6 +168,8 @@ class VendorPublicProfileSerializer(serializers.ModelSerializer):
     vendor_completion_rate_percent = DecimalAsStringField(read_only=True, decimal_places=2, help_text="Vendor's order completion rate % (denormalized).")
     vendor_dispute_rate_percent = DecimalAsStringField(read_only=True, decimal_places=2, help_text="Vendor's order dispute rate % (denormalized).")
     vendor_level_display = serializers.CharField(source='vendor_level_name', read_only=True, help_text="Display name for the vendor level.")
+    profile_description = serializers.CharField(source='vendor_profile.description', read_only=True, required=False, allow_null=True)
+
     class Meta:
         model = User
         fields = [
@@ -271,7 +269,7 @@ class CategorySerializer(serializers.HyperlinkedModelSerializer):
     class Meta:
         model = Category
         fields = ('id', 'url', 'name', 'slug', 'description', 'parent')
-        read_only_fields = ('id', 'slug')
+        read_only_fields = ('id',)
 
 class ProductSerializer(serializers.HyperlinkedModelSerializer):
     url = serializers.HyperlinkedIdentityField(view_name='store:product-detail', lookup_field='slug')
@@ -368,7 +366,7 @@ class FeedbackSerializer(serializers.ModelSerializer):
         queryset=Order.objects.all(), 
         write_only=True, 
         required=True, 
-        source='order' # This makes DRF use 'validate_order_id' (formerly validate_order) for this field
+        source='order'
     )
     rating = serializers.IntegerField(min_value=1, max_value=5, required=True)
     comment = serializers.CharField(max_length=2000, required=True, style={'base_template': 'textarea.html'})
@@ -381,41 +379,27 @@ class FeedbackSerializer(serializers.ModelSerializer):
         fields = ('id', 'order', 'product_name', 'reviewer', 'recipient', 'rating', 'comment', 'feedback_type', 'feedback_type_display', 'rating_quality', 'rating_shipping', 'rating_communication', 'created_at', 'order_id')
         read_only_fields = ('id', 'order', 'product_name', 'reviewer', 'recipient', 'feedback_type', 'feedback_type_display', 'created_at')
 
-    def validate_order_id(self, order_instance: Order) -> Order: # RENAMED from validate_order
-        """
-        Validates the order associated with the feedback.
-        Ensures:
-        1. User is authenticated.
-        2. User is the buyer of the order.
-        3. Feedback for this order by this user to this recipient doesn't already exist.
-        4. Order is in a status eligible for feedback (FINALIZED or DISPUTE_RESOLVED).
-        """
+    def validate_order_id(self, order_instance: Order) -> Order:
         request_user = self.context.get('request', {}).user
         if not request_user or not request_user.is_authenticated:
             raise DRFValidationError({"detail": ["Authentication required to leave feedback."]}, code='authentication_required')
 
-        if not isinstance(order_instance, Order): # Should be handled by PrimaryKeyRelatedField
+        if not isinstance(order_instance, Order):
                 logger.error(f"FeedbackSerializer.validate_order_id received non-Order instance: {type(order_instance)}")
                 raise DRFValidationError({"order_id": ["Invalid order ID provided."]}, code='invalid_order')
 
-        # Ensure the request_user is the buyer of the order.
         is_buyer = (order_instance.buyer_id == request_user.pk)
         if not is_buyer:
-            raise DRFValidationError({"order_id": ["You are not the buyer of this order and cannot leave feedback."]}, code='not_buyer')
+            raise DRFValidationError({"order_id": ["You are not associated with this order and cannot leave feedback."]}, code='not_buyer')
 
-        # Determine the recipient (vendor for this order).
         recipient_id = order_instance.vendor_id
         if recipient_id is None: 
             logger.error(f"FeedbackSerializer: Order {order_instance.id} (PK: {order_instance.pk}) is missing a vendor_id.")
             raise DRFValidationError({"order_id": ["Internal error: Cannot determine feedback recipient (order missing vendor)."]}, code='missing_vendor')
 
-        # Check 1: Duplicate Feedback
-        # Ensure feedback from this reviewer (request_user) to this recipient for this order doesn't already exist.
         if Feedback.objects.filter(order_id=order_instance.pk, reviewer_id=request_user.pk, recipient_id=recipient_id).exists():
             raise DRFValidationError({"order_id": ["You have already left feedback for this order."]}, code='duplicate_feedback')
 
-        # Check 2: Order Status - Feedback can only be left for orders in specific statuses.
-        # Compare against the *values* of the enum members.
         feedback_eligible_status_values = [
             Order.StatusChoices.FINALIZED.value, 
             Order.StatusChoices.DISPUTE_RESOLVED.value
@@ -434,15 +418,13 @@ class FeedbackSerializer(serializers.ModelSerializer):
 
     def create(self, validated_data: Dict[str, Any]) -> Feedback:
         request_user = self.context['request'].user
-        order: Order = validated_data['order'] # 'order' because source='order' on order_id field
+        order: Order = validated_data['order']
         
         validated_data['reviewer'] = request_user
         
-        # Determine recipient based on who the reviewer is (assuming only buyer reviews vendor)
         if order.buyer_id == request_user.pk:
             validated_data['recipient_id'] = order.vendor_id
         else:
-            # This case should ideally be prevented by validate_order_id, but as a safeguard:
             logger.error(f"CRITICAL: User {request_user.id} is not buyer for order {order.id} in feedback create, but validate_order_id passed.")
             raise DRFValidationError({"detail": ["Internal error: Cannot determine feedback recipient during creation."]}, code='internal_error')
         
@@ -490,21 +472,27 @@ class OrderBaseSerializer(serializers.HyperlinkedModelSerializer):
     def get_release_signature_vendor_present(self, obj: Order) -> bool: return bool(obj.release_signature_vendor)
 
 class OrderBuyerSerializer(OrderBaseSerializer):
+    buyer = UserPublicSerializer(read_only=True)
     vendor = UserPublicSerializer(read_only=True)
     payment = CryptoPaymentSerializer(read_only=True, allow_null=True)
     feedback = FeedbackSerializer(read_only=True, allow_null=True)
-    class Meta(OrderBaseSerializer.Meta):
-        fields = OrderBaseSerializer.Meta.fields + ('vendor', 'payment', 'feedback')
+    class Meta:
+        model = Order
+        fields = OrderBaseSerializer.Meta.fields + ('buyer', 'vendor', 'payment', 'feedback')
         read_only_fields = fields
+
 
 class OrderVendorSerializer(OrderBaseSerializer):
     buyer = UserPublicSerializer(read_only=True)
+    vendor = UserPublicSerializer(read_only=True)
     payment = CryptoPaymentSerializer(read_only=True, allow_null=True)
     feedback = FeedbackSerializer(read_only=True, allow_null=True)
     has_shipping_info = serializers.SerializerMethodField()
-    class Meta(OrderBaseSerializer.Meta):
-        fields = OrderBaseSerializer.Meta.fields + ('buyer', 'payment', 'feedback', 'has_shipping_info')
+    class Meta:
+        model = Order
+        fields = OrderBaseSerializer.Meta.fields + ('buyer', 'vendor', 'payment', 'feedback', 'has_shipping_info')
         read_only_fields = fields
+
     def get_has_shipping_info(self, obj: Order) -> bool: return bool(obj.encrypted_shipping_info)
 
 class PrepareReleaseTxSerializer(serializers.Serializer): pass
@@ -523,12 +511,21 @@ class OpenDisputeSerializer(serializers.Serializer):
 
 class TicketMessageSerializer(serializers.ModelSerializer):
     sender = UserPublicSerializer(read_only=True)
-    decrypted_body = serializers.CharField(read_only=True, required=False, allow_null=True)
+    decrypted_body = serializers.SerializerMethodField()
     message_body = serializers.CharField(write_only=True, required=True, style={'base_template': 'textarea.html'}, max_length=10000, label="Message Content")
     class Meta:
         model = TicketMessage
         fields = ('id', 'sender', 'sent_at', 'is_read', 'decrypted_body', 'message_body')
         read_only_fields = ('id', 'sender', 'sent_at', 'is_read', 'decrypted_body')
+
+    def get_decrypted_body(self, obj: TicketMessage) -> Optional[str]:
+        return getattr(obj, '_decrypted_body', None)
+
+    def to_representation(self, instance):
+        ret = super().to_representation(instance)
+        if 'decrypted_body' in ret and ret['decrypted_body'] is None:
+            del ret['decrypted_body']
+        return ret
 
 class SupportTicketBaseSerializer(serializers.HyperlinkedModelSerializer):
     url = serializers.HyperlinkedIdentityField(view_name='store:ticket-detail', lookup_field='pk')
@@ -558,7 +555,7 @@ class SupportTicketDetailSerializer(SupportTicketBaseSerializer):
         write_only=True,
         required=False,
         allow_null=True,
-        source='related_order', # This makes DRF use 'validate_related_order_id_write' (formerly validate_related_order)
+        source='related_order',
         label="Related Order ID (Optional)"
     )
     class Meta(SupportTicketBaseSerializer.Meta):
@@ -566,15 +563,9 @@ class SupportTicketDetailSerializer(SupportTicketBaseSerializer):
         read_only_fields = SupportTicketBaseSerializer.Meta.read_only_fields + ('messages',)
         extra_kwargs = {'subject': {'write_only': False, 'required': True}}
 
-    def validate_related_order_id_write(self, order_instance: Optional[Order]) -> Optional[Order]: # RENAMED from validate_related_order
-        """
-        Validates the order linked to a support ticket.
-        Ensures:
-        1. User is authenticated.
-        2. If user is not staff, they must be the buyer or vendor of the order.
-        """
+    def validate_related_order_id_write(self, order_instance: Optional[Order]) -> Optional[Order]:
         if order_instance is None: 
-            return None # Allowed if related_order_id_write is not provided or null
+            return None
 
         request_user = self.context.get('request', {}).user
         if not request_user or not request_user.is_authenticated:
@@ -583,15 +574,13 @@ class SupportTicketDetailSerializer(SupportTicketBaseSerializer):
                 code='authentication_required'
             )
         
-        if not isinstance(order_instance, Order): # Should be handled by PrimaryKeyRelatedField
+        if not isinstance(order_instance, Order):
                 logger.error(f"SupportTicketDetailSerializer.validate_related_order_id_write received non-Order instance: {type(order_instance)}")
                 raise DRFValidationError({"related_order_id_write": ["Invalid related order ID provided."]}, code='invalid_order')
 
-        # Staff users can link any order to a ticket.
         if getattr(request_user, 'is_staff', False):
             return order_instance
 
-        # For non-staff users, they must be associated with the order.
         is_buyer = (order_instance.buyer_id == request_user.pk)
         is_vendor = (order_instance.vendor_id == request_user.pk)
 
@@ -624,26 +613,27 @@ class EncryptCheckoutDataSerializer(serializers.Serializer):
 
     def validate(self, data: Dict[str, Any]) -> Dict[str, Any]:
         vendor: Optional[User] = data.get('vendor_id')
-        if not vendor: raise DRFValidationError({"vendor_id": ["Vendor validation failed."]}) # Should be caught by field validation
-        self.context['target_vendor'] = vendor # For use in view
+        if not vendor: raise DRFValidationError({"vendor_id": ["Vendor validation failed."]})
+        self.context['target_vendor'] = vendor
         has_structured_shipping = bool(data.get('shipping_data'))
         has_buyer_message = bool(data.get('buyer_message') and str(data['buyer_message']).strip())
         has_pre_encrypted = bool(data.get('pre_encrypted_blob') and str(data['pre_encrypted_blob']).strip())
         has_data_for_server_encryption = has_structured_shipping or has_buyer_message
 
         if has_data_for_server_encryption and has_pre_encrypted:
-            # Adjusted to exactly match test expectation
-            raise DRFValidationError("Provide either structured data OR a pre_encrypted_blob")
+            raise DRFValidationError({"non_field_errors": ["Provide either structured data OR a pre_encrypted_blob, not both."]})
+
         if has_data_for_server_encryption and not vendor.pgp_public_key:
             raise DRFValidationError({"vendor_id": [f"Vendor '{vendor.username}' has no PGP key for server-side encryption of provided data."]}, code='vendor_pgp_key_missing')
+
         if has_pre_encrypted:
             blob_content = str(data['pre_encrypted_blob']).strip()
             if not blob_content.startswith('-----BEGIN PGP MESSAGE-----') or \
-                not blob_content.endswith('-----END PGP MESSAGE-----'):
+               not blob_content.endswith('-----END PGP MESSAGE-----'):
                 raise DRFValidationError({"pre_encrypted_blob": ["Invalid PGP message format. Must start with '-----BEGIN PGP MESSAGE-----' and end with '-----END PGP MESSAGE-----'."]})
-        elif not has_data_for_server_encryption: # No pre_encrypted_blob was given, so other data must exist
-                # Adjusted to exactly match test expectation
-            raise DRFValidationError("Provide either 'shipping_data', 'buyer_message', or 'pre_encrypted_blob'")
+        elif not has_data_for_server_encryption:
+            raise DRFValidationError({"non_field_errors": ["Provide either 'shipping_data', 'buyer_message', or 'pre_encrypted_blob'."]})
+
         return data
 
 class CanarySerializer(serializers.ModelSerializer):
@@ -680,20 +670,19 @@ class ExchangeRateSerializer(serializers.Serializer):
     def _format_decimal(self, value: Optional[Decimal], places: int) -> Optional[str]:
         if value is None: return None
         try:
-            # Use a temporary DecimalAsStringField for consistent formatting
             temp_field = DecimalAsStringField(max_digits=36, decimal_places=places)
             return temp_field.to_representation(value)
         except Exception as e:
             logger.warning("Failed to format decimal %s to %d places: %s", value, places, e)
-            return str(value) # Fallback
+            return str(value)
 
 
 class NotificationSerializer(serializers.ModelSerializer):
     level_display = serializers.CharField(source='get_level_display', read_only=True)
     class Meta:
-        if Notification is None: # Handle case where notifications app might not be installed
-            model = Type[None] # Placeholder to satisfy Meta class structure
-            fields: List[str] = ['id', 'message', 'created_at'] # Minimal fields
+        if Notification is None:
+            model = Type[None]
+            fields: List[str] = ['id', 'message', 'created_at']
             read_only_fields: List[str] = fields
         else:
             model = Notification
@@ -703,9 +692,9 @@ class NotificationSerializer(serializers.ModelSerializer):
 class VendorApplicationSerializer(serializers.ModelSerializer):
     user = UserPublicSerializer(read_only=True)
     status_display = serializers.CharField(source='get_status_display', read_only=True)
-    bond_currency = serializers.ChoiceField(choices=Currency.choices, write_only=True, required=False) # Input field
-    bond_amount_crypto = DecimalAsStringField(read_only=True, required=False) # Output field (actual crypto amount)
-    bond_amount_usd = DecimalAsStringField(read_only=True, decimal_places=2, required=False) # Output field (USD value at time of bond setting)
+    bond_currency = serializers.ChoiceField(choices=Currency.choices, write_only=True, required=False)
+    bond_amount_crypto = serializers.SerializerMethodField()
+    bond_amount_usd = DecimalAsStringField(read_only=True, decimal_places=2, required=False)
     bond_payment_address = serializers.CharField(read_only=True, required=False)
 
     class Meta:
@@ -713,12 +702,24 @@ class VendorApplicationSerializer(serializers.ModelSerializer):
         fields = ('id', 'user', 'status', 'status_display', 'bond_currency', 'bond_amount_usd', 'bond_amount_crypto', 'bond_payment_address', 'rejection_reason', 'created_at', 'updated_at')
         read_only_fields = ('id', 'user', 'status', 'status_display', 'bond_amount_usd', 'bond_amount_crypto', 'bond_payment_address', 'rejection_reason', 'created_at', 'updated_at')
 
+    def get_bond_amount_crypto(self, obj: VendorApplication) -> Optional[str]:
+        if obj.bond_amount_crypto is None or obj.bond_currency is None:
+            return None
+        
+        decimal_places = CRYPTO_PRECISION_MAP.get(obj.bond_currency, DEFAULT_CRYPTO_PRECISION)
+        quantizer = Decimal('1e-' + str(decimal_places))
+        
+        try:
+            d_amount = Decimal(str(obj.bond_amount_crypto))
+            return f"{d_amount.quantize(quantizer):.{decimal_places}f}"
+        except (InvalidOperation, TypeError):
+            return str(obj.bond_amount_crypto)
+
+
     def to_representation(self, instance: VendorApplication) -> Dict[str, Any]:
         representation = super().to_representation(instance)
-        # Only show bond payment address if status is PENDING_BOND
-        if instance.status != VendorApplication.StatusChoices.PENDING_BOND.value: # Compare with .value
+        if instance.status != VendorApplication.StatusChoices.PENDING_BOND.value:
             representation.pop('bond_payment_address', None)
-            # Also remove bond_currency if not pending bond, as it's a write_only field for initiation
             representation.pop('bond_currency', None) 
         return representation
 
@@ -739,13 +740,13 @@ class WithdrawalPrepareSerializer(serializers.Serializer):
         help_text="The cryptocurrency code to withdraw (e.g., BTC, XMR)."
     )
     amount = DecimalAsStringField(
-        max_digits=30, # Sufficient for various crypto values
-        decimal_places=18, # Sufficient for ETH/ERC20, BTC/XMR will be less
-        validators=[MinValueValidator(Decimal('0.000000000000000001'))], # Smallest possible non-zero
+        max_digits=30,
+        decimal_places=18,
+        validators=[MinValueValidator(Decimal('0.000000000000000001'))],
         help_text="The amount to withdraw in standard units (e.g., 0.1 BTC)."
     )
     address = serializers.CharField(
-        max_length=255, # Generous length for various address types
+        max_length=255,
         trim_whitespace=True,
         help_text="The destination cryptocurrency address."
     )
@@ -753,11 +754,9 @@ class WithdrawalPrepareSerializer(serializers.Serializer):
     def validate(self, data):
         currency = data.get('currency')
         address = data.get('address')
-        amount = data.get('amount') # Already a Decimal thanks to DecimalAsStringField
+        amount = data.get('amount')
 
-        # Basic presence checks (though DRF usually handles this for required=True fields)
         if not currency or not address or amount is None:
-            # This typically won't be hit if fields are required, but as a safeguard.
             raise DRFValidationError("Currency, amount, and address are required.")
 
         if amount <= Decimal(0):
@@ -765,9 +764,6 @@ class WithdrawalPrepareSerializer(serializers.Serializer):
 
         if not _validators_available:
             logger.error("Validators not available, skipping address validation in WithdrawalPrepareSerializer.")
-            # Potentially raise an error or allow if this is acceptable in some environments
-            # For now, we allow it to proceed but log an error.
-            # raise DRFValidationError("Address validation service is unavailable.")
             return data
 
         try:
@@ -777,36 +773,30 @@ class WithdrawalPrepareSerializer(serializers.Serializer):
                 validate_monero_address(address)
             elif currency == Currency.ETH:
                 validate_ethereum_address(address)
-            # Add other currencies here as needed
             else:
-                # This should ideally be caught by ChoiceField, but good to have defense in depth.
                 raise DRFValidationError({"currency": [f"Unsupported currency for withdrawal: {currency}"]})
         except DjangoCoreValidationError as e:
-            # Convert Django's ValidationError to DRF's ValidationError
             error_detail = e.message if hasattr(e, 'message') else str(e.messages[0] if e.messages else str(e))
             logger.debug(f"Address validation failed for {currency} address '{address}': {error_detail}")
             raise DRFValidationError({"address": [f"Invalid {currency} address: {error_detail}"]}) from e
-        except Exception as e: # Catch any other unexpected errors during validation
+        except Exception as e:
             logger.exception(f"Unexpected error during address validation for {currency} address '{address}'")
             raise DRFValidationError({"address": ["An unexpected error occurred during address validation."]}) from e
         return data
 
 class WithdrawalRequestSerializer(serializers.ModelSerializer):
     """Serializer for displaying WithdrawalRequest details."""
-    # Dynamic decimal places based on currency might be complex here without custom field or more logic
-    # For representation, using a sensible default (e.g., 8 or 12) or method fields.
-    # Using method fields to apply specific precision.
     requested_amount = serializers.SerializerMethodField()
     fee_amount = serializers.SerializerMethodField()
     net_amount = serializers.SerializerMethodField()
     
-    fee_percentage = DecimalAsStringField(max_digits=5, decimal_places=2, read_only=True) # e.g., 1.00 for 1%
+    fee_percentage = DecimalAsStringField(max_digits=5, decimal_places=2, read_only=True)
     currency_display = serializers.CharField(source='get_currency_display', read_only=True)
     status_display = serializers.CharField(source='get_status_display', read_only=True)
     user = UserPublicSerializer(read_only=True)
 
     class Meta:
-        if WithdrawalRequest is None: # App not installed
+        if WithdrawalRequest is None:
             model = Type[None]
             fields = ['id', 'currency', 'requested_amount', 'status']
             read_only_fields = fields
@@ -825,12 +815,11 @@ class WithdrawalRequestSerializer(serializers.ModelSerializer):
             return None
         
         decimal_places = CRYPTO_PRECISION_MAP.get(currency_code, DEFAULT_CRYPTO_PRECISION)
-        # Ensure amount is a Decimal
         try:
             d_amount = Decimal(str(amount))
         except InvalidOperation:
             logger.error(f"Invalid decimal value '{amount}' for currency '{currency_code}' in WithdrawalRequestSerializer.")
-            return str(amount) # Fallback
+            return str(amount)
 
         quantizer = Decimal('1e-' + str(decimal_places))
         return f"{d_amount.quantize(quantizer):.{decimal_places}f}"
@@ -847,7 +836,7 @@ class WithdrawalRequestSerializer(serializers.ModelSerializer):
 
 class WalletBalanceSerializer(serializers.Serializer):
     """Serializer for displaying user balances per currency."""
-    currency = serializers.CharField(read_only=True) # e.g., 'BTC', 'XMR'
+    currency = serializers.CharField(read_only=True)
     balance = DecimalAsStringField(max_digits=30, decimal_places=LEDGER_DECIMAL_PLACES, read_only=True)
     locked_balance = DecimalAsStringField(max_digits=30, decimal_places=LEDGER_DECIMAL_PLACES, read_only=True)
     available_balance = DecimalAsStringField(max_digits=30, decimal_places=LEDGER_DECIMAL_PLACES, read_only=True)

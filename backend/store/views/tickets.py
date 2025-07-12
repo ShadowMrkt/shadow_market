@@ -1,10 +1,15 @@
-# backend/store/views/tickets.py
-# Revision: 1.3 (Fixed DRF IsAdminUser Import) # <<< UPDATED REVISION
-# Date: 2025-05-03
+# Revision: 1.5 (Robust Exception Type Checking)
+# Date: 2025-06-08
 # Author: Gemini
 # Description: Contains API ViewSets for managing Support Tickets and Ticket Messages.
 # Changes:
-# - Rev 1.3: # <<< ADDED CHANGES
+# - Rev 1.5:
+#   - FIXED: Corrected TypeError in exception handling within perform_create methods of both ViewSets. The code now safely checks if the PGPError attribute from the service is a valid exception class before using it, preventing crashes when the service is mocked in tests. This resolves multiple test failures.
+# - Rev 1.4:
+#   - FIXED: Added `from django.db.models import Prefetch` to resolve NameError in get_queryset.
+#   - FIXED: In TicketMessageViewSet.perform_create, popped 'message_body' from serializer's validated data before save to prevent TypeError on model creation.
+#   - FIXED: Refactored PGPError exception handling in TicketMessageViewSet.perform_create to be robust against mocked services, preventing a TypeError.
+# - Rev 1.3:
 #   - FIXED: Imported IsAdminUser from drf_permissions instead of local permissions.py.
 #   - Updated permission_classes decorator for 'assign' action.
 # - Rev 1.2:
@@ -25,8 +30,7 @@ from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from django.conf import settings
 from django.db import transaction, models # Import models for OrderActionBaseView PK check
-# Required for potential reverse() usage in notifications
-# from django.urls import reverse
+from django.db.models import Prefetch # <<< FIX: Import Prefetch for query optimization
 
 # Third-Party Imports
 # Corrected import for IsAuthenticated & IsAdminUser
@@ -63,10 +67,10 @@ except (ImportError, AttributeError) as e: # Catch AttributeError if placeholder
 try:
     from backend.notifications.services import create_notification
 except ImportError as e:
-     logger_init = logging.getLogger(__name__)
-     logger_init.warning(f"Notification service not found or import failed in tickets view: {e}. Notifications disabled.")
-     # Define a dummy function so calls don't break
-     def create_notification(*args, **kwargs): pass
+    logger_init = logging.getLogger(__name__)
+    logger_init.warning(f"Notification service not found or import failed in tickets view: {e}. Notifications disabled.")
+    # Define a dummy function so calls don't break
+    def create_notification(*args, **kwargs): pass
 
 
 # --- Type Hinting ---
@@ -111,7 +115,7 @@ class SupportTicketViewSet(viewsets.ModelViewSet):
         user = self.request.user
         # Return empty queryset if user is not authenticated (should be caught by permissions anyway)
         if not user or not user.is_authenticated:
-             return SupportTicket.objects.none()
+            return SupportTicket.objects.none()
 
         # Use select_related for FKs, prefetch_related for reverse FKs/M2Ms
         base_qs = SupportTicket.objects.select_related(
@@ -140,9 +144,9 @@ class SupportTicketViewSet(viewsets.ModelViewSet):
 
         # Check PGP availability more robustly
         if not PGP_SERVICE_AVAILABLE or not hasattr(pgp_service, 'encrypt_message_for_recipient'):
-             logger.error(f"{log_prefix} PGP service unavailable or missing required methods. Cannot create ticket.")
-             # Use 503 Service Unavailable for configuration/dependency issues
-             raise APIException("Ticket creation failed due to PGP service configuration error.", code=status.HTTP_503_SERVICE_UNAVAILABLE)
+            logger.error(f"{log_prefix} PGP service unavailable or missing required methods. Cannot create ticket.")
+            # Use 503 Service Unavailable for configuration/dependency issues
+            raise APIException("Ticket creation failed due to PGP service configuration error.", code=status.HTTP_503_SERVICE_UNAVAILABLE)
 
         if not MARKET_SUPPORT_PGP_FINGERPRINT or not MARKET_SUPPORT_PGP_PUBLIC_KEY:
             logger.error(f"{log_prefix} Market support PGP fingerprint/key not configured. Cannot encrypt initial message.")
@@ -159,6 +163,11 @@ class SupportTicketViewSet(viewsets.ModelViewSet):
         # Pass request context to serializer if needed for validation/defaults
         ticket = serializer.save(requester=user) # Removed context, add back if serializer needs it
         logger.info(f"{log_prefix} Created SupportTicket ID {ticket.id}.")
+
+        # <<< FIX Rev 1.5: Robustly get the PGPError exception class to prevent TypeErrors in tests
+        pgp_error_cls = getattr(pgp_service, 'PGPError', Exception)
+        if not isinstance(pgp_error_cls, type) or not issubclass(pgp_error_cls, BaseException):
+            pgp_error_cls = Exception
 
         try:
             # Encrypt the initial message for the market support key
@@ -186,28 +195,28 @@ class SupportTicketViewSet(viewsets.ModelViewSet):
                 # Find staff users to notify (e.g., all staff, or a specific group/role)
                 staff_users = User.objects.filter(is_staff=True, is_active=True)
                 for staff_user in staff_users:
-                     # Avoid notifying the creator if they happen to be staff creating a ticket
-                     if staff_user.id != user.id:
-                         try:
-                              create_notification(
-                                   user_id=staff_user.id,
-                                   level='info',
-                                   message=f"New support ticket #{ticket.id} created by {user.username}: '{ticket.subject[:50]}...'",
-                                   # link=reverse('admin:store_supportticket_change', args=[ticket.id]) # Example admin link
-                              )
-                         except Exception as notify_err:
-                              logger.error(f"{log_prefix} Failed to send staff notification to {staff_user.id}: {notify_err}")
+                    # Avoid notifying the creator if they happen to be staff creating a ticket
+                    if staff_user.id != user.id:
+                        try:
+                            create_notification(
+                                user_id=staff_user.id,
+                                level='info',
+                                message=f"New support ticket #{ticket.id} created by {user.username}: '{ticket.subject[:50]}...'",
+                                # link=reverse('admin:store_supportticket_change', args=[ticket.id]) # Example admin link
+                            )
+                        except Exception as notify_err:
+                            logger.error(f"{log_prefix} Failed to send staff notification to {staff_user.id}: {notify_err}")
 
-        except pgp_service.PGPError as pgp_err: # Catch specific PGP errors if pgp_service defines them
-             logger.exception(f"{log_prefix} PGP error creating initial message for Ticket ID {ticket.id}: {pgp_err}")
-             # Raise DRF validation error to provide feedback to the user
-             raise DRFValidationError(f"Failed to process initial message due to PGP error: {pgp_err}")
+        except pgp_error_cls as pgp_err: # Catch specific PGP errors
+            logger.exception(f"{log_prefix} PGP error creating initial message for Ticket ID {ticket.id}: {pgp_err}")
+            # Raise DRF validation error to provide feedback to the user
+            raise DRFValidationError(f"Failed to process initial message due to PGP error: {pgp_err}") from pgp_err
         except Exception as e:
             # If message creation/encryption fails after ticket is created,
             # the transaction.atomic will roll back the ticket creation.
             logger.exception(f"{log_prefix} Failed to encrypt/create initial message for Ticket ID {ticket.id}: {e}")
             # Raise DRF validation error
-            raise DRFValidationError(f"Failed to process initial message: {e}")
+            raise DRFValidationError(f"Failed to process initial message: {e}") from e
 
 
     # --- Optional Custom Actions ---
@@ -227,16 +236,16 @@ class SupportTicketViewSet(viewsets.ModelViewSet):
         try:
             # Adapt this based on your User model's primary key type (int, UUID, etc.)
             if isinstance(User._meta.pk, models.AutoField):
-                 assignee_id = int(assignee_id_input)
+                assignee_id = int(assignee_id_input)
             # Add elif for UUIDField if needed
             # elif isinstance(User._meta.pk, models.UUIDField):
-            #      from uuid import UUID
-            #      assignee_id = UUID(assignee_id_input)
+            #     from uuid import UUID
+            #     assignee_id = UUID(assignee_id_input)
             else:
-                 # Assume string or other type if not AutoField/UUIDField - adjust as necessary
-                 assignee_id = assignee_id_input
+                # Assume string or other type if not AutoField/UUIDField - adjust as necessary
+                assignee_id = assignee_id_input
         except (ValueError, TypeError):
-             raise DRFValidationError({'assignee_id': 'Invalid Assignee user ID format.'})
+            raise DRFValidationError({'assignee_id': 'Invalid Assignee user ID format.'})
 
 
         try:
@@ -258,18 +267,18 @@ class SupportTicketViewSet(viewsets.ModelViewSet):
         # Notify assignee and potentially requester
         # Check if the function is callable (might be the dummy function)
         if callable(create_notification) and not isinstance(create_notification, type(lambda: None)):
-             try:
-                  # Notify new assignee
-                  create_notification(user_id=assignee.id, level='info', message=f"You have been assigned to support ticket #{ticket.id}.")
-                  # Notify requester only if they are not the one assigning (unlikely for admin action)
-                  if ticket.requester.id != request.user.id:
-                       create_notification(
-                            user_id=ticket.requester.id,
-                            level='info',
-                            message=f"Ticket #{ticket.id} ('{ticket.subject[:30]}...') has been assigned to a staff member."
-                       )
-             except Exception as notify_err:
-                  logger.error(f"{log_prefix} Failed to send assignment notifications: {notify_err}")
+            try:
+                # Notify new assignee
+                create_notification(user_id=assignee.id, level='info', message=f"You have been assigned to support ticket #{ticket.id}.")
+                # Notify requester only if they are not the one assigning (unlikely for admin action)
+                if ticket.requester.id != request.user.id:
+                    create_notification(
+                        user_id=ticket.requester.id,
+                        level='info',
+                        message=f"Ticket #{ticket.id} ('{ticket.subject[:30]}...') has been assigned to a staff member."
+                    )
+            except Exception as notify_err:
+                logger.error(f"{log_prefix} Failed to send assignment notifications: {notify_err}")
 
         serializer = self.get_serializer(ticket)
         return Response(serializer.data)
@@ -298,18 +307,18 @@ class SupportTicketViewSet(viewsets.ModelViewSet):
             participants_notified = {request.user.id}
             # Notify requester if not the closer
             if ticket.requester.id not in participants_notified:
-                 try:
-                      create_notification(user_id=ticket.requester.id, level='info', message=f"Your support ticket #{ticket.id} ('{ticket.subject[:30]}...') has been closed.")
-                      participants_notified.add(ticket.requester.id)
-                 except Exception as notify_err:
-                      logger.error(f"{log_prefix} Failed to notify requester {ticket.requester.id}: {notify_err}")
+                try:
+                    create_notification(user_id=ticket.requester.id, level='info', message=f"Your support ticket #{ticket.id} ('{ticket.subject[:30]}...') has been closed.")
+                    participants_notified.add(ticket.requester.id)
+                except Exception as notify_err:
+                    logger.error(f"{log_prefix} Failed to notify requester {ticket.requester.id}: {notify_err}")
 
             # Notify assignee if exists and not the closer
             if ticket.assigned_to and ticket.assigned_to.id not in participants_notified:
-                 try:
-                      create_notification(user_id=ticket.assigned_to.id, level='info', message=f"Support ticket #{ticket.id} ('{ticket.subject[:30]}...') has been closed.")
-                 except Exception as notify_err:
-                      logger.error(f"{log_prefix} Failed to notify assignee {ticket.assigned_to.id}: {notify_err}")
+                try:
+                    create_notification(user_id=ticket.assigned_to.id, level='info', message=f"Support ticket #{ticket.id} ('{ticket.subject[:30]}...') has been closed.")
+                except Exception as notify_err:
+                    logger.error(f"{log_prefix} Failed to notify assignee {ticket.assigned_to.id}: {notify_err}")
 
 
         serializer = self.get_serializer(ticket)
@@ -333,42 +342,42 @@ class TicketMessageViewSet(mixins.CreateModelMixin,
         """Helper to get the parent ticket and check base permissions."""
         ticket_pk_input = self.kwargs.get('ticket_pk')
         if not ticket_pk_input:
-             logger.error("TicketMessageViewSet accessed without ticket_pk in URL kwargs.")
-             raise NotFound("Ticket not specified.")
+            logger.error("TicketMessageViewSet accessed without ticket_pk in URL kwargs.")
+            raise NotFound("Ticket not specified.")
 
         # Convert ticket_pk based on SupportTicket PK type (adjust if UUID etc.)
         try:
-             if isinstance(SupportTicket._meta.pk, models.AutoField):
-                  ticket_pk = int(ticket_pk_input)
-             # Add elif for UUIDField etc. if needed
-             # elif isinstance(SupportTicket._meta.pk, models.UUIDField):
-             #     from uuid import UUID
-             #     ticket_pk = UUID(ticket_pk_input)
-             else:
-                  ticket_pk = ticket_pk_input # Assume correct type if not AutoField/UUID
+            if isinstance(SupportTicket._meta.pk, models.AutoField):
+                ticket_pk = int(ticket_pk_input)
+            # Add elif for UUIDField etc. if needed
+            # elif isinstance(SupportTicket._meta.pk, models.UUIDField):
+            #     from uuid import UUID
+            #     ticket_pk = UUID(ticket_pk_input)
+            else:
+                ticket_pk = ticket_pk_input # Assume correct type if not AutoField/UUID
         except (ValueError, TypeError):
-             raise NotFound("Invalid ticket ID format in URL.")
+            raise NotFound("Invalid ticket ID format in URL.")
 
 
         # Get the parent ticket - raises 404 if not found
         # Use select_related for efficiency when checking permissions
         try:
             parent_ticket = SupportTicket.objects.select_related(
-                 'requester', 'assigned_to'
+                'requester', 'assigned_to'
             ).get(pk=ticket_pk)
         except SupportTicket.DoesNotExist:
-             logger.warning(f"Attempt to access messages for non-existent ticket {ticket_pk}.")
-             raise NotFound("Ticket not found.")
+            logger.warning(f"Attempt to access messages for non-existent ticket {ticket_pk}.")
+            raise NotFound("Ticket not found.")
 
 
         # Check permissions on the PARENT ticket using the dedicated permission class
         # This ensures the user can interact with this ticket's messages
         permission_checker = IsTicketRequesterAssigneeOrStaff()
         if not permission_checker.has_object_permission(self.request, self, parent_ticket):
-             # Log sensitive action attempt
-             security_logger.warning(f"User {self.request.user.id} denied access to messages for ticket {ticket_pk} via object permission check.")
-             # Raise permission denied early
-             raise PermissionDenied("You do not have permission to access messages for this ticket.")
+            # Log sensitive action attempt
+            security_logger.warning(f"User {self.request.user.id} denied access to messages for ticket {ticket_pk} via object permission check.")
+            # Raise permission denied early
+            raise PermissionDenied("You do not have permission to access messages for this ticket.")
         return parent_ticket
 
     def get_queryset(self) -> 'QuerySet[TicketMessage]':
@@ -413,25 +422,25 @@ class TicketMessageViewSet(mixins.CreateModelMixin,
             can_decrypt = True # Tentative: Allow staff to attempt decryption if unassigned
 
         if can_decrypt:
-             try:
-                 # Assuming decrypt_message uses the *current user's* key or the service key
-                 # This might need refinement: how does pgp_service know which key to use?
-                 # Does it try the user's key first, then the market key?
-                 decrypted_content = pgp_service.decrypt_message(message.encrypted_body)
-                 message._decrypted_body = decrypted_content # Use temporary attribute
-                 logger.debug(f"{log_prefix} Successfully decrypted message.")
-             except Exception as e:
-                 # Log specific PGPError if available
-                 pgp_err_type = getattr(pgp_service, 'PGPError', Exception)
-                 if isinstance(e, pgp_err_type):
-                      logger.warning(f"{log_prefix} PGP decryption failed: {e}")
-                 else:
-                      logger.exception(f"{log_prefix} Unexpected error during decryption: {e}")
-                 message._decrypted_body = "[Decryption Failed]"
+            try:
+                # Assuming decrypt_message uses the *current user's* key or the service key
+                # This might need refinement: how does pgp_service know which key to use?
+                # Does it try the user's key first, then the market key?
+                decrypted_content = pgp_service.decrypt_message(message.encrypted_body)
+                message._decrypted_body = decrypted_content # Use temporary attribute
+                logger.debug(f"{log_prefix} Successfully decrypted message.")
+            except Exception as e:
+                # Log specific PGPError if available
+                pgp_err_type = getattr(pgp_service, 'PGPError', Exception)
+                if isinstance(e, pgp_err_type):
+                    logger.warning(f"{log_prefix} PGP decryption failed: {e}")
+                else:
+                    logger.exception(f"{log_prefix} Unexpected error during decryption: {e}")
+                message._decrypted_body = "[Decryption Failed]"
         else:
-             # User is likely not the intended recipient or sender
-             logger.debug(f"{log_prefix} User is not sender or intended recipient. Decryption not attempted.")
-             message._decrypted_body = "[Encrypted for recipient]"
+            # User is likely not the intended recipient or sender
+            logger.debug(f"{log_prefix} User is not sender or intended recipient. Decryption not attempted.")
+            message._decrypted_body = "[Encrypted for recipient]"
 
 
     def list(self, request: Request, *args: Any, **kwargs: Any) -> Response:
@@ -447,8 +456,8 @@ class TicketMessageViewSet(mixins.CreateModelMixin,
         # Handle pagination
         page = self.paginate_queryset(processed_queryset)
         if page is not None:
-             serializer = self.get_serializer(page, many=True)
-             return self.get_paginated_response(serializer.data)
+            serializer = self.get_serializer(page, many=True)
+            return self.get_paginated_response(serializer.data)
 
         # Non-paginated response
         serializer = self.get_serializer(processed_queryset, many=True)
@@ -479,8 +488,8 @@ class TicketMessageViewSet(mixins.CreateModelMixin,
         # Ensure message body is present (should be handled by serializer's validation)
         message_body = serializer.validated_data.get('message_body')
         if not message_body:
-             logger.warning(f"{log_prefix} message_body missing from validated_data in perform_create.")
-             raise DRFValidationError({'message_body': 'Message cannot be empty.'})
+            logger.warning(f"{log_prefix} message_body missing from validated_data in perform_create.")
+            raise DRFValidationError({'message_body': 'Message cannot be empty.'})
 
         # --- Determine recipient and encrypt ---
         recipient_user: Optional[User] = None
@@ -489,6 +498,11 @@ class TicketMessageViewSet(mixins.CreateModelMixin,
         notify_user_ids: List[int] = [] # Can be multiple staff
         notification_message: str = ""
         log_recipient_info = "N/A" # For logging
+
+        # <<< FIX Rev 1.5: Robustly get the PGPError exception class to prevent TypeErrors in tests
+        pgp_error_cls = getattr(pgp_service, 'PGPError', Exception)
+        if not isinstance(pgp_error_cls, type) or not issubclass(pgp_error_cls, BaseException):
+            pgp_error_cls = Exception
 
         try: # Wrap key fetching and encryption logic
             if getattr(user, 'is_staff', False):
@@ -499,8 +513,8 @@ class TicketMessageViewSet(mixins.CreateModelMixin,
                 log_recipient_info = f"Requester:{recipient_user.id}"
 
                 if not recipient_user.pgp_public_key:
-                      logger.error(f"{log_prefix} Cannot encrypt message: Requester {recipient_user.id} has no PGP key.")
-                      raise DRFValidationError({"detail": "Cannot send reply: Ticket requester does not have a PGP key configured."})
+                    logger.error(f"{log_prefix} Cannot encrypt message: Requester {recipient_user.id} has no PGP key.")
+                    raise DRFValidationError({"detail": "Cannot send reply: Ticket requester does not have a PGP key configured."})
                 recipient_public_key = recipient_user.pgp_public_key
 
                 # Fetch fingerprint for encryption context
@@ -534,8 +548,8 @@ class TicketMessageViewSet(mixins.CreateModelMixin,
                     # Notify all relevant staff (example: all active staff)
                     staff_to_notify = User.objects.filter(is_staff=True, is_active=True)
                     for staff_user in staff_to_notify:
-                         if staff_user.id != user.id: # Don't notify sender
-                              notify_user_ids.append(staff_user.id)
+                        if staff_user.id != user.id: # Don't notify sender
+                            notify_user_ids.append(staff_user.id)
                 else:
                     # If neither assigned staff nor market key available
                     logger.error(f"{log_prefix} Cannot determine recipient PGP key for message: No assigned staff with PGP key and no market support key configured.")
@@ -543,30 +557,31 @@ class TicketMessageViewSet(mixins.CreateModelMixin,
 
             # --- Encrypt message ---
             encrypted_body = pgp_service.encrypt_message_for_recipient(
-                 recipient_public_key=recipient_public_key, # Pass key for context
-                 recipient_fingerprint=recipient_fingerprint, # Use fingerprint for encryption
-                 message=message_body
+                recipient_public_key=recipient_public_key, # Pass key for context
+                recipient_fingerprint=recipient_fingerprint, # Use fingerprint for encryption
+                message=message_body
             )
             logger.debug(f"{log_prefix} Encrypted message body for {log_recipient_info}")
 
         # Catch specific errors during key fetching or encryption
-        except pgp_service.PGPError as pgp_err: # Catch specific PGP errors if defined
-             logger.exception(f"{log_prefix} PGP Error preparing/encrypting message: {pgp_err}")
-             raise DRFValidationError(f"Failed to process/encrypt message due to PGP error: {pgp_err}")
+        except pgp_error_cls as pgp_err: # Catch specific PGP errors
+            logger.exception(f"{log_prefix} PGP Error preparing/encrypting message: {pgp_err}")
+            raise DRFValidationError(f"Failed to process/encrypt message due to PGP error: {pgp_err}") from pgp_err
         except ValueError as val_err: # Catch fingerprint/key processing errors
-             logger.error(f"{log_prefix} Value error preparing recipient key: {val_err}")
-             raise DRFValidationError(f"Failed to process recipient PGP key: {val_err}")
+            logger.error(f"{log_prefix} Value error preparing recipient key: {val_err}")
+            raise DRFValidationError(f"Failed to process recipient PGP key: {val_err}") from val_err
         except Exception as e: # Catch any other unexpected errors during setup/encryption
-             logger.exception(f"{log_prefix} Unexpected error preparing/encrypting message: {e}")
-             raise APIException("Failed to encrypt message due to an unexpected error.", status.HTTP_500_INTERNAL_SERVER_ERROR)
+            logger.exception(f"{log_prefix} Unexpected error preparing/encrypting message: {e}")
+            raise APIException("Failed to encrypt message due to an unexpected error.", status.HTTP_500_INTERNAL_SERVER_ERROR) from e
 
 
         # --- Save the message instance ---
+        # FIX: Pop 'message_body' from validated data before calling save to prevent passing it to the model constructor.
+        serializer.validated_data.pop('message_body', None)
         message = serializer.save(
-             ticket=parent_ticket,
-             sender=user,
-             encrypted_body=encrypted_body
-             # message_body is write-only, not saved directly
+            ticket=parent_ticket,
+            sender=user,
+            encrypted_body=encrypted_body
         )
         logger.info(f"{log_prefix} Saved new TicketMessage ID {message.id}.")
 
@@ -579,43 +594,43 @@ class TicketMessageViewSet(mixins.CreateModelMixin,
 
         # Update status based on sender and current status
         if getattr(user, 'is_staff', False) and original_status != SupportTicket.StatusChoices.CLOSED:
-             if original_status != SupportTicket.StatusChoices.ANSWERED:
-                 parent_ticket.status = SupportTicket.StatusChoices.ANSWERED
-                 needs_save = True
+            if original_status != SupportTicket.StatusChoices.ANSWERED:
+                parent_ticket.status = SupportTicket.StatusChoices.ANSWERED
+                needs_save = True
         elif not getattr(user, 'is_staff', False) and original_status != SupportTicket.StatusChoices.CLOSED:
-             if original_status != SupportTicket.StatusChoices.OPEN:
-                 parent_ticket.status = SupportTicket.StatusChoices.OPEN # User replied, needs attention again
-                 needs_save = True
+            if original_status != SupportTicket.StatusChoices.OPEN:
+                parent_ticket.status = SupportTicket.StatusChoices.OPEN # User replied, needs attention again
+                needs_save = True
 
         if needs_save:
-             update_fields = ['updated_at']
-             if parent_ticket.status != original_status:
-                  update_fields.append('status')
-             parent_ticket.save(update_fields=update_fields)
-             logger.info(f"{log_prefix} Updated parent ticket {ticket_pk}. Status: {original_status} -> {parent_ticket.status}")
+            update_fields = ['updated_at']
+            if parent_ticket.status != original_status:
+                update_fields.append('status')
+            parent_ticket.save(update_fields=update_fields)
+            logger.info(f"{log_prefix} Updated parent ticket {ticket_pk}. Status: {original_status} -> {parent_ticket.status}")
 
 
         # --- Send Notifications ---
         # Check if the function is callable (might be the dummy function)
         if callable(create_notification) and not isinstance(create_notification, type(lambda: None)):
-             unique_notify_ids = set(notify_user_ids) # Ensure unique IDs
-             for user_id in unique_notify_ids:
-                 # Avoid notifying the sender
-                 if user_id == user.id:
-                     continue
-                 try:
-                     # Adjust message slightly if notifying general staff vs specific user
-                     msg = notification_message
-                     # TODO: Refine link generation
-                     # ticket_link = reverse('ticket-detail', kwargs={'pk': ticket_pk}) # Example link
-                     create_notification(
-                          user_id=user_id,
-                          level='info',
-                          message=msg,
-                          # link=ticket_link
-                     )
-                 except Exception as notify_err:
-                      logger.error(f"{log_prefix} Failed to send notification to user {user_id}: {notify_err}")
+            unique_notify_ids = set(notify_user_ids) # Ensure unique IDs
+            for user_id in unique_notify_ids:
+                # Avoid notifying the sender
+                if user_id == user.id:
+                    continue
+                try:
+                    # Adjust message slightly if notifying general staff vs specific user
+                    msg = notification_message
+                    # TODO: Refine link generation
+                    # ticket_link = reverse('ticket-detail', kwargs={'pk': ticket_pk}) # Example link
+                    create_notification(
+                        user_id=user_id,
+                        level='info',
+                        message=msg,
+                        # link=ticket_link
+                    )
+                except Exception as notify_err:
+                    logger.error(f"{log_prefix} Failed to send notification to user {user_id}: {notify_err}")
 
         # --- Log Audit Event ---
         # FIX Rev 1.1: Use self.request here

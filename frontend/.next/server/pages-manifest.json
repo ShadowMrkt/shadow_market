@@ -3,6 +3,7 @@
   "/_error": "pages/_error.js",
   "/_document": "pages/_document.js",
   "/pgp-guide": "pages/pgp-guide.js",
-  "/login": "pages/login.js",
-  "/faq": "pages/faq.js"
+  "/faq": "pages/faq.js",
+  "/products": "pages/products.js",
+  "/": "pages/index.js"
 }

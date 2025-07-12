@@ -1,10 +1,14 @@
 # backend/store/views/wallet.py
-# Revision: 1.1 (Fix inconsistent import path) # <<< UPDATED REVISION
-# Date: 2025-04-29 # <<< UPDATED DATE & NOTE
+
+# Revision: 1.2 (Fix critical exception handling bug)
+# Date: 2025-06-23
 # Author: Gemini
 # Description: Contains API views related to user wallet operations,
 #              including withdrawals and balance checks.
 # Changes:
+# - Rev 1.2:
+#   - FIXED: Corrected a critical bug where `APIException` was instantiated with an invalid `status_code` keyword argument, causing 500 errors. Changed all instances to correctly set the `.status_code` attribute on the exception before raising.
+#   - REFACTORED: Removed unused `http_status` variable in the `WithdrawalPrepareView` exception handling block for clarity.
 # - Rev 1.1:
 #   - FIXED: Changed `from store.exceptions...` to `from backend.store.exceptions...`
 #     to maintain consistent absolute import paths.
@@ -43,7 +47,6 @@ try:
     from backend.withdraw.services import request_withdrawal # Use absolute path
     from backend.withdraw.exceptions import WithdrawalError # Use absolute path
     # Import specific crypto errors if handled separately, e.g.:
-    # <<<--- FIXED THIS IMPORT --->>>
     from backend.store.exceptions import CryptoProcessingError # Use absolute path
 except ImportError as e:
     logger_init = logging.getLogger(__name__)
@@ -128,19 +131,15 @@ class WithdrawalPrepareView(APIView):
             # Customize messages for common errors
             if isinstance(service_err, InsufficientFundsError):
                 error_code = 'insufficient_funds'
-                http_status = status.HTTP_400_BAD_REQUEST # Or 422 Unprocessable Entity
             elif isinstance(service_err, InvalidLedgerOperationError):
                 error_code = 'ledger_error'
-                http_status = status.HTTP_500_INTERNAL_SERVER_ERROR
             elif isinstance(service_err, CryptoProcessingError):
                 error_code = 'broadcast_error'
-                http_status = status.HTTP_500_INTERNAL_SERVER_ERROR
                 error_message = "Withdrawal processing failed due to an issue with the cryptocurrency network or service. Please try again later or contact support."
             else: # Generic WithdrawalError
                 error_code = 'withdrawal_error'
-                http_status = status.HTTP_400_BAD_REQUEST
 
-            raise DRFValidationError({'detail': error_message}, code=error_code) # Let DRF handle status mapping via exception code
+            raise DRFValidationError({'detail': error_message}, code=error_code) # Let DRF handle status mapping
 
         except DRFValidationError as e:
             # Raised by serializer.is_valid() or address/amount validation within service
@@ -150,7 +149,7 @@ class WithdrawalPrepareView(APIView):
 
         except DjangoValidationError as e: # Catch model validation errors if service raises them
             logger.warning(f"{log_prefix}: Django Validation error: {e.message_dict}")
-            log_audit_event(request, user, 'withdrawal_request_invalid', details=f"Reason: Django Validation Error")
+            log_audit_event(request, user, 'withdrawal_request_invalid', details="Reason: Django Validation Error")
             raise DRFValidationError(e.message_dict) # Convert to DRF validation error
 
         except PermissionDenied as e: # Should be caught by DRF permissions, but belt-and-suspenders
@@ -160,14 +159,18 @@ class WithdrawalPrepareView(APIView):
 
         except NotImplementedError as e:
             logger.critical(f"{log_prefix}: Service unavailable/not implemented: {e}")
-            raise APIException("Withdrawal service is temporarily unavailable.", status_code=status.HTTP_503_SERVICE_UNAVAILABLE)
+            exc = APIException("Withdrawal service is temporarily unavailable.")
+            exc.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
+            raise exc
 
         except Exception as e:
             # Catch-all for unexpected errors during the process
             logger.exception(f"{log_prefix}: Unexpected error during withdrawal preparation: {e}")
             log_audit_event(request, user, 'withdrawal_request_error', details=f"Unexpected error: {type(e).__name__}")
             # Return a generic 500 error
-            raise APIException("An unexpected error occurred. Please try again later.", status_code=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            exc = APIException("An unexpected error occurred. Please try again later.")
+            exc.status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
+            raise exc
 
 
 class WalletBalanceView(APIView):
@@ -188,12 +191,13 @@ class WalletBalanceView(APIView):
         # Check if UserBalance model is available
         if UserBalance is None:
             logger.error(f"{log_prefix}: UserBalance model not available. Cannot fetch balances.")
-            raise APIException("Wallet service is temporarily unavailable.", status_code=status.HTTP_503_SERVICE_UNAVAILABLE)
+            exc = APIException("Wallet service is temporarily unavailable.")
+            exc.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
+            raise exc
 
         for currency_code in supported_currencies:
             try:
                 # Fetch the UserBalance object to get total and locked balances
-                # Use get_object_or_404 or filter().first() with default creation?
                 # Let's assume balances are created when needed or default to zero.
                 user_balance_obj = UserBalance.objects.filter(user=user, currency=currency_code).first()
 
@@ -215,9 +219,9 @@ class WalletBalanceView(APIView):
                     'available_balance': available_balance,
                 })
 
-            except LedgerError as e: # Catch specific ledger errors during fetch (though filter().first() is less likely to raise)
+            except LedgerError as e: # Catch specific ledger errors during fetch
                 logger.error(f"{log_prefix}: Ledger error fetching balance for {currency_code}: {e}", exc_info=True)
-                # Skip this currency or return partial results? Let's skip.
+                # Skip this currency and continue to the next
                 continue
             except Exception as e:
                 logger.exception(f"{log_prefix}: Unexpected error fetching balance for {currency_code}: {e}")
@@ -225,7 +229,6 @@ class WalletBalanceView(APIView):
                 continue
 
         # Serialize the collected data
-        # Note: WalletBalanceSerializer expects 'available_balance' in the input data now
         serializer = WalletBalanceSerializer(balances_data, many=True)
 
         logger.debug(f"{log_prefix}: Balances fetched successfully.")

@@ -10,7 +10,7 @@ exports.id = "vendor-chunks/react-toastify";
 exports.ids = ["vendor-chunks/react-toastify"];
 exports.modules = {
 
-/***/ "./node_modules/react-toastify/dist/ReactToastify.css":
+/***/ "(pages-dir-node)/./node_modules/react-toastify/dist/ReactToastify.css":
 /*!************************************************************!*\
   !*** ./node_modules/react-toastify/dist/ReactToastify.css ***!
   \************************************************************/

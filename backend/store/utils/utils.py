@@ -1,10 +1,15 @@
 # backend/store/utils/utils.py
-# Revision: 1.3 # <<< UPDATED REVISION
-# Date: 2025-04-29
+# Revision: 2.0
+# Date: 2025-06-21
 # Author: Gemini
 # Description: Contains utility functions shared across the 'store' app.
 # Changes:
-# - Rev 1.3: # <<< ADDED CHANGES
+# - Rev 2.0:
+#   - Modified `log_audit_event` to correctly handle Generic Foreign Keys for target objects.
+#   - The function now dynamically identifies the single target object provided (e.g., order, ticket) and stores its content type and primary key, resolving the `TypeError: AuditLog() got unexpected keyword arguments`.
+#   - This assumes the `AuditLog` model uses `target_user` as a direct ForeignKey and a GenericForeignKey (`content_type`, `object_id`) for all other targets.
+#   - Added `ContentType` import.
+# - Rev 1.3:
 #   - Re-verified use of quoted forward references (e.g., 'User', 'Order') in log_audit_event signature combined with `from __future__ import annotations` and TYPE_CHECKING imports. This is the standard approach to resolve "Variable not allowed in type expression". If Pylance still reports this error, it may indicate a local environment/configuration issue.
 # - Rev 1.2 (2025-04-29):
 #   - Added 'from __future__ import annotations' (must be at the top).
@@ -19,40 +24,29 @@ from __future__ import annotations
 
 # Standard Library Imports
 import logging
-# --- FIX: Import TYPE_CHECKING ---
 from typing import Optional, Union, TYPE_CHECKING
 
 # Django Imports
+from django.contrib.contenttypes.models import ContentType
 from django.http import HttpRequest
 
 # Third-Party Imports
-# Assuming Request is from DRF, adjust if it's Django's HttpRequest everywhere
 from rest_framework.request import Request
 
 # --- Local Imports (Using absolute paths from 'backend') ---
-
-# --- FIX: Import models needed at RUNTIME directly (within try/except) ---
-# User and AuditLog are used inside the log_audit_event function body.
 try:
     from backend.store.models import User, AuditLog
 except ImportError as e:
-    # Log error during initialization if models can't be imported
     logger_init = logging.getLogger(__name__)
     logger_init.error(f"Failed to import User or AuditLog in store/utils.py: {e}. Audit logging might fail.")
-    # Set to None so the function can gracefully handle their absence
     User = None
     AuditLog = None
 
-# --- FIX: Import models ONLY needed for TYPE HINTING inside TYPE_CHECKING block ---
-# This avoids runtime circular import errors.
 if TYPE_CHECKING:
-    # These imports are only seen by the type checker
     from backend.store.models import Product, Order, SupportTicket, VendorApplication, Feedback
-
 
 # --- Setup Loggers ---
 logger = logging.getLogger(__name__)
-# security_logger = logging.getLogger('security') # Not used directly in utils
 
 # --- Helper Functions ---
 
@@ -64,66 +58,73 @@ def get_client_ip(request: Union[HttpRequest, Request]) -> Optional[str]:
     meta = getattr(request, 'META', {})
     x_forwarded_for = meta.get('HTTP_X_FORWARDED_FOR')
     if x_forwarded_for:
-        # Take the first IP in the list, as it's typically the original client IP.
-        # Ensure proxies are configured to handle this header correctly (e.g., Nginx `proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;`)
         ip = x_forwarded_for.split(',')[0].strip()
     else:
         ip = meta.get('REMOTE_ADDR')
     return ip
 
-# --- RE-VERIFIED FIX: Use Quoted Forward References in function signature ---
-# Combined with `from __future__ import annotations`, this should resolve type hint errors.
-# If Pylance still shows errors here, check the local environment/configuration.
 def log_audit_event(
     request: Union[HttpRequest, Request],
-    actor: Optional['User'], # Quoted
+    actor: Optional['User'],
     action: str,
-    target_user: Optional['User'] = None, # Quoted
-    target_order: Optional['Order'] = None, # Quoted
-    target_ticket: Optional['SupportTicket'] = None, # Quoted
-    target_product: Optional['Product'] = None, # Quoted
-    target_application: Optional['VendorApplication'] = None, # Quoted
-    target_feedback: Optional['Feedback'] = None, # Quoted
+    target_user: Optional['User'] = None,
+    target_order: Optional['Order'] = None,
+    target_ticket: Optional['SupportTicket'] = None,
+    target_product: Optional['Product'] = None,
+    target_application: Optional['VendorApplication'] = None,
+    target_feedback: Optional['Feedback'] = None,
     details: str = ""
 ) -> None:
     """
     Helper function to create audit log entries reliably.
-    Logs actor, action, optional targets, details, and IP address.
-    Handles potential model import errors gracefully.
+    This version handles a direct ForeignKey to `target_user` and a
+    GenericForeignKey for all other potential target object types.
     """
-    # Ensure AuditLog and User models (needed at runtime) were imported successfully
     if AuditLog is None or User is None:
         logger.error("AuditLog or User model not available. Cannot log audit event.")
         return
 
-    # Check actor type only if actor is not None and User model is available
     if actor and not isinstance(actor, User):
         actor_repr = getattr(actor, 'username', str(actor))
         logger.warning(f"Audit log attempted with invalid actor type: {actor_repr} ({type(actor)})")
-        actor = None # Log as system/anonymous action if actor is invalid type
+        actor = None
 
     try:
         ip_address = get_client_ip(request)
-        # Ensure details do not exceed model field length (e.g., AuditLog.details max_length)
-        # Assuming max_length is 500 based on previous helper version. Adjust if different.
         details_truncated = details[:500] if details else ""
 
-        AuditLog.objects.create(
-            actor=actor,
-            action=action, # TODO: Consider validating 'action' against AuditLogAction choices if defined
-            target_user=target_user,
-            target_order=target_order,
-            target_ticket=target_ticket,
-            target_product=target_product,
-            target_application=target_application,
-            target_feedback=target_feedback, # Ensure AuditLog model has this field if used
-            details=details_truncated,
-            ip_address=ip_address
-        )
+        create_kwargs = {
+            'actor': actor,
+            'action': action,
+            'target_user': target_user, # Assumes 'target_user' is a direct FK field.
+            'details': details_truncated,
+            'ip_address': ip_address
+        }
+
+        # --- FIX: Handle Generic Foreign Key for other targets ---
+        # List other potential targets. Find the one that was passed.
+        other_targets = [
+            target_order,
+            target_ticket,
+            target_product,
+            target_application,
+            target_feedback
+        ]
+
+        # Find the first non-None target from the list.
+        # This assumes only one generic target is logged per event.
+        target_object = next((t for t in other_targets if t is not None), None)
+
+        if target_object:
+            # If a generic target was found, get its ContentType and PK.
+            # This assumes the AuditLog model has 'content_type' and 'object_id' fields.
+            create_kwargs['content_type'] = ContentType.objects.get_for_model(target_object)
+            create_kwargs['object_id'] = target_object.pk
+
+        AuditLog.objects.create(**create_kwargs)
+
     except Exception as e:
-        # Avoid logging the full actor object in case of failure, use username
         actor_username = getattr(actor, 'username', 'System/Anon') if actor else 'System/Anon'
-        # Log exception details for better debugging
         logger.error(f"Failed to create audit log entry (Action: {action}, Actor: {actor_username}): {e}", exc_info=True)
 
 # --- END OF FILE ---

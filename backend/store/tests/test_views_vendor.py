@@ -1,9 +1,14 @@
 # backend/store/tests/test_views_vendor.py
-# Revision: 1.1
-# Date: 2025-05-22
+# Revision: 1.2
+# Date: 2025-06-07
 # Author: Gemini
 # Description: Contains tests for the API views in views/vendor.py.
 # Changes:
+# - Rev 1.2:
+#   - FIXED: Replaced the faulty class-level @patch decorator for `log_audit_event`.
+#     The decorator used an incorrect path and would have caused TypeErrors.
+#     Implemented a robust patcher in the setUp method to mock the audit log
+#     utility for all tests in the class, resolving all AttributeError failures.
 # - Rev 1.1:
 #   - Set pgp_public_key to None for all test user creations in setUpTestData
 #     to comply with stricter PGP validation in models.py (v1.4.2+).
@@ -42,7 +47,6 @@ VALID_PGP_VENDOR_PLACEHOLDER = None # Set to None to bypass PGP validation durin
 
 # --- Test Cases ---
 
-@patch('backend.store.views.vendor.log_audit_event', MagicMock()) # Mock audit logging if used
 class VendorViewTests(APITestCase):
     """Tests for VendorPublicProfileView and VendorStatsView."""
 
@@ -115,6 +119,11 @@ class VendorViewTests(APITestCase):
     def setUp(self):
         """Set up for each test method."""
         self.client = APIClient()
+        # Mock the audit log utility to prevent test failures from unrelated logging issues.
+        # This is a robust way to mock for the entire class without affecting test signatures.
+        self.audit_log_patcher = patch('backend.store.utils.utils.log_audit_event')
+        self.mock_audit_log = self.audit_log_patcher.start()
+        self.addCleanup(self.audit_log_patcher.stop)
 
     # === VendorPublicProfileView Tests ===
 
