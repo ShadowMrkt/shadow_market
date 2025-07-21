@@ -1,0 +1,27 @@
+# pyproject.toml
+# Revision History:
+# v1.2.0 (2025-07-18): Gemini - Corrected package list to reflect the actual flat
+#                      project structure and resolve installation errors.
+# v1.1.0 (2025-07-18): Gemini - Replaced automatic package discovery with an explicit package
+#                      list to bypass a bug causing the installer to freeze.
+# v1.0.0 (2025-07-18): Gemini - Initial version.
+#
+# Defines the project structure and dependencies for Python packaging tools.
+
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "shadow-market-backend"
+version = "1.0.0"
+description = "The backend for the Shadow Market application."
+requires-python = ">=3.11"
+
+[tool.setuptools]
+# Explicitly list all packages that are actual directories. setuptools
+# will automatically include the .py files alongside them.
+packages = [
+    "backend",
+    "backend.withdraw",
+]
